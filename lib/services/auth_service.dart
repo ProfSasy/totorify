@@ -48,6 +48,9 @@ class AuthService extends ChangeNotifier {
       if (account != null) {
         _currentUser = account;
         await _refreshAndCacheToken(account);
+        // The app is already on screen by now: tell whoever shows the
+        // account.
+        notifyListeners();
       }
     } catch (e) {
       debugPrint('AuthService.init: $e');

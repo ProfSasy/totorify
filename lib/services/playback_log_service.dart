@@ -110,22 +110,24 @@ class PlaybackLogService {
 
   void _add(String tag, String message, {required bool isError}) {
     final key = '$tag|$message';
+    final ts = _timestamp(DateTime.now());
     if (key == _lastKey && _entries.isNotEmpty) {
+      // The line keeps the time of the first; the counter says when the
+      // last one came, so "twice in a row" and "again a minute later" can be
+      // told apart.
       _repeats++;
       final last = _entries.removeLast();
-      final base = last.line.replaceFirst(RegExp(r'  \(×\d+\)$'), '');
-      _entries.addLast(LogEntry('$base  (×${_repeats + 1})', isError: isError));
+      final base = last.line.replaceFirst(_repeatSuffix, '');
+      _entries.addLast(LogEntry(
+        '$base  (×${_repeats + 1}, ultima $ts)',
+        isError: isError,
+      ));
       _scheduleNotify();
       return;
     }
     _lastKey = key;
     _repeats = 0;
 
-    final now = DateTime.now();
-    final ts = '${now.hour.toString().padLeft(2, '0')}:'
-        '${now.minute.toString().padLeft(2, '0')}:'
-        '${now.second.toString().padLeft(2, '0')}.'
-        '${now.millisecond.toString().padLeft(3, '0')}';
     final line = '[$ts][${isError ? '!' : ' '}][$tag] $message';
 
     _entries.addLast(LogEntry(line, isError: isError));
@@ -136,6 +138,14 @@ class PlaybackLogService {
     _writeToFile(line);
     _scheduleNotify();
   }
+
+  static final RegExp _repeatSuffix = RegExp(r'  \(×\d+, ultima [\d:.]+\)$');
+
+  static String _timestamp(DateTime time) =>
+      '${time.hour.toString().padLeft(2, '0')}:'
+      '${time.minute.toString().padLeft(2, '0')}:'
+      '${time.second.toString().padLeft(2, '0')}.'
+      '${time.millisecond.toString().padLeft(3, '0')}';
 
   void _writeToFile(String line) {
     final sink = _sink;

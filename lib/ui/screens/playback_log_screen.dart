@@ -9,7 +9,9 @@ class PlaybackLogScreen extends StatelessWidget {
 
   // Enough to cover a test session without producing a paste too large to
   // send in a chat.
-  static const int _copyLines = 600;
+  // A session with an import and a playlist download runs past a thousand
+  // lines: fewer would cut its beginning off.
+  static const int _copyLines = 1500;
 
   Future<void> _copy(BuildContext context, String text, String confirmation) async {
     final messenger = ScaffoldMessenger.of(context);

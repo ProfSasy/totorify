@@ -94,7 +94,7 @@ class CanvasService {
   static const Duration _storedMissTtl = Duration(days: 3);
   // Bump when the rules that pick a Canvas change: stored answers made by
   // the old rules are then ignored.
-  static const int _rulesVersion = 1;
+  static const int _rulesVersion = 2;
 
   // How many of an artist's canvases are compared. Each one costs a request
   // for its track details, once per session.
@@ -733,17 +733,21 @@ class CanvasService {
 
     // A collaboration: prefer a Canvas from a track with at least two of the
     // same artists, looking at the other artists' canvases too.
+    final fromOthers = <String, _ArtistCanvas>{};
     if (songArtists.length >= 2) {
-      final pool = <String, _ArtistCanvas>{
-        for (final candidate in candidates) candidate.url: candidate,
-      };
       final others = songArtists.where((name) => name != mainKey).take(_maxCollaborators);
       for (final other in others) {
         final theirs = await _artistCanvases(other, null);
         for (final candidate in theirs ?? const <_ArtistCanvas>[]) {
-          if (candidate.trackId != trackId) pool.putIfAbsent(candidate.url, () => candidate);
+          if (candidate.trackId != trackId) {
+            fromOthers.putIfAbsent(candidate.url, () => candidate);
+          }
         }
       }
+      final pool = <String, _ArtistCanvas>{
+        for (final candidate in candidates) candidate.url: candidate,
+        ...fromOthers,
+      };
       final related = pool.values
           .where((c) => (c.info?.artists.intersection(songArtists).length ?? 0) >= 2)
           .toList();
@@ -763,12 +767,16 @@ class CanvasService {
       }
     }
 
-    if (candidates.isEmpty) return (value: null, failed: false);
+    // Otherwise the main artist's Canvas released closest in time. When the
+    // main artist has none at all (a producer, a newcomer), the other
+    // artists credited on the track are its authors too.
+    final ofMainArtist = candidates.isNotEmpty;
+    final fallback = ofMainArtist ? candidates : fromOthers.values.toList();
+    if (fallback.isEmpty) return (value: null, failed: false);
 
-    // Otherwise the main artist's Canvas released closest in time.
-    final chosen = candidates[_pickClosestRelease(
+    final chosen = fallback[_pickClosestRelease(
       released,
-      [for (final c in candidates) c.info?.released],
+      [for (final c in fallback) c.info?.released],
     )];
     final chosenDate = chosen.info?.released;
     final gap = (released != null && chosenDate != null)
@@ -777,7 +785,7 @@ class CanvasService {
     log.log(
       'CANVAS',
       '"${song.title}": canvas di "${chosen.info?.title ?? chosen.trackId}" '
-      '(stesso artista, $gap)',
+      '(${ofMainArtist ? 'stesso artista' : 'di un altro artista del brano'}, $gap)',
     );
     return (value: chosen.url, failed: false);
   }

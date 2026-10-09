@@ -81,9 +81,14 @@ Future<void> _startApp() async {
   await StorageService.instance.init();
   PlaybackLogService.instance.log('INIT', 'storage pronto');
 
-  // Restore previous Google session silently (no UI)
-  await AuthService.instance.init();
-  PlaybackLogService.instance.log('INIT', 'auth pronto');
+  // Restore the previous Google session, without holding the app back: it
+  // needs the network, and offline it would delay the start for nothing.
+  unawaited(AuthService.instance.init().then((_) {
+    PlaybackLogService.instance.log(
+      'INIT',
+      'auth pronto (${AuthService.instance.isSignedIn ? 'account Google' : 'nessun account'})',
+    );
+  }));
 
   // Restore the user's Canvas preference.
   CanvasService.instance.isCanvasEnabledNotifier.value =

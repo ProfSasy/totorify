@@ -97,7 +97,7 @@ class TrackMatcherService {
     'testo', 'lyrics', 'lyric', 'visual', 'visualizer', 'hd', 'hq', '4k',
     'explicit', 'remaster', 'remastered', 'mono', 'stereo', 'album', 'single',
     'original', 'originale', 'version', 'versione', 'prod', 'ft', 'feat',
-    'con', 'with', 'by', 'di', 'e',
+    'con', 'with', 'by', 'di', 'e', 'x',
   };
 
   static const Map<String, String> _accents = {
@@ -161,7 +161,10 @@ class TrackMatcherService {
     // If the candidate doesn't even share the main word of the target, it's garbage.
     if (candidate.isEmpty) return false;
     final targetWords = target.split(' ').where((w) => w.length > 2).toList();
-    if (targetWords.isEmpty) return true; // too short to filter
+    // Nothing to compare by ("J$ JP" has no word of three letters): the
+    // exact and contained-title checks have already had their say, and
+    // anything else must not pass for a match.
+    if (targetWords.isEmpty) return false;
 
     final candidateLower = candidate.toLowerCase();
     for (final w in targetWords) {
