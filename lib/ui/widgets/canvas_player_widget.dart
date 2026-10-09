@@ -111,13 +111,11 @@ class _CanvasPlayerWidgetState extends State<CanvasPlayerWidget> {
       return;
     }
 
-    final uri = Uri.tryParse(widget.videoUrl);
-    if (uri == null) return;
+    if (Uri.tryParse(widget.videoUrl) == null) return;
 
     VideoPlayerController? controller;
     try {
-      // No mixWithOthers: see CanvasVideoPool.warm.
-      controller = VideoPlayerController.networkUrl(uri);
+      controller = CanvasVideoPool.controllerFor(widget.videoUrl);
       _adoptController(controller);
 
       await controller.initialize();

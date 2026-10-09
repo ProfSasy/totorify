@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -85,6 +86,15 @@ class CanvasService {
   static const Duration _cacheTtl = Duration(hours: 4);
   // A failure is retried soon: it must not hide the canvas for hours.
   static const Duration _failureTtl = Duration(minutes: 2);
+  // Answers are also kept on disk, so a restart does not look every song up
+  // again. A Canvas found is served for two weeks (and renewed behind the
+  // scenes once older than that); "none" is asked again after three days,
+  // since artists add them after the release.
+  static const Duration _storedTtl = Duration(days: 14);
+  static const Duration _storedMissTtl = Duration(days: 3);
+  // Bump when the rules that pick a Canvas change: stored answers made by
+  // the old rules are then ignored.
+  static const int _rulesVersion = 1;
 
   // How many of an artist's canvases are compared. Each one costs a request
   // for its track details, once per session.
@@ -156,20 +166,41 @@ class CanvasService {
 
   bool get isEnabled => isCanvasEnabledNotifier.value;
 
-  String? getCachedCanvasUrlSync(String songId) {
-    if (!isEnabled) return null;
+  /// What is known about the Canvas of [songId] without asking anyone: the
+  /// video saved with its download, this session's answer, or the answer
+  /// stored by an earlier one. Null when nothing is known.
+  ({String? url})? _knownAnswer(String songId) {
+    final local = _savedCanvas(songId);
+    if (local != null) return (url: local);
+
     final cached = _canvasCache[songId];
     if (cached != null && DateTime.now().isBefore(cached.$2)) {
-      return cached.$1;
+      return (url: cached.$1);
     }
-    return null;
+
+    final stored = StorageService.instance.getCanvasAnswer(songId, _rulesVersion);
+    if (stored == null) return null;
+    // An old Canvas is still shown (it is renewed when it is next asked
+    // for); an old "none" is not trusted.
+    if (stored.url != null) return (url: stored.url);
+    final fresh = DateTime.now().difference(stored.savedAt) < _storedMissTtl;
+    return fresh ? (url: null) : null;
+  }
+
+  /// The Canvas video saved with the download of [songId], as a file URL.
+  String? _savedCanvas(String songId) {
+    final storage = StorageService.instance;
+    if (!storage.hasLocalCanvas(songId)) return null;
+    return Uri.file(storage.localCanvasPath(songId)).toString();
+  }
+
+  String? getCachedCanvasUrlSync(String songId) {
+    if (!isEnabled) return null;
+    return _knownAnswer(songId)?.url;
   }
 
   /// True when the answer for [songId] is known, including "no canvas".
-  bool hasCachedResult(String songId) {
-    final cached = _canvasCache[songId];
-    return cached != null && DateTime.now().isBefore(cached.$2);
-  }
+  bool hasCachedResult(String songId) => _knownAnswer(songId) != null;
 
   void setCanvasEnabled(bool enabled) {
     isCanvasEnabledNotifier.value = enabled;
@@ -189,20 +220,47 @@ class CanvasService {
   void invalidate(String? songId) {
     if (songId == null) return;
     _canvasCache.remove(songId);
+    final storage = StorageService.instance;
+    unawaited(storage.removeCanvasAnswer(songId));
+    // A saved video that does not play is a broken file: drop it, the next
+    // pass over the downloads saves it again.
+    if (storage.hasLocalCanvas(songId)) {
+      storage.setLocalCanvas(songId, saved: false);
+      unawaited(() async {
+        try {
+          await File(storage.localCanvasPath(songId)).delete();
+        } catch (_) {
+          // Already gone.
+        }
+      }());
+    }
   }
 
   /// Forgets every answer. Logging in or out of Spotify changes what can be
-  /// found, including for songs already answered "no canvas".
+  /// found, including for songs already answered "no canvas". Videos saved
+  /// with the downloads are kept.
   void clearCache() {
     _canvasCache.clear();
     _albumCanvasCache.clear();
     _searchBlockedUntil = null;
+    unawaited(StorageService.instance.clearCanvasAnswers());
   }
 
-  /// Canvas video URL for [song], or null when it has none. Concurrent
-  /// requests for the same song (background prefetch and the player) share
-  /// one resolution.
+  /// Canvas video URL for [song], or null when it has none: the video saved
+  /// with its download when there is one (a file URL, nothing to fetch),
+  /// otherwise [remoteCanvasUrl].
   Future<String?> getCanvasUrl(Song song) {
+    if (!isEnabled) return Future.value(null);
+    final saved = _savedCanvas(song.id);
+    if (saved != null) return Future.value(saved);
+    return remoteCanvasUrl(song);
+  }
+
+  /// Canvas video of [song] on Spotify's servers, or null when it has none.
+  /// Answered from this session's cache, then from the answer stored on
+  /// disk, and only then by looking it up. Concurrent requests for the same
+  /// song (background prefetch and the player) share one lookup.
+  Future<String?> remoteCanvasUrl(Song song) {
     if (!isEnabled) return Future.value(null);
 
     final cachedEntry = _canvasCache[song.id];
@@ -216,6 +274,24 @@ class CanvasService {
     final pending = _inFlight[song.id];
     if (pending != null) return pending;
 
+    final stored = StorageService.instance.getCanvasAnswer(song.id, _rulesVersion);
+    if (stored != null) {
+      final age = DateTime.now().difference(stored.savedAt);
+      final fresh = age < (stored.url == null ? _storedMissTtl : _storedTtl);
+      if (fresh || stored.url != null) {
+        _canvasCache[song.id] = (stored.url, DateTime.now().add(_cacheTtl));
+        // Old but usable: shown now, looked up again behind the scenes.
+        if (!fresh) unawaited(_lookUp(song));
+        return Future.value(stored.url);
+      }
+    }
+
+    return _lookUp(song);
+  }
+
+  Future<String?> _lookUp(Song song) {
+    final pending = _inFlight[song.id];
+    if (pending != null) return pending;
     final future = _resolveAndCache(song);
     _inFlight[song.id] = future;
     return future.whenComplete(() => _inFlight.remove(song.id));
@@ -237,6 +313,11 @@ class CanvasService {
     }
     final ttl = result.failed ? _failureTtl : _cacheTtl;
     _canvasCache[song.id] = (result.value, DateTime.now().add(ttl));
+    // A lookup that failed (no network) is not an answer worth keeping.
+    if (!result.failed) {
+      unawaited(StorageService.instance
+          .saveCanvasAnswer(song.id, result.value, _rulesVersion));
+    }
     return result.value;
   }
 

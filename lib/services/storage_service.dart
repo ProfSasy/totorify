@@ -18,6 +18,8 @@ class StorageService {
   static const String _ytMappingBoxName = 'kreate_yt_mappings';
   static const String _coversBoxName = 'kreate_covers';
   static const String _artistsBoxName = 'kreate_artists';
+  static const String _canvasBoxName = 'kreate_canvas';
+  static const String _lyricsBoxName = 'kreate_lyrics';
 
   late Box _favoritesBox;
   late Box _playlistsBox;
@@ -27,6 +29,14 @@ class StorageService {
   late Box _ytMappingBox;
   late Box _coversBox;
   late Box _artistsBox;
+  late Box _canvasBox;
+  late Box _lyricsBox;
+
+  // The Documents folder moves when iOS reinstalls the app: paths are built
+  // from it at every start and never stored.
+  late String _documentsPath;
+  // Songs whose Canvas video is saved next to their audio.
+  final Set<String> _localCanvasIds = {};
 
   // In-memory caches to eliminate repeated Hive disk deserializations
   final List<Song> _cachedFavorites = [];
@@ -51,6 +61,7 @@ class StorageService {
 
   Future<void> init() async {
     final appDir = await getApplicationDocumentsDirectory();
+    _documentsPath = appDir.path;
     await Hive.initFlutter(appDir.path);
 
     // A corrupted box must never prevent the app from starting: recreate it.
@@ -62,9 +73,28 @@ class StorageService {
     _ytMappingBox = await _openBoxSafe(_ytMappingBoxName);
     _coversBox = await _openBoxSafe(_coversBoxName);
     _artistsBox = await _openBoxSafe(_artistsBoxName);
+    _canvasBox = await _openBoxSafe(_canvasBoxName);
+    _lyricsBox = await _openBoxSafe(_lyricsBoxName);
 
     await _forgetSourceChoicesOnce();
     _loadInitialData();
+    _findSavedCanvases();
+  }
+
+  void _findSavedCanvases() {
+    _localCanvasIds.clear();
+    try {
+      final dir = Directory(downloadsPath);
+      if (!dir.existsSync()) return;
+      for (final entry in dir.listSync(followLinks: false)) {
+        final name = entry.uri.pathSegments.last;
+        if (entry is File && name.endsWith(_canvasSuffix)) {
+          _localCanvasIds.add(name.substring(0, name.length - _canvasSuffix.length));
+        }
+      }
+    } catch (e) {
+      debugPrint('StorageService._findSavedCanvases: $e');
+    }
   }
 
   /// One-off cleanup. While YouTube refused every video in its embedded
@@ -400,9 +430,100 @@ class StorageService {
   // --- DOWNLOADS & OFFLINE ---
   bool isDownloaded(String songId) => _downloadedIds.contains(songId);
 
-  Future<String> getLocalAudioPath(String songId) async {
-    final appDir = await getApplicationDocumentsDirectory();
-    return '${appDir.path}/downloads/$songId.m4a';
+  static const String _canvasSuffix = '.canvas.mp4';
+
+  String get downloadsPath => '$_documentsPath/downloads';
+
+  Future<String> getLocalAudioPath(String songId) async =>
+      '$downloadsPath/$songId.m4a';
+
+  /// Where the Canvas video of a downloaded song is kept.
+  String localCanvasPath(String songId) => '$downloadsPath/$songId$_canvasSuffix';
+
+  bool hasLocalCanvas(String songId) => _localCanvasIds.contains(songId);
+
+  void setLocalCanvas(String songId, {required bool saved}) {
+    if (saved) {
+      _localCanvasIds.add(songId);
+    } else {
+      _localCanvasIds.remove(songId);
+    }
+  }
+
+  List<String> get localCanvasIds => List.unmodifiable(_localCanvasIds);
+
+  /// Exact length of a downloaded song, measured when it was downloaded.
+  Duration? getDownloadDuration(String songId) {
+    final value = _ytMappingBox.get('duration_$songId');
+    return value is int && value > 0 ? Duration(milliseconds: value) : null;
+  }
+
+  Future<void> saveDownloadDuration(String songId, Duration duration) async {
+    try {
+      await _ytMappingBox.put('duration_$songId', duration.inMilliseconds);
+    } catch (e) {
+      debugPrint('StorageService.saveDownloadDuration: $e');
+    }
+  }
+
+  // --- CANVAS ANSWERS ---
+  // The Canvas found for a song (or the fact that it has none) survives a
+  // restart, so it is not looked up again at every session.
+  static const int _maxCanvasAnswers = 1500;
+
+  /// The stored answer for [songId], or null when there is none or it was
+  /// made by other rules ([version]).
+  ({String? url, DateTime savedAt})? getCanvasAnswer(String songId, int version) {
+    final raw = _canvasBox.get(songId);
+    if (raw is! Map || raw['v'] != version || raw['at'] is! int) return null;
+    final url = raw['url'];
+    return (
+      url: url is String && url.isNotEmpty ? url : null,
+      savedAt: DateTime.fromMillisecondsSinceEpoch(raw['at'] as int),
+    );
+  }
+
+  Future<void> saveCanvasAnswer(String songId, String? url, int version) async {
+    try {
+      if (_canvasBox.length >= _maxCanvasAnswers) {
+        await _canvasBox.deleteAll(_canvasBox.keys.take(_maxCanvasAnswers ~/ 5).toList());
+      }
+      await _canvasBox.put(songId, {
+        'url': url,
+        'v': version,
+        'at': DateTime.now().millisecondsSinceEpoch,
+      });
+    } catch (e) {
+      debugPrint('StorageService.saveCanvasAnswer: $e');
+    }
+  }
+
+  Future<void> removeCanvasAnswer(String songId) async => _canvasBox.delete(songId);
+
+  Future<void> clearCanvasAnswers() async => _canvasBox.clear();
+
+  // --- LYRICS ---
+  static const int _maxStoredLyrics = 1000;
+
+  Map<String, dynamic>? getStoredLyrics(String songId) {
+    final raw = _lyricsBox.get(songId);
+    return raw is Map ? Map<String, dynamic>.from(raw) : null;
+  }
+
+  Future<void> saveLyrics(String songId, Map<String, dynamic> data) async {
+    try {
+      if (_lyricsBox.length >= _maxStoredLyrics) {
+        // The oldest go first, but never those of a downloaded song.
+        final evict = _lyricsBox.keys
+            .where((key) => !_downloadedIds.contains(key))
+            .take(_maxStoredLyrics ~/ 5)
+            .toList();
+        await _lyricsBox.deleteAll(evict);
+      }
+      await _lyricsBox.put(songId, data);
+    } catch (e) {
+      debugPrint('StorageService.saveLyrics: $e');
+    }
   }
 
   Future<bool> hasLocalAudioFile(String songId) async {
@@ -451,6 +572,7 @@ class StorageService {
 
   Future<void> clearAllDownloadsBox() async {
     _downloadedIds.clear();
+    _localCanvasIds.clear();
     _cachedDownloads.clear();
     downloadsNotifier.value = [];
     await _downloadsBox.clear();
@@ -482,6 +604,12 @@ class StorageService {
       _settingsBox.get('canvas_enabled', defaultValue: true) as bool? ?? true;
   Future<void> setCanvasEnabled(bool value) async =>
       _settingsBox.put('canvas_enabled', value);
+
+  /// Whether the Canvas video of a song is saved when the song is downloaded.
+  bool get savesCanvasWithDownloads =>
+      _settingsBox.get('save_canvas_with_downloads', defaultValue: true) as bool? ?? true;
+  Future<void> setSavesCanvasWithDownloads(bool value) async =>
+      _settingsBox.put('save_canvas_with_downloads', value);
 
   String? get spDcCookie => _settingsBox.get('sp_dc_cookie') as String?;
   Future<void> setSpDcCookie(String? value) async { if (value == null || value.isEmpty) { await _settingsBox.delete('sp_dc_cookie'); } else { await _settingsBox.put('sp_dc_cookie', value); } }

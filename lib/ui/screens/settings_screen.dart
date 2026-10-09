@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
@@ -35,6 +37,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isHighQuality = true;
   bool _isAmoled = false;
   bool _hasSpDcCookie = false;
+  bool _savesCanvas = true;
 
   String? _userName;
   String? _userEmail;
@@ -46,6 +49,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _hasSpDcCookie = SpotifyInternalAuthService.instance.hasSpDcCookie;
     _isHighQuality = StorageService.instance.isHighQuality;
     _isAmoled = StorageService.instance.isAmoledTheme;
+    _savesCanvas = StorageService.instance.savesCanvasWithDownloads;
     _loadStorageSize();
     _loadUserInfo();
     // This screen lives for the whole session: the figure must follow the
@@ -358,6 +362,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     child: Text('Svuota',
                         style: TextStyle(color: Theme.of(context).colorScheme.error)),
                   ),
+                ),
+                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                SwitchListTile.adaptive(
+                  title: Text('Salva i Canvas dei brani scaricati'),
+                  subtitle: Text(
+                      'Partono subito e funzionano offline, ma occupano spazio. '
+                      'Disattivando, quelli salvati vengono eliminati.'),
+                  value: _savesCanvas,
+                  activeTrackColor: primaryColor,
+                  onChanged: (val) async {
+                    PlaybackLogService.instance
+                        .log('UI', 'settings: salva canvas dei download = $val');
+                    setState(() => _savesCanvas = val);
+                    await StorageService.instance.setSavesCanvasWithDownloads(val);
+                    if (val) {
+                      unawaited(DownloadService.instance.backfillExtras());
+                    } else {
+                      await DownloadService.instance.deleteSavedCanvases();
+                      _loadStorageSize();
+                    }
+                  },
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
                 ListTile(

@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'dart:io';
 
 import 'package:video_player/video_player.dart';
 
@@ -13,6 +14,17 @@ class CanvasVideoPool {
   static final CanvasVideoPool instance = CanvasVideoPool._();
 
   static const int _maxWarmVideos = 4;
+
+  /// Player for a Canvas, which is either on Spotify's servers or a file
+  /// saved with a download.
+  static VideoPlayerController controllerFor(String url) {
+    // No mixWithOthers: the option applies to the whole audio session, which
+    // the music player shares, and would hide the lock-screen controls.
+    final uri = Uri.parse(url);
+    return uri.isScheme('file')
+        ? VideoPlayerController.file(File.fromUri(uri))
+        : VideoPlayerController.networkUrl(uri);
+  }
 
   // Insertion-ordered: the first key is the oldest controller, evicted first
   // when the pool is full.
@@ -47,9 +59,7 @@ class CanvasVideoPool {
       } catch (_) {}
     }
 
-    // No mixWithOthers: the option applies to the whole audio session, which
-    // the music player shares, and would hide the lock-screen controls.
-    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+    final controller = controllerFor(url);
     _controllers[url] = controller;
 
     final future = () async {

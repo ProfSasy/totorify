@@ -4,6 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import '../models/song.dart';
+import 'canvas_service.dart';
+import 'lyrics_service.dart';
+import 'playback_log_service.dart';
 import 'storage_service.dart';
 import 'track_matcher_service.dart';
 import 'ytmusic_service.dart';
@@ -139,6 +142,13 @@ class DownloadService {
         _updateProgress(song.id, 1.0);
 
         await StorageService.instance.saveDownloadedSong(song);
+        // The exact length, so playback does not have to trust the player's
+        // figure for this kind of file (see AudioPlayerHandler).
+        final length = YTMusicService.instance.streamDuration(targetId);
+        if (length != null) {
+          await StorageService.instance.saveDownloadDuration(song.id, length);
+        }
+        unawaited(saveExtras(song));
 
         await Future.delayed(const Duration(milliseconds: 250));
         _removeProgress(song.id);
@@ -358,7 +368,159 @@ class DownloadService {
         await tempFile.delete();
       }
       await StorageService.instance.removeDownloadedSong(songId);
+      await _deleteSavedCanvas(songId);
     } catch (e) { debugPrint('DownloadService: $e'); }
+  }
+
+  // ── Extras of a download: Canvas video and lyrics ─────────────────────────
+  //
+  // Saved next to the audio, they make a downloaded song open at once and
+  // work offline: nothing has to be looked up or fetched to show them.
+
+  static const int _maxCanvasBytes = 30 * 1024 * 1024;
+  // One song at a time, with a pause: nobody is waiting, and each Canvas
+  // lookup is a burst of requests that Spotify rate-limits.
+  static const Duration _extrasPause = Duration(milliseconds: 1500);
+
+  Future<void> _extrasQueue = Future.value();
+  final Set<String> _extrasQueued = {};
+
+  bool _wantsCanvas(String songId) {
+    final storage = StorageService.instance;
+    final canvas = CanvasService.instance;
+    if (!storage.savesCanvasWithDownloads || !canvas.isEnabled) return false;
+    if (storage.hasLocalCanvas(songId)) return false;
+    // Already known to have none: nothing to save.
+    final knownNone = canvas.hasCachedResult(songId) &&
+        canvas.getCachedCanvasUrlSync(songId) == null;
+    return !knownNone;
+  }
+
+  bool _needsExtras(String songId) {
+    if (!StorageService.instance.isDownloaded(songId)) return false;
+    return _wantsCanvas(songId) || !LyricsService.instance.isStored(songId);
+  }
+
+  /// Saves the lyrics and (unless turned off in Settings) the Canvas video
+  /// of a downloaded song. Returns at once when there is nothing to do.
+  Future<void> saveExtras(Song song) {
+    if (!_needsExtras(song.id) || !_extrasQueued.add(song.id)) return Future.value();
+    final done = _extrasQueue.then((_) => _saveExtras(song)).whenComplete(() {
+      _extrasQueued.remove(song.id);
+    });
+    _extrasQueue = done.then((_) => Future<void>.delayed(_extrasPause));
+    return done;
+  }
+
+  Future<void> _saveExtras(Song song) async {
+    try {
+      if (!LyricsService.instance.isStored(song.id)) {
+        await LyricsService.instance.getLyrics(song);
+      }
+      if (_wantsCanvas(song.id)) {
+        final url = await CanvasService.instance.remoteCanvasUrl(song);
+        if (url != null) await _saveCanvas(song, url);
+      }
+    } catch (e) {
+      debugPrint('DownloadService.saveExtras "${song.title}": $e');
+    }
+  }
+
+  Future<void> _saveCanvas(Song song, String url) async {
+    final storage = StorageService.instance;
+    await _getDownloadDir();
+    final file = File(storage.localCanvasPath(song.id));
+    final temp = File('${file.path}.tmp');
+    final client = http.Client();
+    try {
+      final response = await client
+          .send(http.Request('GET', Uri.parse(url)))
+          .timeout(const Duration(seconds: 20));
+      final expected = response.contentLength ?? 0;
+      if (response.statusCode != 200 || expected > _maxCanvasBytes) {
+        debugPrint('DownloadService canvas "${song.title}": '
+            'HTTP ${response.statusCode}, $expected byte');
+        return;
+      }
+
+      final sink = temp.openWrite();
+      try {
+        await sink.addStream(response.stream.timeout(const Duration(seconds: 30)));
+      } finally {
+        await sink.close();
+      }
+
+      final saved = await temp.length();
+      final complete = saved > 8 * 1024 && (expected == 0 || saved == expected);
+      // The song can have been deleted, or the setting turned off, while
+      // its Canvas was coming down.
+      if (!complete ||
+          !storage.isDownloaded(song.id) ||
+          !storage.savesCanvasWithDownloads) {
+        return;
+      }
+      if (await file.exists()) await file.delete();
+      await temp.rename(file.path);
+      storage.setLocalCanvas(song.id, saved: true);
+      PlaybackLogService.instance.log(
+        'DOWNLOAD',
+        'canvas salvato per "${song.title}" '
+        '(${(saved / (1024 * 1024)).toStringAsFixed(1)} MB)',
+      );
+    } catch (e) {
+      debugPrint('DownloadService canvas "${song.title}": $e');
+    } finally {
+      client.close();
+      try {
+        if (await temp.exists()) await temp.delete();
+      } catch (_) {
+        // Left behind: the next save overwrites it.
+      }
+    }
+  }
+
+  Future<void> _deleteSavedCanvas(String songId) async {
+    final storage = StorageService.instance;
+    storage.setLocalCanvas(songId, saved: false);
+    try {
+      final file = File(storage.localCanvasPath(songId));
+      if (await file.exists()) await file.delete();
+    } catch (e) {
+      debugPrint('DownloadService._deleteSavedCanvas: $e');
+    }
+  }
+
+  /// Brings the songs downloaded before (or while offline) up to date:
+  /// saves the Canvas and lyrics they miss, in the background.
+  Future<void> backfillExtras() async {
+    final storage = StorageService.instance;
+    // Videos of songs that are no longer downloaded.
+    for (final id in storage.localCanvasIds) {
+      if (!storage.isDownloaded(id)) await _deleteSavedCanvas(id);
+    }
+
+    final pending = [
+      for (final song in storage.downloadsNotifier.value)
+        if (_needsExtras(song.id)) song,
+    ];
+    if (pending.isEmpty) return;
+    PlaybackLogService.instance.log(
+      'DOWNLOAD',
+      'recupero canvas e testi di ${pending.length} brani scaricati',
+    );
+    await Future.wait(pending.map(saveExtras));
+    PlaybackLogService.instance.log(
+      'DOWNLOAD',
+      'recupero terminato: ${storage.localCanvasIds.length} canvas salvati in tutto',
+    );
+  }
+
+  /// Frees the space taken by the saved Canvas videos (the setting was
+  /// turned off). The songs keep playing; their Canvas streams again.
+  Future<void> deleteSavedCanvases() async {
+    for (final id in StorageService.instance.localCanvasIds) {
+      await _deleteSavedCanvas(id);
+    }
   }
 
   Future<double> getTotalStorageUsedMB() async {

@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/lyrics_model.dart';
 import '../models/song.dart';
+import 'storage_service.dart';
 
 class LyricsService {
   static final LyricsService instance = LyricsService._internal();
@@ -12,9 +13,15 @@ class LyricsService {
   // "No lyrics" is remembered only for a while: the sources are often
   // briefly unavailable, and the lyrics of a new release arrive later.
   static const Duration _missTtl = Duration(minutes: 10);
+  // On disk a miss lasts longer: it only spares the background pass over
+  // the downloads from searching the same songs at every start.
+  static const Duration _storedMissTtl = Duration(days: 3);
   final Map<String, Lyrics> _memoryCache = {};
   final Map<String, DateTime> _missUntil = {};
   final Map<String, Future<Lyrics>> _inFlight = {};
+  // Requests to the sources that did not get an answer (no network, server
+  // errors). A search that met one is not a reliable "no lyrics".
+  int _failures = 0;
   final http.Client _client = http.Client();
 
   static const Map<String, String> _headers = {
@@ -63,9 +70,12 @@ class LyricsService {
           return Lyrics(plainLyrics: plain, syncedLyrics: const [], isSynced: false);
         }
       } else {
+        // 404 is the answer "not here"; anything else is a failure.
+        if (response.statusCode != 404) _failures++;
         debugPrint('LyricsService._fetchFromGet HTTP ${response.statusCode} for "$trackName" by "$artistName"');
       }
     } catch (e) {
+      _failures++;
       debugPrint('LyricsService._fetchFromGet error for "$trackName" by "$artistName": $e');
     }
     return null;
@@ -114,6 +124,7 @@ class LyricsService {
         }
       }
     } catch (e) {
+      _failures++;
       debugPrint('LyricsService._fetchFromSearch error for "$query": $e');
     }
     return null;
@@ -180,6 +191,7 @@ class LyricsService {
         }
       }
     } catch (e) {
+      _failures++;
       debugPrint('LyricsService._fetchFromBetterLyrics error: $e');
     }
     return null;
@@ -265,6 +277,7 @@ class LyricsService {
         return Lyrics.fromLrc(lrcText);
       }
     } catch (e) {
+      _failures++;
       debugPrint('LyricsService._fetchFromKuGou error: $e');
     }
     return null;
@@ -284,6 +297,16 @@ class LyricsService {
     final pending = _inFlight[song.id];
     if (pending != null) return pending;
 
+    // Found before, in any session: shown at once and available offline.
+    if (cached == null) {
+      final stored = _fromDisk(song.id, acceptMiss: !refresh);
+      if (stored != null) {
+        _cacheLyrics(song.id, stored);
+        if (stored.isEmpty) _missUntil[song.id] = DateTime.now().add(_missTtl);
+        return Future.value(stored);
+      }
+    }
+
     final future = _searchLyrics(song);
     _inFlight[song.id] = future;
     // Block body on purpose: the callback must not return the future.
@@ -292,7 +315,38 @@ class LyricsService {
     });
   }
 
+  /// Lyrics saved for [songId]. A saved "none" counts only while it is
+  /// recent and [acceptMiss] is set.
+  Lyrics? _fromDisk(String songId, {required bool acceptMiss}) {
+    final stored = StorageService.instance.getStoredLyrics(songId);
+    if (stored == null) return null;
+    final lyrics = Lyrics.fromMap(stored);
+    if (lyrics.isNotEmpty) return lyrics;
+    final at = stored['at'];
+    final recent = at is int &&
+        DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(at)) < _storedMissTtl;
+    return acceptMiss && recent ? Lyrics.empty : null;
+  }
+
+  /// True when nothing needs to be fetched to show the lyrics of [songId].
+  bool isStored(String songId) =>
+      _memoryCache[songId]?.isNotEmpty == true || _fromDisk(songId, acceptMiss: true) != null;
+
   Future<Lyrics> _searchLyrics(Song song) async {
+    final failuresBefore = _failures;
+    final lyrics = await _searchSources(song);
+    // "None" is saved only when every source answered: a search made
+    // without network must not hide the lyrics for days.
+    if (lyrics.isNotEmpty || _failures == failuresBefore) {
+      await StorageService.instance.saveLyrics(song.id, {
+        ...lyrics.toMap(),
+        'at': DateTime.now().millisecondsSinceEpoch,
+      });
+    }
+    return lyrics;
+  }
+
+  Future<Lyrics> _searchSources(Song song) async {
     _missUntil.remove(song.id);
     try {
       final (cleanTitle, cleanArtist) = _parseSongMetadata(song.title, song.artist);

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'services/audio_handler.dart';
 import 'services/auth_service.dart';
 import 'services/canvas_service.dart';
+import 'services/download_service.dart';
 import 'services/playback_log_service.dart';
 import 'services/storage_service.dart';
 import 'ui/screens/login_screen.dart';
@@ -148,6 +149,11 @@ Future<void> _startApp() async {
   });
 
   PlaybackLogService.instance.log('INIT', 'audio service + sessione configurati');
+  // Once the app is up: Canvas and lyrics of the songs downloaded so far.
+  unawaited(Future<void>.delayed(
+    const Duration(seconds: 6),
+    DownloadService.instance.backfillExtras,
+  ));
   runApp(const TotorifyApp());
 }
 

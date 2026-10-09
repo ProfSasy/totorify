@@ -11,6 +11,7 @@ import '../models/song.dart';
 import 'canvas_service.dart';
 import 'canvas_video_pool.dart';
 import 'cover_art_service.dart';
+import 'download_service.dart';
 import 'playback_log_service.dart';
 import 'playback_queue.dart';
 import 'recommendation_service.dart';
@@ -456,8 +457,13 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
           generation,
           start: start,
           source: 'file locale',
+          knownDuration: StorageService.instance.getDownloadDuration(song.id),
         );
-        if (opened == _Open.ok) _currentStreamId = null;
+        if (opened == _Open.ok) {
+          _currentStreamId = null;
+          // A song downloaded before Canvas and lyrics were saved with it.
+          unawaited(DownloadService.instance.saveExtras(song));
+        }
         // An unreadable file falls through to streaming below.
         if (opened != _Open.failed) return;
       }

@@ -27,6 +27,27 @@ class Lyrics {
   bool get isNotEmpty => syncedLyrics.isNotEmpty || plainLyrics.isNotEmpty;
   bool get isEmpty => !isNotEmpty;
 
+  /// Compact form for storage: synced lines as [milliseconds, text] pairs.
+  Map<String, dynamic> toMap() => {
+        'plain': plainLyrics,
+        'synced': [
+          for (final line in syncedLyrics) [line.time.inMilliseconds, line.text],
+        ],
+      };
+
+  factory Lyrics.fromMap(Map<String, dynamic> map) {
+    final synced = <LyricLine>[
+      for (final raw in map['synced'] as List<dynamic>? ?? const [])
+        if (raw is List && raw.length == 2 && raw[0] is int && raw[1] is String)
+          LyricLine(time: Duration(milliseconds: raw[0] as int), text: raw[1] as String),
+    ];
+    return Lyrics(
+      plainLyrics: map['plain'] as String? ?? '',
+      syncedLyrics: synced,
+      isSynced: synced.isNotEmpty,
+    );
+  }
+
   factory Lyrics.fromLrc(String lrcText, {String? plainFallback}) {
     if (lrcText.trim().isEmpty) {
       return Lyrics(

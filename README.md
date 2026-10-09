@@ -8,7 +8,7 @@ Nata come client ispirato a [Kreate](https://github.com/knighthat/Kreate) (fork 
 
 - **Riproduzione**: coda con ripetizione (brano o coda), casuale e Smart Shuffle, che mescola alla coda brani consigliati.
 - **Lock Screen e Control Center**: copertina, controlli e avanzamento del brano.
-- **Download e ascolto offline**: i brani scaricati vengono riprodotti dal file locale, senza rete.
+- **Download e ascolto offline**: i brani scaricati vengono riprodotti dal file locale, senza rete. Con il brano vengono salvati anche il testo e il video Canvas (disattivabile dalle Impostazioni), così compaiono subito e anche offline.
 - **Copertine originali**: le miniature video di YouTube vengono sostituite con la copertina ufficiale dell'album.
 - **Canvas**: il video in loop di Spotify dietro al player. Se il brano non ne ha uno, viene usato quello di un altro brano dello stesso album, poi (per i feat) di un brano con almeno due degli stessi artisti, infine quello dello stesso artista con la data di uscita più vicina.
 - **Testi sincronizzati**: da LRCLIB, con ripiego su altre fonti.
