@@ -1,0 +1,85 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Secrets & credentials ? never commit these
+.env
+.env.*
+*.env
+secrets.dart
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.mobileprovision
+GoogleService-Info.plist
+google-services.json
+service-account*.json
+credentials.json
+*.hive
+*.sqlite
+*.sqlite3
+*.db
+
+# Build artifacts: IPAs are produced by CI or locally, never committed
+/build-output/
+*.ipa
+
+# Scratch files from debugging sessions
+/temp_*
+/patch_*.py
+/fix_*.py
+/test_*.dart
+/analysis*.txt
+/kreate_*.lock
+
+# Machine-specific files
+android/local.properties
+ios/Flutter/Generated.xcconfig
+**/xcuserdata/
+*.xcuserstate
