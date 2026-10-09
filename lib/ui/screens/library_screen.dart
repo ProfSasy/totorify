@@ -873,7 +873,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
                         setSheetState(() {
                           isLoading = true;
-                          statusText = 'Lettura playlist Spotify...';
+                          statusText = 'Lettura della playlist…';
                         });
 
                         final created = await PlaylistImporterService.instance.importFromUrl(

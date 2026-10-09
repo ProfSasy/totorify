@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/artist.dart';
 import '../models/song.dart';
 import '../models/playlist.dart';
+import 'playback_log_service.dart';
 
 class StorageService {
   static final StorageService instance = StorageService._internal();
@@ -311,6 +312,7 @@ class StorageService {
     _cachedPlaylists.add(playlist);
     playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
     await _playlistsBox.put(id, playlist.toMap());
+    PlaybackLogService.instance.log('PLAYLIST', 'creata "$title"');
     return playlist;
   }
 
@@ -323,26 +325,41 @@ class StorageService {
     }
     playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
     await _playlistsBox.put(playlist.id, playlist.toMap());
+    PlaybackLogService.instance.log(
+      'PLAYLIST',
+      'salvata "${playlist.title}" (${playlist.songs.length} brani)',
+    );
   }
 
   Future<void> deletePlaylist(String playlistId) async {
+    final removed = _cachedPlaylists.where((p) => p.id == playlistId).firstOrNull;
     _cachedPlaylists.removeWhere((p) => p.id == playlistId);
     playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
     await _playlistsBox.delete(playlistId);
+    PlaybackLogService.instance.log(
+      'PLAYLIST',
+      'eliminata "${removed?.title ?? playlistId}"',
+    );
   }
 
-  Future<void> addSongToPlaylist(String playlistId, Song song) async {
+  /// Adds [song] to a playlist. Returns false when it was already there (or
+  /// the playlist no longer exists) and nothing changed.
+  Future<bool> addSongToPlaylist(String playlistId, Song song) async {
     final idx = _cachedPlaylists.indexWhere((p) => p.id == playlistId);
-    if (idx != -1) {
-      final playlist = _cachedPlaylists[idx];
-      if (!playlist.songs.any((s) => s.id == song.id)) {
-        final updatedSongs = List<Song>.from(playlist.songs)..add(song);
-        final updated = playlist.copyWith(songs: updatedSongs);
-        _cachedPlaylists[idx] = updated;
-        playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
-        await _playlistsBox.put(playlistId, updated.toMap());
-      }
-    }
+    if (idx == -1) return false;
+    final playlist = _cachedPlaylists[idx];
+    if (playlist.songs.any((s) => s.id == song.id)) return false;
+
+    final updatedSongs = List<Song>.from(playlist.songs)..add(song);
+    final updated = playlist.copyWith(songs: updatedSongs);
+    _cachedPlaylists[idx] = updated;
+    playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
+    await _playlistsBox.put(playlistId, updated.toMap());
+    PlaybackLogService.instance.log(
+      'PLAYLIST',
+      '"${song.title}" aggiunto a "${playlist.title}" (${updatedSongs.length} brani)',
+    );
+    return true;
   }
 
   /// Batch update for playlist songs to prevent race conditions during parallel processing.
@@ -369,6 +386,10 @@ class StorageService {
       _cachedPlaylists[idx] = updated;
       playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
       await _playlistsBox.put(playlistId, updated.toMap());
+      PlaybackLogService.instance.log(
+        'PLAYLIST',
+        'brano $songId rimosso da "${playlist.title}" (${updatedSongs.length} brani)',
+      );
     }
   }
 

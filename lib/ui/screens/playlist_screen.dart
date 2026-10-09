@@ -328,6 +328,11 @@ class PlaylistScreen extends StatelessWidget {
                                     tooltip: allDownloaded ? 'Scaricata' : 'Scarica offline',
                                     onPressed: () async {
                                       final messenger = ScaffoldMessenger.of(context);
+                                      PlaybackLogService.instance.log(
+                                        'UI',
+                                        'playlist: scarica "${playlist.title}" '
+                                        '(${songs.length} brani, già tutti scaricati: $allDownloaded)',
+                                      );
                                       if (allDownloaded) {
                                         final again = await showCupertinoDialog<bool>(
                                           context: context,

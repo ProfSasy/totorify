@@ -379,8 +379,10 @@ class SongTile extends StatelessWidget {
 
   void _showAddToPlaylistDialog(BuildContext context) {
     final playlists = StorageService.instance.getPlaylists();
+    // Taken now: the row can leave the screen before a playlist is chosen.
+    final messenger = ScaffoldMessenger.of(context);
     if (playlists.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
           content: Text('Nessuna playlist creata. Creane una in Libreria!'),
           behavior: SnackBarBehavior.floating,
@@ -395,14 +397,17 @@ class SongTile extends StatelessWidget {
         title: Text('Scegli Playlist'),
         actions: playlists.map((pl) {
           return CupertinoActionSheetAction(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
               PlaybackLogService.instance.log(
                   'UI', 'tile menu: aggiungo a "${pl.title}"');
-              StorageService.instance.addSongToPlaylist(pl.id, song);
-              ScaffoldMessenger.of(context).showSnackBar(
+              final added =
+                  await StorageService.instance.addSongToPlaylist(pl.id, song);
+              messenger.showSnackBar(
                 SnackBar(
-                  content: Text('Aggiunto a "${pl.title}"'),
+                  content: Text(added
+                      ? 'Aggiunto a "${pl.title}"'
+                      : 'Già presente in "${pl.title}"'),
                   behavior: SnackBarBehavior.floating,
                 ),
               );

@@ -220,7 +220,7 @@ class TrackMatcherService {
     } else if (_titleMatches(targetTitle, candTitle)) {
       score += 100;
     } else {
-      // Not discarded outright (a weak match beats no playback), but ranked
+      // Kept in the list (the sources sheet shows it), but ranked
       // below every candidate with a related title.
       score -= _unrelatedTitlePenalty;
     }
@@ -337,16 +337,24 @@ class TrackMatcherService {
         return null;
       }
 
+      // The best result has an unrelated title: it is another song. Playing
+      // or downloading it under this title is worse than saying that
+      // nothing was found.
+      if (best.$2 <= _unrelatedScore) {
+        PlaybackLogService.instance.error(
+          'MATCHER',
+          'nessun risultato attinente per "${song.title}" - ${song.artist} '
+          '(il migliore era "${best.$1.title}" di ${best.$1.artist})',
+        );
+        return null;
+      }
+
       PlaybackLogService.instance.log(
         'MATCHER',
         '"${song.title}" -> ${best.$1.id} "${best.$1.title}" di ${best.$1.artist} '
         '(${best.$1.duration.inSeconds}s contro ${song.duration.inSeconds}s, punteggio ${best.$2})',
       );
-      // A last-resort match with an unrelated title is played but not
-      // remembered, so a better one can be found next time.
-      if (best.$2 > _unrelatedScore) {
-        await StorageService.instance.cacheYouTubeMapping(song.id, best.$1.id);
-      }
+      await StorageService.instance.cacheYouTubeMapping(song.id, best.$1.id);
       return best.$1.id;
     } catch (e, stack) {
       PlaybackLogService.instance

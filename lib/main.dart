@@ -263,10 +263,23 @@ class _MainWithErrorListener extends StatefulWidget {
 
 class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
   StreamSubscription<String>? _errorSub;
+  StreamSubscription<String>? _downloadSub;
 
   @override
   void initState() {
     super.initState();
+    // A download that fails would otherwise just stop spinning.
+    _downloadSub = DownloadService.instance.failures.listen((msg) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 176),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    });
     _errorSub = widget.audioHandler.errorStream.listen((msg) {
       // The open player covers the snack bar and shows the message itself.
       if (!mounted || PlayerSheet.isOpen) return;
@@ -286,6 +299,7 @@ class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
   @override
   void dispose() {
     _errorSub?.cancel();
+    _downloadSub?.cancel();
     super.dispose();
   }
 
