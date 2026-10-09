@@ -74,7 +74,7 @@ class CanvasVideoPool {
         try {
           await controller.dispose();
         } catch (_) {}
-        PlaybackLogService.instance.log('CANVAS', 'warm fallito: $e');
+        PlaybackLogService.instance.error('CANVAS', 'warm fallito: $e');
       }
     }();
     _warming[url] = future;

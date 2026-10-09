@@ -33,7 +33,19 @@ class TrackMatcherService {
   // Versions that are not the track asked for. Matched as whole words:
   // "live" must not fire on "Deliver" or "Olive".
   static final Map<String, RegExp> _wrongVariants = {
-    for (final word in const ['live', 'cover', 'sped up', 'slowed'])
+    for (final word in const [
+      'live',
+      'cover',
+      'sped up',
+      'speed up',
+      'slowed',
+      'reverb',
+      'nightcore',
+      '8d',
+      'karaoke',
+      'instrumental',
+      'remix',
+    ])
       word: RegExp('\\b$word\\b'),
   };
 
@@ -86,7 +98,9 @@ class TrackMatcherService {
       if (diff == 0) {
         score += 10000;
       } else if (diff <= 2) {
-        score += 5000;
+        // Close enough that the title decides: an official track one second
+        // off must beat a re-upload with the exact length.
+        score += 9000;
       } else if (diff <= 5) {
         score += 2000;
       } else if (diff <= 10) {
@@ -147,16 +161,18 @@ class TrackMatcherService {
   /// YouTube video id to play for [song], or null when none can be found
   /// (no results or no network).
   Future<String?> resolveAndCacheStreamId(Song song) async {
-    if (!needsResolution(song.id)) {
-      return song.id;
-    }
-
-    // A stored value is used only if it really is a video id: older
-    // versions could save the catalog id itself here after a failed match.
+    // A source chosen for this song (by the user, or after its own video
+    // failed) wins for every kind of song, YouTube ones included. A stored
+    // value is used only if it really is a video id: older versions could
+    // save the catalog id itself here after a failed match.
     if (_isVideoId(song.youtubeVideoId)) return song.youtubeVideoId;
 
     final cached = StorageService.instance.getCachedYouTubeMapping(song.id);
     if (_isVideoId(cached)) return cached;
+
+    if (!needsResolution(song.id)) {
+      return song.id;
+    }
 
     try {
       final cleanTitle = _canonicalTitle(song.title);
@@ -177,19 +193,48 @@ class TrackMatcherService {
         if (wider != null && (best == null || wider.$2 > best.$2)) best = wider;
       }
 
-      if (best == null) return null;
+      if (best == null) {
+        PlaybackLogService.instance
+            .error('MATCHER', 'nessun risultato per "${song.title}" - ${song.artist}');
+        return null;
+      }
 
-      PlaybackLogService.instance.log('MATCHER', 'Match Trovato per ${song.title}: ${best.$1.title} (Score: ${best.$2})');
+      PlaybackLogService.instance.log(
+        'MATCHER',
+        '"${song.title}" -> ${best.$1.id} "${best.$1.title}" di ${best.$1.artist} '
+        '(${best.$1.duration.inSeconds}s contro ${song.duration.inSeconds}s, punteggio ${best.$2})',
+      );
       // A last-resort match with an unrelated title is played but not
       // remembered, so a better one can be found next time.
       if (best.$2 > _unrelatedScore) {
         await StorageService.instance.cacheYouTubeMapping(song.id, best.$1.id);
       }
       return best.$1.id;
-    } catch (e) {
-      debugPrint('TrackMatcherService.resolveAndCacheStreamId: $e');
+    } catch (e, stack) {
+      PlaybackLogService.instance
+          .error('MATCHER', 'ricerca fallita per "${song.title}": $e', stack);
       return null;
     }
+  }
+
+  /// Another source for [song], best first, skipping the ids in [exclude]
+  /// (the ones that already failed). Null when nothing related is left.
+  Future<String?> alternativeStreamId(Song song, {required Set<String> exclude}) async {
+    final matches = await getAlternativeMatches(song);
+    for (final match in matches) {
+      if (exclude.contains(match.song.id)) continue;
+      // Sorted by score: from here on the titles are unrelated.
+      if (match.score <= _unrelatedScore) break;
+      PlaybackLogService.instance.log(
+        'MATCHER',
+        'alternativa per "${song.title}": ${match.song.id} "${match.song.title}" '
+        'di ${match.song.artist} (punteggio ${match.score})',
+      );
+      return match.song.id;
+    }
+    PlaybackLogService.instance
+        .log('MATCHER', 'nessuna alternativa per "${song.title}" (${matches.length} candidati)');
+    return null;
   }
 
   Future<List<ScoredTrackMatch>> getAlternativeMatches(Song targetSong, {int limit = 12}) async {

@@ -394,7 +394,10 @@ class YTMusicService {
         body: jsonEncode(body),
       ).timeout(const Duration(seconds: 15));
 
-      if (response.statusCode != 200) return [];
+      if (response.statusCode != 200) {
+        debugPrint('YTMusic.innerTubeSearch "$query": HTTP ${response.statusCode}');
+        return [];
+      }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       return _parseMusicSearchResults(data);
@@ -713,7 +716,10 @@ class YTMusicService {
         body: jsonEncode(body),
       ).timeout(const Duration(seconds: 10));
 
-      if (response.statusCode != 200) return [];
+      if (response.statusCode != 200) {
+        debugPrint('YTMusic.innerTubeNext $videoId: HTTP ${response.statusCode}');
+        return [];
+      }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       return _parseNextResults(data);

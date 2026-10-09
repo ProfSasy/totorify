@@ -77,10 +77,16 @@ class DeezerService {
       final response = await http
           .get(Uri.parse('$_base$path'))
           .timeout(const Duration(seconds: 10));
-      if (response.statusCode != 200) return null;
+      if (response.statusCode != 200) {
+        debugPrint('DeezerService GET $path: HTTP ${response.statusCode}');
+        return null;
+      }
       final data = jsonDecode(utf8.decode(response.bodyBytes));
       // Quota and lookup failures come back as HTTP 200 with an "error" body.
-      if (data is Map && data['error'] != null) return null;
+      if (data is Map && data['error'] != null) {
+        debugPrint('DeezerService GET $path: ${data['error']}');
+        return null;
+      }
       return data;
     } catch (e) {
       debugPrint('DeezerService GET $path: $e');

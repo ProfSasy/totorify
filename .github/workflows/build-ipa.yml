@@ -32,7 +32,7 @@ jobs:
 
       - name: Build iOS App (No Codesign)
         run: |
-          flutter build ios --release --no-codesign -v || true
+          flutter build ios --release --no-codesign -v --dart-define=GIT_SHA=${GITHUB_SHA::7} || true
 
       - name: Package into IPA
         run: |

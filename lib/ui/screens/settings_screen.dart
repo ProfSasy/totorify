@@ -294,9 +294,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ListTile(
                   leading: Icon(CupertinoIcons.doc_text,
                       color: Theme.of(context).colorScheme.primary),
-                  title: Text('Log riproduzione'),
+                  title: Text('Log'),
                   subtitle: Text(
-                      'Ultimi eventi di player, coda e stream (per la diagnosi)'),
+                      'Eventi ed errori dell\'app, da copiare per la diagnosi'),
                   trailing: Icon(CupertinoIcons.chevron_right,
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                       size: 18),

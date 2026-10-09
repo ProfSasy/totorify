@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'services/audio_handler.dart';
@@ -14,8 +15,51 @@ import 'ui/theme/app_theme.dart';
 
 late AudioPlayerHandler audioHandler;
 
-Future<void> main() async {
+/// Routes every failure of the app into the diagnostic log: Flutter
+/// framework errors, uncaught async errors, and the messages the services
+/// print when they swallow an exception.
+void _installErrorLogging() {
+  final log = PlaybackLogService.instance;
+
+  FlutterError.onError = (details) {
+    final where = details.context?.toDescription();
+    final summary = '${details.exceptionAsString()}'
+        '${where == null ? '' : ' | $where'}'
+        '${details.library == null ? '' : ' | ${details.library}'}';
+    // A cover that fails to load is noise, not a bug: one line, no stack.
+    if (details.library == 'image resource service') {
+      log.log('IMG', summary);
+    } else {
+      log.error('FLUTTER', summary, details.stack);
+    }
+    if (kDebugMode) FlutterError.presentError(details);
+  };
+
+  PlatformDispatcher.instance.onError = (error, stack) {
+    log.error('ASYNC', error, stack);
+    return true;
+  };
+
+  // Services report swallowed exceptions with debugPrint, which nobody can
+  // read on a phone: keep those lines too.
+  final printToConsole = debugPrint;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null && message.isNotEmpty) log.log('DBG', message);
+    if (kDebugMode) printToConsole(message, wrapWidth: wrapWidth);
+  };
+}
+
+void main() {
+  // The zone catches what the two handlers above cannot see.
+  runZonedGuarded(_startApp, (error, stack) {
+    PlaybackLogService.instance.error('ZONE', error, stack);
+  });
+}
+
+Future<void> _startApp() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _installErrorLogging();
+  await PlaybackLogService.instance.init();
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -33,9 +77,11 @@ Future<void> main() async {
 
   // Initialize Storage Service (Hive DB)
   await StorageService.instance.init();
+  PlaybackLogService.instance.log('INIT', 'storage pronto');
 
   // Restore previous Google session silently (no UI)
   await AuthService.instance.init();
+  PlaybackLogService.instance.log('INIT', 'auth pronto');
 
   // Restore the user's Canvas preference.
   CanvasService.instance.isCanvasEnabledNotifier.value =
@@ -67,6 +113,10 @@ Future<void> main() async {
   // (and lock screen controls) stay registered.
   var wasPlayingBeforeInterruption = false;
   session.interruptionEventStream.listen((event) {
+    PlaybackLogService.instance.log(
+      'SESSION',
+      'interruzione audio ${event.begin ? 'inizio' : 'fine'} tipo=${event.type.name}',
+    );
     if (event.begin) {
       if (event.type == AudioInterruptionType.duck) {
         unawaited(audioHandler.setVolume(0.25));
@@ -92,6 +142,7 @@ Future<void> main() async {
     }
   });
   session.becomingNoisyEventStream.listen((_) {
+    PlaybackLogService.instance.log('SESSION', 'uscita audio scollegata: pausa');
     unawaited(audioHandler.pause());
   });
 
