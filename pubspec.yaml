@@ -44,9 +44,7 @@ dependencies:
   flutter_secure_storage: ^9.2.4
   audio_session: ^0.1.25
   video_player: ^2.9.2
-  webview_flutter: ^4.14.1
   flutter_inappwebview: ^6.1.5
-  youtube_player_iframe: ^6.0.2
   # Used directly for the Spotify TOTP; was only reachable transitively.
   crypto: ^3.0.3
 

@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_session/audio_session.dart';
+import 'package:flutter/foundation.dart';
 import 'package:video_player/video_player.dart';
-import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 
 import '../models/song.dart';
 import 'canvas_service.dart';
@@ -15,15 +15,35 @@ import 'playback_queue.dart';
 import 'recommendation_service.dart';
 import 'storage_service.dart';
 import 'track_matcher_service.dart';
+import 'ytmusic_service.dart';
 
-/// Bridge between the UI, audio_service and two engines:
-/// - the YouTube iframe, for streamed tracks;
-/// - a local [VideoPlayerController] (AVPlayer), for tracks downloaded to
-///   disk, which play offline and never touch the iframe.
+/// How an attempt to open a source ended.
+enum _Open {
+  /// The source is attached and playing (or paused, if the user asked).
+  ok,
+
+  /// A newer load started meanwhile: nothing more to do for this one.
+  superseded,
+
+  /// The source could not be played.
+  failed,
+}
+
+/// Bridge between the UI, audio_service and the native player.
+///
+/// Audio is played by AVPlayer (through [VideoPlayerController]) from one of
+/// three sources, tried in this order:
+/// 1. the downloaded file, for songs saved offline;
+/// 2. the direct AAC stream of the matched YouTube video;
+/// 3. the HLS stream of the same video.
+/// When a video cannot be played at all, the next best match is tried.
+///
+/// Playing natively is what makes background playback and the lock screen
+/// work. The embedded YouTube player used before is rejected by YouTube for
+/// every video (error 152), so it is no longer an option.
 ///
 /// Queue rules (order, shuffle, repeat) live in [PlaybackQueue].
 class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler {
-  final YoutubePlayerController _ytController;
   final PlaybackQueue _queue = PlaybackQueue();
 
   final bool _isAutoplayEnabled = true;
@@ -31,37 +51,44 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   final _errorController = StreamController<String>.broadcast();
   Stream<String> get errorStream => _errorController.stream;
 
-  Timer? _positionTimer;
-  String? _currentStreamId;
-  bool _userStopped = true;
+  // Background playback must be allowed explicitly: by default the plugin
+  // pauses its players when the app leaves the foreground.
+  static final VideoPlayerOptions _audioOptions =
+      VideoPlayerOptions(allowBackgroundPlayback: true);
 
-  // Local engine state. [_usingLocal] is true while [_local] is the active
-  // engine; the iframe listener then ignores its events.
-  VideoPlayerController? _local;
-  bool _usingLocal = false;
+  static const Duration _openTimeout = Duration(seconds: 20);
+  static const int _maxSourceAttempts = 3;
+
+  VideoPlayerController? _player;
   double _volume = 1.0;
   double _speed = 1.0;
 
-  // Natural track end can be reported more than once by the engines. The gate
-  // lets only the first report through until the next track starts.
+  Timer? _positionTimer;
+
+  /// YouTube video being streamed, or null while a local file plays.
+  String? _currentStreamId;
+
+  // True until the user (or the queue) asks for playback again after a stop
+  // or a failed load: play() then loads the current song from scratch.
+  bool _userStopped = true;
+  // Set by pause(), cleared by play() and by a new load. A track that
+  // finishes loading while this is set stays paused.
+  bool _userPaused = false;
+  // True from a load until its player is attached: the previous player is
+  // still around and what it reports must not be published.
+  bool _loading = false;
+
+  // Natural track end can be reported more than once. The gate lets only the
+  // first report through until the next track starts.
   bool _endGateOpen = false;
 
-  // Iframe bookkeeping. The player value keeps its last state and error
-  // until the next real event, so both are tracked to react to changes only.
-  PlayerState? _lastStreamState;
-  YoutubeError _lastStreamError = YoutubeError.none;
-  // True from a load until the iframe reports a new state: what it emits in
-  // between still describes the previous video.
-  bool _awaitingFreshState = false;
-  // Set by pause(), cleared by play() and by a new load.
-  bool _userPaused = false;
-  Timer? _startWatchdog;
-  // Sources that failed for a song in this session, so they are not retried.
+  // Videos that failed for a song in this session, so they are not retried,
+  // and how many times a song was reloaded after an error while playing.
   final Map<String, Set<String>> _failedStreams = {};
-  (AudioProcessingState, bool)? _lastPublished;
+  final Map<String, int> _errorReloads = {};
+  int _errorHandledFor = -1;
 
-  static const int _maxSourceAttempts = 3;
-  static const Duration _startTimeout = Duration(seconds: 15);
+  (AudioProcessingState, bool)? _lastPublished;
 
   // Sleep timer state
   Timer? _sleepTimer;
@@ -74,217 +101,70 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   Song? get currentSong => _queue.current;
 
-  YoutubePlayerController get ytController => _ytController;
-
   Stream<Duration> get positionStream => Stream.periodic(const Duration(milliseconds: 200), (_) => position);
   Stream<Duration?> get durationStream => mediaItem.map((item) => item?.duration);
   Duration get position => playbackState.value.updatePosition;
   Duration? get duration => mediaItem.value?.duration;
 
-  AudioPlayerHandler()
-      : _ytController = YoutubePlayerController(
-          params: const YoutubePlayerParams(
-            showControls: false,
-            showFullscreenButton: false,
-            loop: false,
-            playsInline: true,
-            privacyEnhancedMode: false,
-            origin: 'https://www.youtube.com',
-            pointerEvents: PointerEvents.none,
-          ),
-          onWebResourceError: (error) => PlaybackLogService.instance.error(
-            'WEBVIEW',
-            '${error.errorType?.name ?? 'errore'} ${error.errorCode}: '
-            '${error.description} (frame principale: ${error.isForMainFrame})',
-          ),
-        ) {
-    _initListeners();
-  }
+  // --- Player events ---
 
-  void _initListeners() {
-    _ytController.listen((event) {
-      final state = event.playerState;
-      final stateChanged = state != _lastStreamState;
-      if (stateChanged) {
-        final video = event.metaData.videoId;
-        PlaybackLogService.instance.log(
-          'IFRAME',
-          'stato ${_lastStreamState?.name ?? '-'} -> ${state.name}'
-          '${video.isEmpty ? '' : ' video=$video'}'
-          '${_usingLocal ? ' (ignorato: motore locale attivo)' : ''}',
-        );
-        _lastStreamState = state;
-        _awaitingFreshState = false;
-      }
-
-      final errorChanged = event.error != _lastStreamError;
-      _lastStreamError = event.error;
-
-      if (_usingLocal) return;
-
-      // Until the iframe reports something new, its value still describes
-      // the previous video: publishing it would undo the "buffering" state
-      // and could count the previous track's end a second time.
-      if (!_awaitingFreshState) _broadcastStreamState(event);
-
-      if (state == PlayerState.playing) _startWatchdog?.cancel();
-
-      // React to a new error only: the value carries the old one until the
-      // next video plays.
-      if (errorChanged && event.hasError) {
-        PlaybackLogService.instance.error(
-          'IFRAME',
-          'errore ${event.error.name} (codice ${event.error.code}) video=$_currentStreamId',
-        );
-        unawaited(_recoverFromStreamFailure(
-          'errore YouTube ${event.error.code}',
-          definitive: _isSourceError(event.error),
-        ));
-      }
-
-      if (stateChanged && state == PlayerState.ended) {
-        unawaited(_onTrackEnded());
-      }
-    });
-  }
-
-  /// Errors that mean "this video cannot be played here" (embedding
-  /// disabled, removed), as opposed to a passing playback problem.
-  bool _isSourceError(YoutubeError error) => switch (error) {
-        YoutubeError.notEmbeddable ||
-        YoutubeError.sameAsNotEmbeddable ||
-        YoutubeError.sameAsNotEmbeddable2 ||
-        YoutubeError.videoNotFound ||
-        YoutubeError.cannotFindVideo =>
-          true,
-        _ => false,
-      };
-
-  /// The current source failed: try the next best one, up to
-  /// [_maxSourceAttempts] sources per song. [definitive] failures replace
-  /// the remembered source, so the broken one is not picked again.
-  Future<void> _recoverFromStreamFailure(String reason, {required bool definitive}) async {
-    final generation = _loadGeneration;
-    final song = currentSong;
-    final failedId = _currentStreamId;
-    if (song == null || failedId == null || _usingLocal) return;
-    _startWatchdog?.cancel();
-
-    final failed = (_failedStreams[song.id] ??= <String>{})..add(failedId);
-    if (failed.length >= _maxSourceAttempts) {
-      _failLoad('Impossibile riprodurre "${song.title}" ($reason)');
-      return;
-    }
-
-    PlaybackLogService.instance.log(
-      'RECOVER',
-      '"${song.title}": $reason su $failedId, cerco un\'altra sorgente '
-      '(tentativo ${failed.length + 1}/$_maxSourceAttempts)',
-    );
-    final alternative = await TrackMatcherService.instance
-        .alternativeStreamId(song, exclude: failed);
-    if (generation != _loadGeneration) return;
-    if (alternative == null) {
-      _failLoad('Impossibile riprodurre "${song.title}" ($reason, nessuna alternativa)');
-      return;
-    }
-
-    PlaybackLogService.instance.log('RECOVER', 'nuova sorgente: $alternative');
-    _queue.updateSong(song.id, (s) => s.copyWith(youtubeVideoId: alternative));
-    if (definitive) {
-      await StorageService.instance.cacheYouTubeMapping(song.id, alternative);
-    }
-    await _loadAndPlayCurrent(allowLocal: false);
-  }
-
-  /// If the iframe has not started playing [_startTimeout] after a load,
-  /// something is wrong (blocked autoplay, dead video, player not ready):
-  /// log what the player says and try another source.
-  void _armStartWatchdog(int generation, {bool extended = false}) {
-    _startWatchdog?.cancel();
-    _startWatchdog = Timer(_startTimeout, () async {
-      if (generation != _loadGeneration || _usingLocal || _userStopped || _userPaused) return;
-      if (_lastStreamState == PlayerState.playing) return;
-
-      var live = 'nessuna risposta';
-      try {
-        final state = await _ytController.playerState.timeout(const Duration(seconds: 3));
-        if (state == PlayerState.playing) return;
-        live = state.name;
-        // Still loading on a slow connection: give it one more window.
-        if (state == PlayerState.buffering && !extended) {
-          PlaybackLogService.instance.log('WATCHDOG', 'ancora in buffering, attendo ancora');
-          _armStartWatchdog(generation, extended: true);
-          return;
-        }
-      } catch (e) {
-        live = 'nessuna risposta ($e)';
-      }
-      if (generation != _loadGeneration) return;
-
-      PlaybackLogService.instance.error(
-        'WATCHDOG',
-        'nessun avvio dopo ${_startTimeout.inSeconds}s: ultimo stato=${_lastStreamState?.name}, '
-        'stato interrogato=$live, video=$_currentStreamId',
-      );
-      unawaited(_recoverFromStreamFailure('il video non parte', definitive: false));
-    });
-  }
-
-  // --- Publishing state ---
-
-  void _broadcastStreamState(YoutubePlayerValue event) {
-    final state = event.playerState;
-
-    AudioProcessingState mappedState;
-    switch (state) {
-      case PlayerState.unStarted:
-      case PlayerState.unknown:
-        mappedState = AudioProcessingState.idle;
-        break;
-      case PlayerState.buffering:
-        mappedState = AudioProcessingState.buffering;
-        break;
-      case PlayerState.playing:
-      case PlayerState.paused:
-        mappedState = AudioProcessingState.ready;
-        break;
-      case PlayerState.ended:
-        mappedState = AudioProcessingState.completed;
-        break;
-      case PlayerState.cued:
-        mappedState = AudioProcessingState.ready;
-        break;
-    }
-
-    _publish(processing: mappedState, playing: state == PlayerState.playing);
-  }
-
-  void _onLocalValue(VideoPlayerController controller) {
-    if (!identical(controller, _local)) return;
+  void _onPlayerValue(VideoPlayerController controller) {
+    if (!identical(controller, _player) || _loading) return;
     final value = controller.value;
 
     if (value.hasError) {
-      PlaybackLogService.instance.error('LOCAL', 'errore riproduzione: ${value.errorDescription}');
-      _errorController.add('Errore riproduzione offline: ${value.errorDescription}');
+      unawaited(_onPlaybackError(value.errorDescription ?? 'errore sconosciuto'));
+      return;
     }
-    _publish(processing: _localProcessingState(value), playing: value.isPlaying);
+    _publish(processing: _processingStateOf(value), playing: value.isPlaying);
 
     if (value.isCompleted) unawaited(_onTrackEnded());
   }
 
-  AudioProcessingState _localProcessingState(VideoPlayerValue value) {
+  AudioProcessingState _processingStateOf(VideoPlayerValue value) {
     if (value.hasError || !value.isInitialized) return AudioProcessingState.idle;
     if (value.isCompleted) return AudioProcessingState.completed;
     if (value.isBuffering) return AudioProcessingState.buffering;
     return AudioProcessingState.ready;
   }
 
+  /// The player failed while a track was playing (dropped connection,
+  /// expired stream URL, unreadable file). Reload once from where it was,
+  /// with a fresh URL; if it fails again, move to another source.
+  Future<void> _onPlaybackError(String description) async {
+    if (_errorHandledFor == _loadGeneration) return;
+    _errorHandledFor = _loadGeneration;
+
+    final song = currentSong;
+    final seconds = _currentSeconds();
+    PlaybackLogService.instance.error(
+      'PLAYER',
+      'errore durante la riproduzione a ${seconds.toStringAsFixed(1)}s '
+      '(${_currentStreamId ?? 'file locale'}): $description',
+    );
+    if (song == null) return;
+
+    final reloads = _errorReloads[song.id] ?? 0;
+    if (reloads < 1) {
+      _errorReloads[song.id] = reloads + 1;
+      await _loadAndPlayCurrent(
+        // A local file that failed once is not tried again.
+        allowLocal: false,
+        startSeconds: seconds,
+        freshUrl: true,
+      );
+      return;
+    }
+    await _recoverFromStreamFailure('errore di riproduzione', definitive: false);
+  }
+
+  // --- Publishing state ---
+
   /// Single place that updates the indicator, the position timer and the
-  /// lock screen / Control Center state, whichever engine is active.
+  /// lock screen / Control Center state.
   ///
   /// [pollPosition] is false for the provisional "buffering" shown while a
-  /// track loads: there is no position to read from the engine yet.
+  /// track loads: there is no position to read from the player yet.
   void _publish({
     required AudioProcessingState processing,
     required bool playing,
@@ -337,27 +217,25 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   void _startPositionTimer() {
     _positionTimer?.cancel();
-    _positionTimer = Timer.periodic(const Duration(milliseconds: 200), (_) => _pollPosition());
+    _positionTimer = Timer.periodic(const Duration(milliseconds: 200), (_) async {
+      final player = _player;
+      if (player == null || _loading) return;
+      try {
+        // Asked to the player each time: the value it caches is refreshed
+        // only twice a second, too coarse for synced lyrics.
+        final position = await player.position;
+        if (position != null && identical(player, _player) && !_loading) {
+          _setPosition(position, player.value.playbackSpeed);
+        }
+      } catch (_) {
+        // The player was disposed between the check and the call.
+      }
+    });
   }
 
   void _stopPositionTimer() {
     _positionTimer?.cancel();
     _positionTimer = null;
-  }
-
-  Future<void> _pollPosition() async {
-    if (_usingLocal) {
-      final value = _local?.value;
-      if (value == null) return;
-      _setPosition(value.position, value.playbackSpeed);
-      return;
-    }
-
-    final state = await _ytController.playerState;
-    if (state != PlayerState.playing) return;
-    final seconds = await _ytController.currentTime;
-    final speed = await _ytController.playbackRate;
-    _setPosition(Duration(milliseconds: (seconds * 1000).toInt()), speed);
   }
 
   void _setPosition(Duration position, double speed) {
@@ -372,6 +250,19 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   void _updateQueueBroadcast() {
     queue.add(_queue.items.map((s) => s.toMediaItem()).toList());
+  }
+
+  /// Publishes the current song with the length of what is actually playing.
+  /// The source can be longer than the catalog entry (a video with an intro),
+  /// and the progress bar must follow the real thing.
+  void _publishCurrentMediaItem() {
+    final song = currentSong;
+    if (song == null) return;
+    final item = song.toMediaItem();
+    final actual = _loading ? Duration.zero : (_player?.value.duration ?? Duration.zero);
+    final known = item.duration ?? Duration.zero;
+    final differs = (actual - known).abs() > const Duration(seconds: 1);
+    mediaItem.add(actual > Duration.zero && differs ? item.copyWith(duration: actual) : item);
   }
 
   // --- Track end ---
@@ -398,14 +289,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   Future<void> _restartCurrent() async {
     _endGateOpen = true;
-    final start = _startOffsetOf(currentSong);
-    if (_usingLocal) {
-      await _local?.seekTo(start);
-      await _local?.play();
-    } else {
-      await _ytController.seekTo(seconds: start.inMilliseconds / 1000, allowSeekAhead: true);
-      await _ytController.playVideo();
-    }
+    await _player?.seekTo(_startOffsetOf(currentSong));
+    await _player?.play();
   }
 
   /// Where [song] starts: the user's manual offset for sources that open
@@ -416,7 +301,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   }
 
   /// Moves to the next track: queue order, repeat-all wrap-around, then
-  /// autoplay from YouTube Music, and finally stop.
+  /// autoplay from the recommendations, and finally stop.
   Future<void> _advance() async {
     var target = _queue.peekNext();
 
@@ -440,6 +325,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   Future<void> _playIndex(int target, {bool back = false}) async {
     _queue.moveTo(target, back: back);
     final song = currentSong!;
+    _failedStreams.remove(song.id);
+    _errorReloads.remove(song.id);
     mediaItem.add(song.toMediaItem());
     StorageService.instance.addToHistory(song);
     _warmCanvasForCurrent();
@@ -455,18 +342,26 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   int _loadGeneration = 0;
 
   /// Loads and plays the current song. [startSeconds] defaults to the song's
-  /// start offset.
-  Future<void> _loadAndPlayCurrent({bool allowLocal = true, double? startSeconds}) async {
+  /// start offset; [freshUrl] skips the remembered stream URL.
+  Future<void> _loadAndPlayCurrent({
+    bool allowLocal = true,
+    double? startSeconds,
+    bool freshUrl = false,
+  }) async {
     final generation = ++_loadGeneration;
     final song = currentSong;
     if (song == null) return;
     _endGateOpen = true;
     _userPaused = false;
-    _startWatchdog?.cancel();
+    _loading = true;
     final start = startSeconds ?? _startOffsetOf(song).inMilliseconds / 1000;
     final log = PlaybackLogService.instance;
     log.log('LOAD', '#$generation "${song.title}" - ${song.artist} id=${song.id}'
         '${start > 0 ? ' da ${start.toStringAsFixed(1)}s' : ''}');
+
+    // Silence the previous track right away; its player is replaced once the
+    // new one is ready.
+    unawaited(_pauseQuietly(_player));
 
     // Immediately notify UI that we are buffering
     _publish(
@@ -479,49 +374,190 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       if (allowLocal && await StorageService.instance.hasLocalAudioFile(song.id)) {
         if (generation != _loadGeneration) return;
         final path = await StorageService.instance.getLocalAudioPath(song.id);
-        // A stale or failed local load falls through to streaming below.
-        if (await _playLocal(path, generation, startSeconds: start)) return;
+        final opened = await _open(
+          () => VideoPlayerController.file(File(path), videoPlayerOptions: _audioOptions),
+          generation,
+          start: start,
+          source: 'file locale',
+        );
+        if (opened == _Open.ok) _currentStreamId = null;
+        // An unreadable file falls through to streaming below.
+        if (opened != _Open.failed) return;
       }
 
-      final targetStreamId = await TrackMatcherService.instance.resolveAndCacheStreamId(song);
+      final videoId = await TrackMatcherService.instance.resolveAndCacheStreamId(song);
       if (generation != _loadGeneration) {
         log.log('LOAD', '#$generation superato da un caricamento più recente');
         return;
       }
-      if (targetStreamId == null) {
+      if (videoId == null) {
         _failLoad('Nessuna sorgente trovata per ${song.title}');
         return;
       }
+      _currentStreamId = videoId;
 
-      await _stopLocal();
-      _usingLocal = false;
-      _currentStreamId = targetStreamId;
-      // The player keeps the previous video's state and error until this one
-      // reports: clear the error so a new one is recognisable, and ignore
-      // what it emits until its state changes.
-      _awaitingFreshState = true;
-      _ytController.update(error: YoutubeError.none);
-
-      log.log('LOAD', '#$generation sorgente YouTube $targetStreamId, invio loadVideoById');
-      if (start > 0) {
-        await _ytController.loadVideoById(videoId: targetStreamId, startSeconds: start);
-      } else {
-        await _ytController.loadVideoById(videoId: targetStreamId);
+      final outcome = await _openStream(videoId, generation, start: start, freshUrl: freshUrl);
+      if (outcome.result == _Open.ok) {
+        unawaited(_prefetchNext());
+        return;
       }
-      await Future.delayed(const Duration(milliseconds: 300));
-      if (generation != _loadGeneration) return;
-      await _ytController.playVideo();
-      log.log('LOAD', '#$generation playVideo inviato');
-      _armStartWatchdog(generation);
+      if (outcome.result == _Open.superseded || generation != _loadGeneration) return;
+
+      await _recoverFromStreamFailure(
+        outcome.unavailable ? 'video non disponibile' : 'stream non riproducibile',
+        // YouTube itself refused the video: do not pick it again.
+        definitive: outcome.unavailable,
+      );
     } catch (e, stack) {
       log.error('LOAD', '#$generation "${song.title}" fallito: $e', stack);
       if (generation == _loadGeneration) {
-        // A timeout here means the YouTube player in the WebView never
-        // became ready, which no other source would fix.
-        _failLoad(e is TimeoutException
-            ? 'Il player YouTube non si è avviato'
-            : 'Errore di riproduzione per ${song.title}');
+        _failLoad('Errore di riproduzione per ${song.title}');
       }
+    }
+  }
+
+  /// Streams [videoId]: its direct AAC stream first, then its HLS stream.
+  /// [unavailable] is true when YouTube returned no stream at all for it.
+  Future<({_Open result, bool unavailable})> _openStream(
+    String videoId,
+    int generation, {
+    required double start,
+    required bool freshUrl,
+  }) async {
+    final yt = YTMusicService.instance;
+    final log = PlaybackLogService.instance;
+    const superseded = (result: _Open.superseded, unavailable: false);
+
+    Future<_Open> openUrl(String url, String label, {VideoFormat? format}) => _open(
+          () => VideoPlayerController.networkUrl(
+            Uri.parse(url),
+            formatHint: format,
+            videoPlayerOptions: _audioOptions,
+          ),
+          generation,
+          start: start,
+          source: '$label $videoId',
+        );
+
+    final hadRemembered = yt.hasCachedAudioUrl(videoId);
+    var url = await yt.getAudioStreamUrl(videoId, force: freshUrl);
+    if (generation != _loadGeneration) return superseded;
+
+    if (url == null) {
+      log.error('LOAD', 'YouTube non ha restituito uno stream audio per $videoId');
+    } else {
+      var opened = await openUrl(url, 'stream');
+      if (opened != _Open.failed) return (result: opened, unavailable: false);
+
+      // A remembered URL can have expired: one more try with a new one.
+      if (hadRemembered && !freshUrl) {
+        log.log('LOAD', 'URL ricordato rifiutato, ne chiedo uno nuovo per $videoId');
+        url = await yt.getAudioStreamUrl(videoId, force: true);
+        if (generation != _loadGeneration) return superseded;
+        if (url != null) {
+          opened = await openUrl(url, 'stream (nuovo URL)');
+          if (opened != _Open.failed) return (result: opened, unavailable: false);
+        }
+      }
+    }
+
+    final hls = await yt.getHlsUrl(videoId);
+    if (generation != _loadGeneration) return superseded;
+    if (hls != null) {
+      final opened = await openUrl(hls, 'HLS', format: VideoFormat.hls);
+      if (opened != _Open.failed) return (result: opened, unavailable: false);
+    }
+    return (result: _Open.failed, unavailable: url == null && hls == null);
+  }
+
+  /// Creates a player for one source, waits until it can play and makes it
+  /// the active one.
+  Future<_Open> _open(
+    VideoPlayerController Function() create,
+    int generation, {
+    required double start,
+    required String source,
+  }) async {
+    final log = PlaybackLogService.instance;
+    final watch = Stopwatch()..start();
+    final controller = create();
+    try {
+      await controller.initialize().timeout(_openTimeout);
+      if (generation != _loadGeneration) {
+        await _disposeQuietly(controller);
+        return _Open.superseded;
+      }
+
+      final previous = _player;
+      _player = controller;
+      _loading = false;
+      controller.addListener(() => _onPlayerValue(controller));
+      unawaited(_disposeQuietly(previous));
+
+      await controller.setVolume(_volume);
+      await controller.setPlaybackSpeed(_speed);
+      if (start > 0) {
+        await controller.seekTo(Duration(milliseconds: (start * 1000).round()));
+      }
+      _publishCurrentMediaItem();
+      log.log(
+        'PLAY',
+        '#$generation $source pronto in ${watch.elapsedMilliseconds}ms, '
+        'durata ${controller.value.duration.inSeconds}s',
+      );
+
+      if (_userPaused) {
+        // Paused while it was loading: ready, but silent.
+        _publish(processing: AudioProcessingState.ready, playing: false);
+      } else {
+        await _activateSession();
+        await controller.play();
+      }
+      _setPosition(controller.value.position, _speed);
+      return _Open.ok;
+    } catch (e, stack) {
+      log.error(
+        'PLAY',
+        '#$generation $source non riproducibile dopo ${watch.elapsedMilliseconds}ms: $e',
+        e is TimeoutException ? null : stack,
+      );
+      if (identical(_player, controller)) {
+        _player = null;
+        _loading = generation == _loadGeneration;
+      }
+      await _disposeQuietly(controller);
+      return generation == _loadGeneration ? _Open.failed : _Open.superseded;
+    }
+  }
+
+  /// Makes this app the one that owns audio output, so other apps stop and
+  /// the lock screen shows this player.
+  Future<void> _activateSession() async {
+    try {
+      final session = await AudioSession.instance;
+      if (!await session.setActive(true)) {
+        PlaybackLogService.instance.log('SESSION', 'attivazione della sessione audio rifiutata');
+      }
+    } catch (e) {
+      PlaybackLogService.instance.error('SESSION', 'attivazione sessione audio: $e');
+    }
+  }
+
+  Future<void> _pauseQuietly(VideoPlayerController? controller) async {
+    try {
+      await controller?.pause();
+    } catch (_) {
+      // Already disposed: nothing to silence.
+    }
+  }
+
+  Future<void> _disposeQuietly(VideoPlayerController? controller) async {
+    if (controller == null) return;
+    await _pauseQuietly(controller);
+    try {
+      await controller.dispose();
+    } catch (e) {
+      debugPrint('AudioPlayerHandler._disposeQuietly: $e');
     }
   }
 
@@ -530,65 +566,65 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   /// play() retries the load.
   void _failLoad(String message) {
     PlaybackLogService.instance.error('FAIL', message);
-    _startWatchdog?.cancel();
     _errorController.add(message);
     _userStopped = true;
+    _loading = false;
     _publish(processing: AudioProcessingState.idle, playing: false);
   }
 
-  /// Plays a downloaded file. Returns true when the load was handled (played,
-  /// or superseded by a newer load), false when the file must be streamed.
-  Future<bool> _playLocal(String path, int generation, {double startSeconds = 0}) async {
-    final controller = VideoPlayerController.file(File(path));
-    try {
-      try {
-        await _ytController.pauseVideo();
-      } catch (_) {}
-
-      await controller.initialize();
-      if (generation != _loadGeneration) {
-        await controller.dispose();
-        return true;
-      }
-
-      await _stopLocal();
-      _usingLocal = true;
-      _local = controller;
-      _currentStreamId = null;
-      controller.addListener(() => _onLocalValue(controller));
-
-      await controller.setVolume(_volume);
-      await controller.setPlaybackSpeed(_speed);
-      if (startSeconds > 0) {
-        await controller.seekTo(Duration(milliseconds: (startSeconds * 1000).round()));
-      }
-      await controller.play();
-      _setPosition(controller.value.position, _speed);
-      PlaybackLogService.instance.log('PLAY', 'locale: $path');
-      return true;
-    } catch (e, stack) {
-      PlaybackLogService.instance
-          .error('LOCAL', 'file locale non leggibile, passo allo streaming: $e', stack);
-      if (identical(_local, controller)) {
-        _local = null;
-        _usingLocal = false;
-      }
-      try {
-        await controller.dispose();
-      } catch (_) {}
-      return false;
+  /// The current video cannot be played: try the next best match, up to
+  /// [_maxSourceAttempts] videos per song. A [definitive] failure replaces
+  /// the remembered source, so the broken one is not picked again.
+  Future<void> _recoverFromStreamFailure(String reason, {required bool definitive}) async {
+    final generation = _loadGeneration;
+    final song = currentSong;
+    final failedId = _currentStreamId;
+    if (song == null || failedId == null) {
+      _failLoad('Impossibile riprodurre "${song?.title ?? ''}" ($reason)');
+      return;
     }
+
+    final failed = (_failedStreams[song.id] ??= <String>{})..add(failedId);
+    if (failed.length >= _maxSourceAttempts) {
+      _failLoad('Impossibile riprodurre "${song.title}" ($reason)');
+      return;
+    }
+
+    PlaybackLogService.instance.log(
+      'RECOVER',
+      '"${song.title}": $reason su $failedId, cerco un\'altra sorgente '
+      '(tentativo ${failed.length + 1}/$_maxSourceAttempts)',
+    );
+    final alternative = await TrackMatcherService.instance
+        .alternativeStreamId(song, exclude: failed);
+    if (generation != _loadGeneration) return;
+    if (alternative == null) {
+      _failLoad('Impossibile riprodurre "${song.title}" ($reason, nessuna alternativa)');
+      return;
+    }
+
+    PlaybackLogService.instance.log('RECOVER', 'nuova sorgente: $alternative');
+    _queue.updateSong(song.id, (s) => s.copyWith(youtubeVideoId: alternative));
+    if (definitive) {
+      await StorageService.instance.cacheYouTubeMapping(song.id, alternative);
+    }
+    await _loadAndPlayCurrent(allowLocal: false);
   }
 
-  Future<void> _stopLocal() async {
-    final controller = _local;
-    _local = null;
-    if (controller == null) return;
+  /// Resolves the next track's stream ahead of time, so skipping to it (or
+  /// reaching it) starts without the matching and lookup delay.
+  Future<void> _prefetchNext() async {
+    // With shuffle the next track is drawn when needed, not known now.
+    if (_queue.shuffle) return;
+    final next = _queue.peekNext();
+    if (next == null) return;
+    final song = _queue.items[next];
     try {
-      await controller.pause();
-      await controller.dispose();
+      if (StorageService.instance.isDownloaded(song.id)) return;
+      final videoId = await TrackMatcherService.instance.resolveAndCacheStreamId(song);
+      if (videoId != null) await YTMusicService.instance.getAudioStreamUrl(videoId);
     } catch (e) {
-      debugPrint('AudioPlayerHandler._stopLocal: $e');
+      debugPrint('AudioPlayerHandler._prefetchNext: $e');
     }
   }
 
@@ -601,6 +637,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     );
     _queue.replace((queue != null && queue.isNotEmpty) ? queue : [song], song);
     _failedStreams.remove(song.id);
+    _errorReloads.remove(song.id);
     _syncSuggestionsWithQueue();
     _updateQueueBroadcast();
     mediaItem.add(song.toMediaItem());
@@ -621,33 +658,29 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     PlaybackLogService.instance
         .log('CMD', 'cambio sorgente "${song.title}" -> $newYoutubeVideoId');
     _failedStreams.remove(song.id);
+    _errorReloads.remove(song.id);
     await StorageService.instance.cacheYouTubeMapping(song.id, newYoutubeVideoId);
     _queue.updateSong(song.id, (s) => s.copyWith(
           youtubeVideoId: newYoutubeVideoId,
           duration: (newDuration != null && newDuration > Duration.zero) ? newDuration : s.duration,
         ));
-    _currentStreamId = newYoutubeVideoId;
     _updateQueueBroadcast();
 
     if (currentSong?.id == song.id) {
       mediaItem.add(currentSong!.toMediaItem());
       // Keep the position. A download belongs to the old source, so the new
       // stream is played instead of the local file.
-      final position = await _currentSeconds();
-      await _loadAndPlayCurrent(allowLocal: false, startSeconds: position);
+      await _loadAndPlayCurrent(allowLocal: false, startSeconds: _currentSeconds());
     }
   }
 
-  Future<double> _currentSeconds() async {
-    if (_usingLocal) return (_local?.value.position.inMilliseconds ?? 0) / 1000;
-    return _ytController.currentTime;
-  }
+  double _currentSeconds() => (_player?.value.position.inMilliseconds ?? 0) / 1000;
 
   @override
   Future<void> play() async {
     PlaybackLogService.instance.log(
       'CMD',
-      'play (daCapo=$_userStopped locale=$_usingLocal iframe=${_lastStreamState?.name})',
+      'play (daCapo=$_userStopped inCaricamento=$_loading)',
     );
     _userPaused = false;
     if (_userStopped && currentSong != null) {
@@ -655,61 +688,51 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       await _loadAndPlayCurrent();
       return;
     }
-    if (_usingLocal) {
-      final controller = _local;
-      if (controller == null) return;
-      final value = controller.value;
-      if (value.isCompleted || (value.duration > Duration.zero && value.position >= value.duration)) {
-        await controller.seekTo(Duration.zero);
-      }
-      await controller.play();
-      return;
+    // While a track loads there is nothing to start yet: clearing
+    // _userPaused above is enough, the load plays it when ready.
+    final player = _player;
+    if (player == null || _loading) return;
+
+    final value = player.value;
+    if (value.isCompleted || (value.duration > Duration.zero && value.position >= value.duration)) {
+      await player.seekTo(_startOffsetOf(currentSong));
     }
-    await _ytController.playVideo();
+    await _activateSession();
+    await player.play();
   }
 
   @override
   Future<void> pause() async {
-    PlaybackLogService.instance.log('CMD', 'pause (locale=$_usingLocal)');
+    PlaybackLogService.instance.log('CMD', 'pause (inCaricamento=$_loading)');
     _userPaused = true;
-    _startWatchdog?.cancel();
-    if (_usingLocal) {
-      await _local?.pause();
+    if (_loading) {
+      // No player events arrive during a load: show the pause ourselves.
+      _publish(processing: AudioProcessingState.buffering, playing: false);
       return;
     }
-    await _ytController.pauseVideo();
+    await _player?.pause();
   }
 
   @override
   Future<void> stop() async {
     PlaybackLogService.instance.log('CMD', 'stop');
     _userStopped = true;
-    _startWatchdog?.cancel();
+    _loading = false;
+    // Cancels a load in progress.
+    _loadGeneration++;
     _stopPositionTimer();
-    if (_usingLocal) {
-      _usingLocal = false;
-      await _stopLocal();
-    } else {
-      await _ytController.stopVideo();
-    }
-    playbackState.add(
-      playbackState.value.copyWith(
-        processingState: AudioProcessingState.idle,
-        playing: false,
-      ),
-    );
+    final player = _player;
+    _player = null;
+    await _disposeQuietly(player);
+    _publish(processing: AudioProcessingState.idle, playing: false);
     await super.stop();
   }
 
   @override
   Future<void> seek(Duration position) async {
     PlaybackLogService.instance.log('CMD', 'seek ${position.inSeconds}s');
-    if (_usingLocal) {
-      await _local?.seekTo(position);
-      _setPosition(position, _speed);
-      return;
-    }
-    await _ytController.seekTo(seconds: position.inMilliseconds / 1000, allowSeekAhead: true);
+    if (_loading) return;
+    await _player?.seekTo(position);
     // The position is polled only while playing: publish it now so a seek
     // made while paused moves the progress bar too.
     _setPosition(position, _speed);
@@ -726,8 +749,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   Future<void> skipToPrevious() async {
     PlaybackLogService.instance.log('CMD', 'skipToPrevious');
     final start = _startOffsetOf(currentSong);
-    final seconds = await _currentSeconds();
-    if (seconds - start.inMilliseconds / 1000 > 4.0) {
+    if (!_loading && _currentSeconds() - start.inMilliseconds / 1000 > 4.0) {
       await seek(start);
       return;
     }
@@ -762,7 +784,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
           final current = currentSong;
           if (current != null && current.id == song.id) {
-            mediaItem.add(current.toMediaItem());
+            _publishCurrentMediaItem();
             await StorageService.instance.addToHistory(current);
           }
         } catch (e) {
@@ -1038,20 +1060,12 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   Future<void> setVolume(double volume) async {
     _volume = volume;
-    if (_usingLocal) {
-      await _local?.setVolume(volume);
-      return;
-    }
-    await _ytController.setVolume((volume * 100).toInt());
+    await _player?.setVolume(volume);
   }
 
   @override
   Future<void> setSpeed(double speed) async {
     _speed = speed;
-    if (_usingLocal) {
-      await _local?.setPlaybackSpeed(speed);
-      return;
-    }
-    await _ytController.setPlaybackRate(speed);
+    await _player?.setPlaybackSpeed(speed);
   }
 }

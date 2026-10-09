@@ -116,10 +116,8 @@ class _CanvasPlayerWidgetState extends State<CanvasPlayerWidget> {
 
     VideoPlayerController? controller;
     try {
-      controller = VideoPlayerController.networkUrl(
-        uri,
-        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-      );
+      // No mixWithOthers: see CanvasVideoPool.warm.
+      controller = VideoPlayerController.networkUrl(uri);
       _adoptController(controller);
 
       await controller.initialize();

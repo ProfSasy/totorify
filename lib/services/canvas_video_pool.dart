@@ -47,10 +47,9 @@ class CanvasVideoPool {
       } catch (_) {}
     }
 
-    final controller = VideoPlayerController.networkUrl(
-      Uri.parse(url),
-      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-    );
+    // No mixWithOthers: the option applies to the whole audio session, which
+    // the music player shares, and would hide the lock-screen controls.
+    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
     _controllers[url] = controller;
 
     final future = () async {

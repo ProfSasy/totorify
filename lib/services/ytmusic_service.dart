@@ -218,15 +218,38 @@ class YTMusicService {
           body: jsonEncode(body),
         ).timeout(const Duration(seconds: 12));
 
-        if (resp.statusCode != 200) continue;
+        if (resp.statusCode != 200) {
+          debugPrint('YTMusic.visionOS $videoId: HTTP ${resp.statusCode}');
+          continue;
+        }
 
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         final status = data['playabilityStatus']?['status'] as String?;
-        if (status != 'OK') continue;
+        if (status != 'OK') {
+          // The reason tells a removed video from a region or bot block.
+          debugPrint('YTMusic.visionOS $videoId: stato $status '
+              '(${data['playabilityStatus']?['reason'] ?? 'nessun motivo'})');
+          continue;
+        }
         return data;
       } catch (e) { debugPrint('YTMusic.visionOS: $e'); }
     }
     return null;
+  }
+
+  /// True when a still-valid stream URL is remembered for [videoId].
+  bool hasCachedAudioUrl(String videoId) {
+    final cached = _audioUrlCache[videoId];
+    return cached != null && DateTime.now().isBefore(cached.$2);
+  }
+
+  /// HLS manifest of [videoId], the format AVPlayer handles most reliably.
+  /// It carries video renditions too, so it is the fallback, not the
+  /// default: the direct audio stream uses far less data.
+  Future<String?> getHlsUrl(String videoId) async {
+    final data = await _visionOsPlayerResponse(videoId);
+    final url = data?['streamingData']?['hlsManifestUrl'] as String?;
+    return (url == null || url.isEmpty) ? null : url;
   }
 
   /// VisionOS InnerTube extraction (no signature cipher, direct adaptive audio streams)

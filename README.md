@@ -32,8 +32,8 @@ lib/
   main.dart                   avvio: storage, audio service, sessione audio
   models/                     Song, Playlist, Artist, Lyrics
   services/
-    audio_handler.dart        ponte tra UI, audio_service e i due motori
-                              (iframe YouTube per lo streaming, file locale per l'offline)
+    audio_handler.dart        ponte tra UI, audio_service e il lettore nativo
+                              (stream audio diretto, o file locale per l'offline)
     playback_queue.dart       regole della coda: ordine, shuffle, repeat
     track_matcher_service.dart  da brano di catalogo a video YouTube
     ytmusic_service.dart      ricerca e stream YouTube Music

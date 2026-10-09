@@ -8,7 +8,6 @@ import 'home_screen.dart';
 import 'library_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
-import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 
 class MainShell extends StatefulWidget {
   final AudioPlayerHandler audioHandler;
@@ -65,14 +64,6 @@ class _MainShellState extends State<MainShell> {
       resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
-          // Hidden YouTube player for headless background audio
-          Positioned(
-            left: -2000,
-            top: -2000,
-            width: 1000,
-            height: 1000,
-            child: YoutubePlayer(controller: widget.audioHandler.ytController),
-          ),
           // Current Tab Screen — content scrolls under mini player.
           // Hidden tabs have their tickers paused: the ambient Home backdrop
           // keeps breathing only while it is actually visible.
