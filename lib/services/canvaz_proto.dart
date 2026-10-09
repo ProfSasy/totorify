@@ -8,33 +8,50 @@ import 'dart:typed_data';
 ///     message EntityCanvazRequest  { repeated Entity entities = 1; }
 ///     message Entity               { string entity_uri = 1; }
 ///     message EntityCanvazResponse { repeated Canvaz canvases = 1; }
-///     message Canvaz               { string url = 2; ... }
+///     message Canvaz               { string url = 2; string entity_uri = 5; ... }
 
 const int _lengthDelimited = 2;
+const String _trackUriPrefix = 'spotify:track:';
 
-/// Request asking for the canvas of one Spotify track.
-Uint8List encodeCanvazRequest(String trackId) {
-  final uri = utf8.encode('spotify:track:$trackId');
-  final entity = [0x0A, ..._varint(uri.length), ...uri];
-  return Uint8List.fromList([0x0A, ..._varint(entity.length), ...entity]);
+/// Request asking for the canvases of the given Spotify tracks.
+Uint8List encodeCanvazRequest(Iterable<String> trackIds) {
+  final out = <int>[];
+  for (final trackId in trackIds) {
+    final uri = utf8.encode('$_trackUriPrefix$trackId');
+    final entity = [0x0A, ..._varint(uri.length), ...uri];
+    out.addAll([0x0A, ..._varint(entity.length), ...entity]);
+  }
+  return Uint8List.fromList(out);
 }
 
-/// First looping-video URL in a canvas response, or null when the track has
-/// no canvas (or only a still image, which the player cannot loop).
-String? decodeCanvazVideoUrl(Uint8List bytes) {
+/// Looping-video URL of each track in a canvas response, by track id.
+/// Tracks without a canvas (or with only a still image, which the player
+/// cannot loop) are absent. A canvas that does not say which track it
+/// belongs to is filed under an empty id.
+Map<String, String> decodeCanvazVideoUrls(Uint8List bytes) {
+  final urls = <String, String>{};
   try {
     for (final canvas in _fields(bytes, 1)) {
+      String? url;
       for (final raw in _fields(canvas, 2)) {
-        final url = utf8.decode(raw);
-        if (Uri.tryParse(url)?.path.toLowerCase().endsWith('.mp4') ?? false) {
-          return url;
+        final candidate = utf8.decode(raw);
+        if (Uri.tryParse(candidate)?.path.toLowerCase().endsWith('.mp4') ?? false) {
+          url = candidate;
+          break;
         }
       }
+      if (url == null) continue;
+      var trackId = '';
+      for (final raw in _fields(canvas, 5)) {
+        final uri = utf8.decode(raw);
+        if (uri.startsWith(_trackUriPrefix)) trackId = uri.substring(_trackUriPrefix.length);
+      }
+      urls.putIfAbsent(trackId, () => url!);
     }
   } catch (_) {
-    // Truncated or unexpected payload: treated as "no canvas".
+    // Truncated or unexpected payload: what was read so far is kept.
   }
-  return null;
+  return urls;
 }
 
 List<int> _varint(int value) {

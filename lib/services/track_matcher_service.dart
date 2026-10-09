@@ -42,9 +42,27 @@ class TrackMatcherService {
       'reverb',
       'nightcore',
       '8d',
+      '8 bit',
+      '8bit',
       'karaoke',
       'instrumental',
+      'strumentale',
       'remix',
+      'mashup',
+      'acoustic',
+      'acustica',
+      'acustico',
+      'piano',
+      'violin',
+      'hypertechno',
+      'tribute',
+      'made popular',
+      'originally performed',
+      'in the style of',
+      'bass boosted',
+      'lofi',
+      'parody',
+      'parodia',
     ])
       word: RegExp('\\b$word\\b'),
   };
@@ -54,16 +72,82 @@ class TrackMatcherService {
   static const int _unrelatedTitlePenalty = 20000;
   // Scores at or below this come from an unrelated title.
   static const int _unrelatedScore = -5000;
+  // Below this the best candidate is doubtful (another artist, another
+  // length): worth looking further.
+  static const int _weakScore = 4500;
+
+  static final RegExp _spaces = RegExp(r'\s+');
+  static final RegExp _channelSuffix =
+      RegExp(r'(\s*-\s*topic|\s*vevo|\s+official)$', caseSensitive: false);
+  static final RegExp _artistSeparators = RegExp(
+    r'\s*[,;&/]\s*|\s+(?:x|e|and|feat\.?|ft\.?|featuring|con|with)\s+',
+    caseSensitive: false,
+  );
+  static final RegExp _bracketed = RegExp(r'[\(\[]([^\)\]]*)[\)\]]');
+  // "(feat. X)", "(con X)", "[prod. Y]": credits, not a different version.
+  static final RegExp _credit = RegExp(
+    r'^\s*(feat\.?|ft\.?|featuring|con|with|prod\.?|produced)\b',
+    caseSensitive: false,
+  );
+  static final RegExp _digits = RegExp(r'^\d+$');
+
+  // Words an upload adds to a title without making it another version.
+  static const Set<String> _neutralWords = {
+    'official', 'ufficiale', 'audio', 'video', 'videoclip', 'music', 'musicale',
+    'testo', 'lyrics', 'lyric', 'visual', 'visualizer', 'hd', 'hq', '4k',
+    'explicit', 'remaster', 'remastered', 'mono', 'stereo', 'album', 'single',
+    'original', 'originale', 'version', 'versione', 'prod', 'ft', 'feat',
+    'con', 'with', 'by', 'di', 'e',
+  };
+
+  static const Map<String, String> _accents = {
+    'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a',
+    'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e',
+    'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i',
+    'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o', 'ø': 'o',
+    'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u',
+    'ç': 'c', 'ñ': 'n', 'ß': 'ss',
+  };
+  static final RegExp _accented = RegExp('[${_accents.keys.join()}]');
+
+  /// Catalogs disagree on accents ("Beyoncé", "Beyonce"): compare without.
+  static String _fold(String text) =>
+      text.toLowerCase().replaceAllMapped(_accented, (m) => _accents[m.group(0)]!);
+
+  /// Lowercase words only: punctuation becomes a space.
+  static String _plain(String text) =>
+      _fold(text).replaceAll(_nonAlphaNumRegex, ' ').replaceAll(_spaces, ' ').trim();
+
+  /// True when [phrase] appears in [text] as whole words.
+  static bool _hasPhrase(String text, String phrase) =>
+      phrase.isNotEmpty && ' $text '.contains(' $phrase ');
 
   String _canonicalTitle(String title) {
-    return title
-        .replaceAll(_parentheticalRegex, '')
-        .replaceAll(_featRegex, '')
-        .replaceAll(_nonAlphaNumRegex, '')
-        .toLowerCase()
-        .replaceAll(RegExp(r'\s+'), ' ')
+    return _fold(title
+            .replaceAll(_parentheticalRegex, '')
+            .replaceAll(_featRegex, '')
+            .replaceAll(_nonAlphaNumRegex, ''))
+        .replaceAll(_spaces, ' ')
         .trim();
   }
+
+  /// Every artist credited on [song], main one first: the artist field plus
+  /// the names in a "(feat. X)" of the title.
+  List<String> _artistsOf(Song song) {
+    final names = <String>[
+      ...song.artist.replaceAll(_channelSuffix, '').split(_artistSeparators),
+      for (final match in _bracketed.allMatches(song.title))
+        if (_credit.hasMatch(match.group(1)!))
+          ...match.group(1)!.replaceFirst(_credit, '').split(_artistSeparators),
+    ];
+    final seen = <String>{};
+    return [
+      for (final name in names)
+        if (_plain(name).isNotEmpty && seen.add(_plain(name))) _plain(name),
+    ];
+  }
+
+  static const Set<String> _unknownArtists = {'artista', 'artista sconosciuto', 'unknown'};
 
   String _canonicalArtist(String artist) {
     return artist
@@ -86,38 +170,53 @@ class TrackMatcherService {
     return false;
   }
 
-  int scoreCandidate(Song candidate, Song target) {
+  /// How well [candidate] (a YouTube result) is the recording [target].
+  /// Title, artist and length weigh the same: a track is trusted only when
+  /// all three agree, so a cover with the exact length does not beat the
+  /// original that is a few seconds off. [fromMusicCatalog] marks a result
+  /// of YouTube Music's song search, which lists studio tracks.
+  int scoreCandidate(Song candidate, Song target, {bool fromMusicCatalog = false}) {
     int score = 0;
     final targetTitle = _canonicalTitle(target.title);
     final candTitle = _canonicalTitle(candidate.title);
+    final artists = _artistsOf(target);
+    final candArtist = _plain(candidate.artist.replaceAll(_channelSuffix, ''));
+    final candText = _plain(candidate.title);
 
-    // Duration is the strongest signal, but only when both are known: an
-    // unknown duration is no evidence and earns nothing.
+    // Length, only when both are known: an unknown one is no evidence.
     if (target.duration.inSeconds > 0 && candidate.duration.inSeconds > 0) {
       final diff = (target.duration.inSeconds - candidate.duration.inSeconds).abs();
-      if (diff == 0) {
-        score += 10000;
-      } else if (diff <= 2) {
-        // Close enough that the title decides: an official track one second
-        // off must beat a re-upload with the exact length.
-        score += 9000;
+      if (diff <= 2) {
+        score += 3000;
       } else if (diff <= 5) {
-        score += 2000;
+        score += 2500;
       } else if (diff <= 10) {
-        score += 500;
-      } else {
-        score -= diff * 50; // Penalize heavy duration differences
+        score += 1200;
+      } else if (diff > 20) {
+        score -= diff * 50 > 4000 ? 4000 : diff * 50;
       }
     }
 
-    // Title match. An empty title (nothing but symbols) is related to
-    // nothing: String.contains('') is always true and must not count.
+    // Title. An upload often reads "Artist - Title (Audio)": compared again
+    // without the artist names and the filler words. An empty title (nothing
+    // but symbols) is related to nothing.
     final comparable = candTitle.isNotEmpty && targetTitle.isNotEmpty;
+    var core = candTitle;
+    for (final artist in artists) {
+      core = ' $core '.replaceAll(' $artist ', ' ').trim();
+    }
+    core = core.split(' ').where((w) => !_neutralWords.contains(w)).join(' ');
+
     if (comparable && candTitle == targetTitle) {
-      score += 2000;
-    } else if (comparable &&
-        (candTitle.contains(targetTitle) || targetTitle.contains(candTitle))) {
-      score += 500;
+      score += 3000;
+    } else if (comparable && core == targetTitle) {
+      score += 2600;
+    } else if (comparable && _hasPhrase(candTitle, targetTitle)) {
+      // The title plus other words: possibly another song ("Collane e
+      // bugie" for "Bugie").
+      score += 800;
+    } else if (comparable && _hasPhrase(targetTitle, candTitle)) {
+      score += 300;
     } else if (_titleMatches(targetTitle, candTitle)) {
       score += 100;
     } else {
@@ -126,26 +225,64 @@ class TrackMatcherService {
       score -= _unrelatedTitlePenalty;
     }
 
-    // Official/Topic bonus
+    // Artist: the same title by someone else is a cover or another song.
+    // On plain YouTube the channel can be anyone, so the artist named in the
+    // title counts too; in the music catalog the artist field is the real
+    // one, and a title that names the artist is a tribute ("Halo (Beyoncé)").
+    if (artists.isNotEmpty && !_unknownArtists.contains(artists.first)) {
+      final named = fromMusicCatalog ? '' : candText;
+      if (_hasPhrase(candArtist, artists.first)) {
+        score += 3000;
+      } else if (_hasPhrase(named, artists.first)) {
+        score += 2000;
+      } else if (artists.skip(1).any((a) => _hasPhrase(candArtist, a) || _hasPhrase(named, a))) {
+        score += 1000;
+      } else {
+        score -= 3000;
+      }
+    }
+
+    // Studio tracks first.
+    if (fromMusicCatalog) score += 500;
     if (candidate.artist.toLowerCase().contains('- topic')) score += 300;
     if (candidate.title.toLowerCase().contains('official audio')) score += 300;
 
-    // Penalty for wrong variants (live, cover)
+    // Versions that are not the one asked for (live, cover, karaoke...).
     final lowerCand = '${candidate.title} ${candidate.artist}'.toLowerCase();
     final lowerTarget = target.title.toLowerCase();
     for (final variant in _wrongVariants.entries) {
       if (variant.value.hasMatch(lowerCand) && !variant.value.hasMatch(lowerTarget)) {
-        score -= 2000;
+        score -= 3000;
+      }
+    }
+
+    // A qualifier in brackets the target does not have: "(8 Bit Version)",
+    // "(Violin)". Credits and filler ("Official Video") do not count.
+    for (final match in _bracketed.allMatches(candidate.title)) {
+      final content = match.group(1)!;
+      if (_credit.hasMatch(content)) continue;
+      final plain = _plain(content);
+      if (plain.isEmpty || _hasPhrase(_plain(target.title), plain)) continue;
+      var rest = plain;
+      for (final artist in artists) {
+        rest = ' $rest '.replaceAll(' $artist ', ' ').trim();
+      }
+      final meaningful = rest
+          .split(' ')
+          .where((w) => w.isNotEmpty && !_neutralWords.contains(w) && !_digits.hasMatch(w));
+      if (meaningful.isNotEmpty) {
+        score -= 1500;
+        break;
       }
     }
 
     return score;
   }
 
-  (Song, int)? _bestOf(List<Song> candidates, Song target) {
+  (Song, int)? _bestOf(List<Song> candidates, Song target, {bool fromMusicCatalog = false}) {
     (Song, int)? best;
     for (final candidate in candidates) {
-      final score = scoreCandidate(candidate, target);
+      final score = scoreCandidate(candidate, target, fromMusicCatalog: fromMusicCatalog);
       if (best == null || score > best.$2) best = (candidate, score);
     }
     return best;
@@ -182,10 +319,11 @@ class TrackMatcherService {
       var best = _bestOf(
         await YTMusicService.instance.search('$cleanTitle $cleanArtist'),
         song,
+        fromMusicCatalog: true,
       );
 
-      // Nothing, or nothing with the right title: widen to plain YouTube.
-      if (best == null || best.$2 <= _unrelatedScore) {
+      // Nothing, or nothing convincing: widen to plain YouTube.
+      if (best == null || best.$2 < _weakScore) {
         final wider = _bestOf(
           await YTMusicService.instance.explodeSearch('${song.title} ${song.artist} audio'),
           song,
@@ -246,25 +384,31 @@ class TrackMatcherService {
         final results = await YTMusicService.instance.search(query);
         final explode = await YTMusicService.instance.explodeSearch('$query audio');
 
+        // The catalog entry wins when a video is in both lists.
+        final catalogIds = {for (final r in results) r.id};
         final allCandidates = <String, Song>{};
-        for (final r in [...results, ...explode]) {
+        for (final r in [...explode, ...results]) {
           allCandidates[r.id] = r;
         }
 
         final scoredList = <ScoredTrackMatch>[];
 
         for (final candidate in allCandidates.values) {
-          final score = scoreCandidate(candidate, targetSong);
+          final score = scoreCandidate(
+            candidate,
+            targetSong,
+            fromMusicCatalog: catalogIds.contains(candidate.id),
+          );
           final diff = targetSong.duration > Duration.zero && candidate.duration > Duration.zero
               ? (candidate.duration.inSeconds - targetSong.duration.inSeconds).abs()
               : 0;
 
           String label;
-          if (diff <= 3 && score >= 300) {
+          if (diff <= 3 && score >= 8000) {
             label = 'Match Perfetto (±${diff}s)';
-          } else if (diff <= 8 && score >= 100) {
+          } else if (diff <= 8 && score >= 5500) {
             label = 'Ottimo (±${diff}s)';
-          } else if (diff <= 15) {
+          } else if (diff <= 15 && score >= 2500) {
             label = 'Buono (±${diff}s)';
           } else {
             label = 'Fonte Alternativa (+${diff}s)';

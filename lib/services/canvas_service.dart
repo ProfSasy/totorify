@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -39,7 +40,21 @@ class _ArtistCanvas {
   final String url;
   final _TrackInfo? info;
 
-  const _ArtistCanvas(this.trackId, this.url, this.info);
+  /// Place of the track in its album, when the Canvas was found through it.
+  final int? position;
+
+  const _ArtistCanvas(this.trackId, this.url, this.info, {this.position});
+}
+
+/// The canvases found on the tracks of one album.
+class _AlbumCanvases {
+  final String title;
+
+  /// Track ids in album order.
+  final List<String> trackIds;
+  final List<_ArtistCanvas> canvases;
+
+  const _AlbumCanvases(this.title, this.trackIds, this.canvases);
 }
 
 /// Resolves the looping video shown behind the player ("Canvas").
@@ -47,9 +62,10 @@ class _ArtistCanvas {
 /// 1. The track's own Canvas, exactly as Spotify assigns it: uploaded by the
 ///    artist for that track and looked up by track id.
 /// 2. For tracks without one, the most compatible Canvas of the same artist:
-///    for a collaboration, one from a track with at least two of the same
-///    artists; otherwise the one released closest in time. A track is left
-///    without a Canvas only when its artist has none at all.
+///    one from another track of the same album; then, for a collaboration,
+///    one from a track with at least two of the same artists; otherwise the
+///    one released closest in time. A track is left without a Canvas only
+///    when its artist has none at all.
 ///
 /// Finding the track's own Canvas needs its Spotify id. A logged-in account
 /// gets it from Spotify by ISRC. Without a login it comes from MusicBrainz
@@ -79,6 +95,12 @@ class CanvasService {
   static const int _maxTrackInfoCached = 600;
   // Other artists of a collaboration whose canvases are looked at as well.
   static const int _maxCollaborators = 2;
+  static const int _maxAlbumTracks = 40;
+  static const int _maxAlbumsCached = 40;
+  // Spotify answers 429 to searches for long stretches: not worth asking
+  // again at every song.
+  static const Duration _searchBlockMin = Duration(minutes: 10);
+  static const Duration _searchBlockMax = Duration(hours: 1);
 
   static const _spotifyCanvasEndpoint =
       'https://spclient.wg.spotify.com/canvaz-cache/v0/canvases';
@@ -107,6 +129,9 @@ class CanvasService {
   );
   static final RegExp _spotifyTrackUrl =
       RegExp(r'open\.spotify\.com/track/([A-Za-z0-9]+)');
+  // The album of a track, in the metadata of its public page.
+  static final RegExp _albumMeta =
+      RegExp(r'music:album"\s+content="[^"]*/album/([A-Za-z0-9]+)');
   // "(feat. X)", "[con X & Y]", "(with X)" in a title.
   static final RegExp _featuredInTitle = RegExp(
     r'[\(\[]\s*(?:feat\.?|ft\.?|featuring|con|with)\s+([^\)\]]+)[\)\]]',
@@ -122,6 +147,10 @@ class CanvasService {
   final Map<String, _TrackInfo> _trackInfoCache = {};
   final Map<String, List<_ArtistCanvas>> _artistCanvasCache = {};
   final Map<String, Future<List<_ArtistCanvas>?>> _artistCanvasInFlight = {};
+  final Map<String, _AlbumCanvases> _albumCanvasCache = {};
+  final Map<String, Future<_AlbumCanvases?>> _albumCanvasInFlight = {};
+  final Map<String, String> _albumOfTrack = {};
+  DateTime? _searchBlockedUntil;
   Future<void> _musicBrainzQueue = Future.value();
   final ValueNotifier<bool> isCanvasEnabledNotifier = ValueNotifier<bool>(true);
 
@@ -263,11 +292,12 @@ class CanvasService {
     final isrc = await _isrcOf(song);
 
     // Logged in: Spotify itself, by ISRC and then by name.
-    if (SpotifyInternalAuthService.instance.hasSpDcCookie) {
+    if (SpotifyInternalAuthService.instance.hasSpDcCookie && !_searchBlocked) {
       if (isrc != null) {
         final data = await _spotifyGet('/search?q=isrc:$isrc&type=track&limit=10');
         if (data == null) {
-          failed = true;
+          // A search Spotify is refusing for now is not a passing failure.
+          failed = !_searchBlocked;
         } else {
           final items = data['tracks']?['items'] as List<dynamic>? ?? const [];
           final ids = [
@@ -281,7 +311,7 @@ class CanvasService {
         }
       }
       final byName = await _byTitleAndArtist(song);
-      failed = failed || byName.failed;
+      failed = failed || (byName.failed && !_searchBlocked);
       if (byName.value != null) {
         await StorageService.instance.cacheSpotifyId(song.id, byName.value!);
         return (ids: [byName.value!], failed: false);
@@ -422,9 +452,15 @@ class CanvasService {
     return (value: null, failed: false);
   }
 
+  bool get _searchBlocked {
+    final until = _searchBlockedUntil;
+    return until != null && DateTime.now().isBefore(until);
+  }
+
   /// Authenticated Spotify Web API call. Returns null without a login or on
   /// any failure.
   Future<Map<String, dynamic>?> _spotifyGet(String path) async {
+    if (_searchBlocked) return null;
     try {
       final token = await SpotifyInternalAuthService.instance.getInternalAccessToken();
       if (token == null) return null;
@@ -432,6 +468,20 @@ class CanvasService {
         Uri.parse('$_spotifyApi$path'),
         headers: {'Authorization': 'Bearer $token'},
       ).timeout(const Duration(seconds: 4));
+      if (response.statusCode == 429) {
+        if (!_searchBlocked) {
+          final asked = Duration(seconds: int.tryParse(response.headers['retry-after'] ?? '') ?? 0);
+          final pause = asked < _searchBlockMin
+              ? _searchBlockMin
+              : (asked > _searchBlockMax ? _searchBlockMax : asked);
+          _searchBlockedUntil = DateTime.now().add(pause);
+          PlaybackLogService.instance.log(
+            'CANVAS',
+            'Spotify rifiuta le ricerche (429): le salto per ${pause.inMinutes} minuti',
+          );
+        }
+        return null;
+      }
       if (response.statusCode != 200) {
         debugPrint('CanvasService._spotifyGet $path: HTTP ${response.statusCode}');
         return null;
@@ -446,20 +496,25 @@ class CanvasService {
   // ── The track's own Canvas ────────────────────────────────────────────────
 
   Future<_Lookup> _fetchCanvas(String trackId) async {
-    final direct = await _fromSpotify(trackId);
-    if (direct != null) return (value: direct, failed: false);
+    final direct = await _fromSpotify([trackId]);
+    final url = direct?[trackId] ?? direct?[''];
+    if (url != null) return (value: url, failed: false);
     // No login, or Spotify gave nothing: the public mirror has the same
     // per-track data and needs no account.
     return _fromCanvasDownloader(trackId);
   }
 
-  /// Spotify's own canvas endpoint, the one its app calls. It only returns
-  /// canvases to a logged-in account.
-  Future<String?> _fromSpotify(String trackId) async {
-    if (!SpotifyInternalAuthService.instance.hasSpDcCookie) return null;
+  /// Spotify's own canvas endpoint, the one its app calls, for several
+  /// tracks at once: the canvases found, by track id. It only answers a
+  /// logged-in account; null without one or on failure.
+  Future<Map<String, String>?> _fromSpotify(List<String> trackIds) async {
+    if (trackIds.isEmpty || !SpotifyInternalAuthService.instance.hasSpDcCookie) return null;
     try {
       final token = await SpotifyInternalAuthService.instance.getInternalAccessToken();
-      if (token == null) return null;
+      if (token == null) {
+        debugPrint('CanvasService._fromSpotify: accesso a Spotify non valido, nessun token');
+        return null;
+      }
       final response = await http.post(
         Uri.parse(_spotifyCanvasEndpoint),
         headers: {
@@ -467,13 +522,18 @@ class CanvasService {
           'Content-Type': 'application/x-protobuf',
           'Accept': 'application/protobuf',
         },
-        body: encodeCanvazRequest(trackId),
+        body: encodeCanvazRequest(trackIds),
       ).timeout(const Duration(seconds: 6));
       if (response.statusCode != 200) {
-        debugPrint('CanvasService._fromSpotify $trackId: HTTP ${response.statusCode}');
+        debugPrint('CanvasService._fromSpotify: HTTP ${response.statusCode}');
         return null;
       }
-      return decodeCanvazVideoUrl(response.bodyBytes);
+      final found = decodeCanvazVideoUrls(response.bodyBytes);
+      debugPrint(
+        'CanvasService._fromSpotify: ${found.length} canvas su ${trackIds.length} '
+        'brani chiesti (${response.bodyBytes.length} byte)',
+      );
+      return found;
     } catch (e) {
       debugPrint('CanvasService._fromSpotify: $e');
       return null;
@@ -536,7 +596,54 @@ class CanvasService {
       }
     }
 
+    // More artists in common is better; so is having the main artist.
+    int affinity(_ArtistCanvas c) {
+      final common = c.info?.artists.intersection(songArtists) ?? const <String>{};
+      return common.length * 2 + (common.contains(mainKey) ? 1 : 0);
+    }
+
+    // A Canvas from another track of the same album: the look the artist
+    // gave that release.
+    if (trackId != null) {
+      final album = await _albumCanvases(trackId);
+      final others = album?.canvases.where((c) => c.trackId != trackId).toList() ?? const [];
+      if (album != null && others.isNotEmpty) {
+        final place = album.trackIds.indexOf(trackId);
+        final chosen = _pickFromAlbum(
+          others,
+          affinity,
+          position: place < 0 ? null : place,
+          collaboration: songArtists.length >= 2,
+        );
+        log.log(
+          'CANVAS',
+          '"${song.title}": canvas di "${chosen.info?.title}" (stesso album, "${album.title}")',
+        );
+        return (value: chosen.url, failed: false);
+      }
+    }
+
     final released = info?.released ?? await _releaseDateFromDeezer(song);
+
+    // The album is not known, or none of its tracks has a Canvas the album
+    // lookup could find: a Canvas of the main artist released the same day
+    // belongs to the same release.
+    if (released != null) {
+      final sameRelease = candidates.where((c) {
+        final date = c.info?.released;
+        return date != null &&
+            c.info!.artists.contains(mainKey) &&
+            date.difference(released).inHours.abs() < 24;
+      }).toList();
+      if (sameRelease.isNotEmpty) {
+        var chosen = sameRelease.first;
+        for (final candidate in sameRelease) {
+          if (affinity(candidate) > affinity(chosen)) chosen = candidate;
+        }
+        log.log('CANVAS', '"${song.title}": canvas di "${chosen.info?.title}" (stessa uscita)');
+        return (value: chosen.url, failed: false);
+      }
+    }
 
     // A collaboration: prefer a Canvas from a track with at least two of the
     // same artists, looking at the other artists' canvases too.
@@ -551,12 +658,6 @@ class CanvasService {
           if (candidate.trackId != trackId) pool.putIfAbsent(candidate.url, () => candidate);
         }
       }
-      // More artists in common is better; so is having the main artist.
-      int affinity(_ArtistCanvas c) {
-        final common = c.info?.artists.intersection(songArtists) ?? const <String>{};
-        return common.length * 2 + (common.contains(mainKey) ? 1 : 0);
-      }
-
       final related = pool.values
           .where((c) => (c.info?.artists.intersection(songArtists).length ?? 0) >= 2)
           .toList();
@@ -593,6 +694,164 @@ class CanvasService {
       '(stesso artista, $gap)',
     );
     return (value: chosen.url, failed: false);
+  }
+
+  /// The Canvas of an album that suits a track best: for a collaboration one
+  /// with the same artists, otherwise the one the album uses most (artists
+  /// often give a whole release one Canvas), nearest in the track list.
+  _ArtistCanvas _pickFromAlbum(
+    List<_ArtistCanvas> canvases,
+    int Function(_ArtistCanvas) affinity, {
+    required int? position,
+    required bool collaboration,
+  }) {
+    var pool = canvases;
+    if (collaboration) {
+      final best = pool.map(affinity).reduce(max);
+      final shared = pool.where((c) => affinity(c) == best && best >= 4).toList();
+      if (shared.isNotEmpty) pool = shared;
+    }
+
+    final uses = <String, int>{};
+    for (final canvas in pool) {
+      uses[canvas.url] = (uses[canvas.url] ?? 0) + 1;
+    }
+    final mostUsed = uses.values.reduce(max);
+    final favourites = pool.where((c) => uses[c.url] == mostUsed).toList();
+
+    if (position == null) return favourites.first;
+    var chosen = favourites.first;
+    for (final canvas in favourites) {
+      final gap = ((canvas.position ?? 1 << 20) - position).abs();
+      if (gap < ((chosen.position ?? 1 << 20) - position).abs()) chosen = canvas;
+    }
+    return chosen;
+  }
+
+  /// Canvases of the tracks of the album [trackId] is on. Null when the
+  /// album could not be looked up. Tracks of one album resolved together
+  /// (a queue playing it) share a single lookup.
+  Future<_AlbumCanvases?> _albumCanvases(String trackId) async {
+    final albumId = await _albumOf(trackId);
+    if (albumId == null) return null;
+
+    final cached = _albumCanvasCache[albumId];
+    if (cached != null) return cached;
+    final pending = _albumCanvasInFlight[albumId];
+    if (pending != null) return pending;
+
+    final future = _loadAlbumCanvases(albumId).then((album) {
+      // Failures are not kept, so the next track of the album retries.
+      if (album != null) {
+        if (_albumCanvasCache.length >= _maxAlbumsCached) {
+          _albumCanvasCache.remove(_albumCanvasCache.keys.first);
+        }
+        _albumCanvasCache[albumId] = album;
+      }
+      return album;
+    });
+    _albumCanvasInFlight[albumId] = future;
+    // Block body on purpose: returning the removed future from here would
+    // make this future wait on itself.
+    return future.whenComplete(() {
+      _albumCanvasInFlight.remove(albumId);
+    });
+  }
+
+  /// Spotify album of a track, from the metadata of its public page.
+  Future<String?> _albumOf(String trackId) async {
+    final known = _albumOfTrack[trackId];
+    if (known != null) return known;
+    try {
+      final response = await http
+          .get(Uri.parse('https://open.spotify.com/track/$trackId'), headers: _browserHeaders)
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        debugPrint('CanvasService._albumOf $trackId: HTTP ${response.statusCode}');
+        return null;
+      }
+      final albumId = _albumMeta.firstMatch(response.body)?.group(1);
+      if (albumId == null) {
+        debugPrint('CanvasService._albumOf $trackId: album non indicato nella pagina');
+        return null;
+      }
+      if (_albumOfTrack.length >= _maxTrackInfoCached) {
+        _albumOfTrack.remove(_albumOfTrack.keys.first);
+      }
+      return _albumOfTrack[trackId] = albumId;
+    } catch (e) {
+      debugPrint('CanvasService._albumOf $trackId: $e');
+      return null;
+    }
+  }
+
+  Future<_AlbumCanvases?> _loadAlbumCanvases(String albumId) async {
+    final entity = await _embedEntity('album', albumId);
+    if (entity == null) return null;
+    final title = (entity['name'] ?? entity['title'] ?? '') as String;
+    final released = DateTime.tryParse(entity['releaseDate']?['isoString'] as String? ?? '');
+
+    // (track id, title, artists) in album order.
+    final tracks = <(String, String, List<String>)>[];
+    for (final track in (entity['trackList'] as List<dynamic>? ?? const []).take(_maxAlbumTracks)) {
+      final uri = track['uri'] as String? ?? '';
+      if (!uri.startsWith('spotify:track:')) continue;
+      tracks.add((
+        uri.split(':').last,
+        track['title'] as String? ?? '',
+        (track['subtitle'] as String? ?? '').split(',').map((name) => name.trim()).toList(),
+      ));
+    }
+    final ids = [for (final t in tracks) t.$1];
+
+    // Canvases Spotify returned without saying which track they are for
+    // (filed under an empty id) cannot be used here.
+    var urls = {...?await _fromSpotify(ids)}..remove('');
+    var source = 'Spotify';
+    if (urls.isEmpty) {
+      // No login, or nothing from Spotify: ask the public mirror track by
+      // track.
+      source = 'archivio pubblico';
+      var failures = 0;
+      var next = 0;
+      Future<void> worker() async {
+        while (next < ids.length) {
+          final id = ids[next++];
+          final canvas = await _fromCanvasDownloader(id);
+          if (canvas.value != null) urls[id] = canvas.value!;
+          if (canvas.failed) failures++;
+        }
+      }
+
+      await Future.wait(List.generate(_maxParallelRequests, (_) => worker()));
+      // Mostly errors: not an answer worth keeping.
+      if (urls.isEmpty && failures > ids.length ~/ 2) return null;
+    }
+
+    final found = [
+      for (var i = 0; i < tracks.length; i++)
+        if (urls[tracks[i].$1] case final String url)
+          _ArtistCanvas(
+            tracks[i].$1,
+            url,
+            _TrackInfo(
+              title: tracks[i].$2,
+              artistId: null,
+              artistName: tracks[i].$3.isEmpty ? '' : tracks[i].$3.first,
+              artists: {
+                for (final name in tracks[i].$3)
+                  if (DeezerService.normalize(name).isNotEmpty) DeezerService.normalize(name),
+              },
+              released: released,
+            ),
+            position: i,
+          ),
+    ];
+    PlaybackLogService.instance.log(
+      'CANVAS',
+      'album "$title": ${found.length} canvas su ${tracks.length} brani ($source)',
+    );
+    return _AlbumCanvases(title, ids, found);
   }
 
   /// Every artist credited on the song, normalized: from Spotify when the

@@ -62,7 +62,6 @@ class _PlayerSheetState extends State<PlayerSheet>
 
   final ScrollController _lyricsScrollController = ScrollController();
   final ValueNotifier<int> _activeLyricIndexNotifier = ValueNotifier<int>(-1);
-  StreamSubscription<Duration>? _posSub;
   StreamSubscription<String>? _errorSub;
   int _lastTabIndex = 0;
 
@@ -129,14 +128,7 @@ class _PlayerSheetState extends State<PlayerSheet>
     StorageService.instance.accentColorNotifier.addListener(_onAccentColorChanged);
 
     // Sync karaoke lyrics on position tick
-    _posSub = widget.audioHandler.positionStream.listen((pos) {
-      if (!mounted || !_lyrics.isSynced || _lyrics.syncedLyrics.isEmpty) return;
-      final idx = _lyrics.syncedLyrics.lastIndexWhere((line) => line.time <= pos);
-      if (idx != _activeLyricIndexNotifier.value && idx != -1) {
-        _activeLyricIndexNotifier.value = idx;
-        _scrollToActiveLyric(idx);
-      }
-    });
+    widget.audioHandler.positionNotifier.addListener(_syncLyricsToPosition);
 
     // Error stream listener
     _errorSub = widget.audioHandler.errorStream.listen((msg) {
@@ -152,11 +144,21 @@ class _PlayerSheetState extends State<PlayerSheet>
     });
   }
 
+  void _syncLyricsToPosition() {
+    if (!mounted || !_lyrics.isSynced || _lyrics.syncedLyrics.isEmpty) return;
+    final pos = widget.audioHandler.position;
+    final idx = _lyrics.syncedLyrics.lastIndexWhere((line) => line.time <= pos);
+    if (idx != _activeLyricIndexNotifier.value && idx != -1) {
+      _activeLyricIndexNotifier.value = idx;
+      _scrollToActiveLyric(idx);
+    }
+  }
+
   @override
   void dispose() {
     CanvasService.instance.isCanvasEnabledNotifier.removeListener(_onCanvasSettingChanged);
     StorageService.instance.accentColorNotifier.removeListener(_onAccentColorChanged);
-    _posSub?.cancel();
+    widget.audioHandler.positionNotifier.removeListener(_syncLyricsToPosition);
     _errorSub?.cancel();
     PlaybackLogService.instance.log('UI', 'player: chiudi');
     _lyricsFollowTimer?.cancel();
@@ -1715,22 +1717,21 @@ class _SeekerBarState extends State<_SeekerBar> {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<Duration?>(
-      stream: widget.audioHandler.durationStream,
-      builder: (context, durSnapshot) {
-        final realDuration = durSnapshot.data ?? widget.audioHandler.duration;
-        final officialDuration = (realDuration != null && realDuration > Duration.zero)
-                ? realDuration
-                : (widget.mediaItem.duration != null && widget.mediaItem.duration! > Duration.zero)
-                    ? widget.mediaItem.duration!
-                    : (widget.audioHandler.currentSong?.duration ?? Duration.zero);
-        final totalDuration = officialDuration;
+    // Both sources are long-lived objects: a stream created here would be
+    // subscribed again at every rebuild and lose its ticks.
+    return StreamBuilder<MediaItem?>(
+      stream: widget.audioHandler.mediaItem,
+      builder: (context, itemSnapshot) {
+        final published =
+            (itemSnapshot.data ?? widget.mediaItem).duration ?? Duration.zero;
+        final totalDuration = published > Duration.zero
+            ? published
+            : (widget.audioHandler.currentSong?.duration ?? Duration.zero);
         final maxMs = totalDuration.inMilliseconds.toDouble();
 
-        return StreamBuilder<Duration>(
-          stream: widget.audioHandler.positionStream,
-          builder: (context, posSnapshot) {
-            final position = posSnapshot.data ?? Duration.zero;
+        return ValueListenableBuilder<Duration>(
+          valueListenable: widget.audioHandler.positionNotifier,
+          builder: (context, position, _) {
             final curMs = position.inMilliseconds.toDouble().clamp(0.0, maxMs > 0 ? maxMs : 1.0);
             final displayMs = (_isDragging && _dragValue != null) ? _dragValue!.clamp(0.0, maxMs > 0 ? maxMs : 1.0) : curMs;
 
@@ -1767,8 +1768,10 @@ class _SeekerBarState extends State<_SeekerBar> {
                         setState(() { _dragValue = val; });
                       },
                       onChangeEnd: (val) {
-                        setState(() { _isDragging = false; _dragValue = null; });
+                        // The handler moves its position at once, so the
+                        // thumb stays where it was released.
                         widget.audioHandler.seek(Duration(milliseconds: val.toInt()));
+                        setState(() { _isDragging = false; _dragValue = null; });
                       },
                     ),
                   ),

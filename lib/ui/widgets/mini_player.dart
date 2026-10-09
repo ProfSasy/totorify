@@ -352,21 +352,17 @@ class _ProgressBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    return StreamBuilder<Duration?>(
-      stream: audioHandler.durationStream,
-      builder: (context, durSnapshot) {
-        final realDuration =
-            durSnapshot.data ?? audioHandler.duration;
-        final total = (realDuration != null && realDuration > Duration.zero)
-            ? realDuration
-            : (mediaItem.duration != null && mediaItem.duration! > Duration.zero)
-                ? mediaItem.duration!
-                : (audioHandler.currentSong?.duration ?? Duration.zero);
+    return StreamBuilder<MediaItem?>(
+      stream: audioHandler.mediaItem,
+      builder: (context, itemSnapshot) {
+        final published = (itemSnapshot.data ?? mediaItem).duration ?? Duration.zero;
+        final total = published > Duration.zero
+            ? published
+            : (audioHandler.currentSong?.duration ?? Duration.zero);
 
-        return StreamBuilder<Duration>(
-          stream: audioHandler.positionStream,
-          builder: (context, posSnapshot) {
-            final pos = posSnapshot.data ?? Duration.zero;
+        return ValueListenableBuilder<Duration>(
+          valueListenable: audioHandler.positionNotifier,
+          builder: (context, pos, _) {
 
             double progress = 0.0;
             if (total.inMilliseconds > 0) {

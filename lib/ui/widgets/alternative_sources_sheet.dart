@@ -54,7 +54,9 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
   void initState() {
     super.initState();
     _currentSelectedYtId = widget.song.youtubeVideoId ??
-        StorageService.instance.getCachedYouTubeMapping(widget.song.id);
+        StorageService.instance.getCachedYouTubeMapping(widget.song.id) ??
+        // A song that is a YouTube video plays that video unless told otherwise.
+        (TrackMatcherService.needsResolution(widget.song.id) ? null : widget.song.id);
     _offsetMs = StorageService.instance.getStartOffsetMs(widget.song.id) ?? 0;
     _loadMatches();
   }

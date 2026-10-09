@@ -63,7 +63,55 @@ class StorageService {
     _coversBox = await _openBoxSafe(_coversBoxName);
     _artistsBox = await _openBoxSafe(_artistsBoxName);
 
+    await _forgetSourceChoicesOnce();
     _loadInitialData();
+  }
+
+  /// One-off cleanup. While YouTube refused every video in its embedded
+  /// player, the recovery logic replaced the source of the songs played with
+  /// a worse upload and remembered it. Those choices, and the matches made
+  /// by the old scoring, are forgotten once so every song is matched again.
+  /// Start offsets and Spotify ids are kept.
+  Future<void> _forgetSourceChoicesOnce() async {
+    const flag = 'source_choices_reset_v1';
+    if (_settingsBox.get(flag) == true) return;
+    try {
+      await _ytMappingBox.deleteAll([
+        for (final key in _ytMappingBox.keys)
+          if (key is String && !key.startsWith('offset_') && !key.startsWith('spotify_id_')) key,
+      ]);
+
+      // Saved songs can carry the replaced source with them.
+      Map<String, dynamic>? withoutSource(dynamic raw) {
+        if (raw is! Map || raw['youtubeVideoId'] == null) return null;
+        return Map<String, dynamic>.from(raw)..['youtubeVideoId'] = null;
+      }
+
+      for (final key in _favoritesBox.keys.toList()) {
+        final cleaned = withoutSource(_favoritesBox.get(key));
+        if (cleaned != null) await _favoritesBox.put(key, cleaned);
+      }
+      final history = _historyBox.get('recent_songs');
+      if (history is List) {
+        await _historyBox.put('recent_songs', [
+          for (final raw in history) withoutSource(raw) ?? raw,
+        ]);
+      }
+      for (final key in _playlistsBox.keys.toList()) {
+        final raw = _playlistsBox.get(key);
+        if (raw is! Map || raw['songs'] is! List) continue;
+        final songs = raw['songs'] as List;
+        if (!songs.any((song) => withoutSource(song) != null)) continue;
+        await _playlistsBox.put(
+          key,
+          Map<String, dynamic>.from(raw)
+            ..['songs'] = [for (final song in songs) withoutSource(song) ?? song],
+        );
+      }
+      await _settingsBox.put(flag, true);
+    } catch (e) {
+      debugPrint('StorageService._forgetSourceChoicesOnce: $e');
+    }
   }
 
   Future<Box> _openBoxSafe(String name) async {

@@ -8,6 +8,9 @@ import '../models/playlist.dart';
 import 'auth_service.dart';
 import 'storage_service.dart';
 
+/// Where the audio of a YouTube video can be streamed from, and its length.
+typedef _VideoStreams = ({String? audioUrl, String? hlsManifestUrl, Duration? duration});
+
 /// YouTube Music service using authenticated & Apple VisionOS InnerTube APIs
 /// for rock-solid stream extraction on iOS devices.
 class YTMusicService {
@@ -22,6 +25,10 @@ class YTMusicService {
 
   static const _visionOsUa =
       'com.google.visionos.youtube/1.04(RealityDevice17,1; U; CPU visionOS 26_6_0 like Mac OS X; IT)';
+
+  // What AVPlayer itself sends when it fetches a stream.
+  static const _appleMediaUa =
+      'AppleCoreMedia/1.0.0.23G93 (iPhone; U; CPU OS 26_6 like Mac OS X; it_it)';
 
   static const _visionOsHeaders = {
     'Content-Type': 'application/json',
@@ -44,6 +51,9 @@ class YTMusicService {
 
   final Map<String, (String, DateTime)> _audioUrlCache = {};
   final Map<String, Future<String?>> _audioUrlInFlight = {};
+  final Map<String, (_VideoStreams, DateTime)> _streamsCache = {};
+  final Map<String, Future<_VideoStreams?>> _streamsInFlight = {};
+  final Map<String, (String, DateTime)> _hlsAudioCache = {};
   final Map<String, (List<Song>, DateTime)> _searchCache = {};
   final Map<String, Future<List<Song>>> _searchInFlight = {};
 
@@ -136,7 +146,7 @@ class YTMusicService {
   Future<String?> getAudioStreamUrl(String videoId, {bool force = false}) {
     if (videoId.isEmpty) return Future.value(null);
     if (force) {
-      _audioUrlCache.remove(videoId);
+      _forget(videoId);
     } else {
       final cached = _audioUrlCache[videoId];
       if (cached != null && DateTime.now().isBefore(cached.$2)) {
@@ -151,6 +161,13 @@ class YTMusicService {
     return future.whenComplete(() => _audioUrlInFlight.remove(videoId));
   }
 
+  /// Drops everything remembered about the streams of [videoId].
+  void _forget(String videoId) {
+    _audioUrlCache.remove(videoId);
+    _streamsCache.remove(videoId);
+    _hlsAudioCache.remove(videoId);
+  }
+
   Future<String?> _resolveAudioStreamUrl(String videoId) async {
     final url = await _getAudioStreamUrlUncached(videoId);
     if (url != null && url.isNotEmpty) {
@@ -162,7 +179,7 @@ class YTMusicService {
 
   Future<String?> _getAudioStreamUrlUncached(String videoId) async {
     // 1. Primary engine: VisionOS InnerTube
-    final visionUrl = await _visionOsStreamUrl(videoId);
+    final visionUrl = (await _visionOsStreams(videoId))?.audioUrl;
     if (visionUrl != null) return visionUrl;
 
     // 2. Secondary engine: Authenticated InnerTube with OAuth token
@@ -243,24 +260,162 @@ class YTMusicService {
     return cached != null && DateTime.now().isBefore(cached.$2);
   }
 
-  /// HLS manifest of [videoId], the format AVPlayer handles most reliably.
-  /// It carries video renditions too, so it is the fallback, not the
-  /// default: the direct audio stream uses far less data.
-  Future<String?> getHlsUrl(String videoId) async {
-    final data = await _visionOsPlayerResponse(videoId);
-    final url = data?['streamingData']?['hlsManifestUrl'] as String?;
-    return (url == null || url.isEmpty) ? null : url;
+  /// What YouTube says about the streams of [videoId]: one request serves
+  /// the direct stream, the HLS manifest and the length. [force] asks again
+  /// and forgets every URL remembered for the video.
+  Future<_VideoStreams?> _visionOsStreams(String videoId, {bool force = false}) {
+    if (force) {
+      _forget(videoId);
+    } else {
+      final cached = _streamsCache[videoId];
+      if (cached != null && DateTime.now().isBefore(cached.$2)) {
+        return Future.value(cached.$1);
+      }
+    }
+    final pending = _streamsInFlight[videoId];
+    if (pending != null) return pending;
+
+    final future = _loadVisionOsStreams(videoId);
+    _streamsInFlight[videoId] = future;
+    // Block body on purpose: returning the removed future from here would
+    // make this future wait on itself.
+    return future.whenComplete(() {
+      _streamsInFlight.remove(videoId);
+    });
   }
 
-  /// VisionOS InnerTube extraction (no signature cipher, direct adaptive audio streams)
-  Future<String?> _visionOsStreamUrl(String videoId) async {
+  Future<_VideoStreams?> _loadVisionOsStreams(String videoId) async {
     final data = await _visionOsPlayerResponse(videoId);
     if (data == null) return null;
-    final formats =
-        data['streamingData']?['adaptiveFormats'] as List<dynamic>? ?? [];
-    final streamUrl = _pickBestAppleCompatibleAudioUrl(formats);
-    if (streamUrl != null && streamUrl.isNotEmpty) return streamUrl;
-    return null;
+    final streaming = data['streamingData'] as Map<String, dynamic>?;
+    final formats = streaming?['adaptiveFormats'] as List<dynamic>? ?? [];
+
+    // The audio formats give the length to the millisecond; the video
+    // details only in whole seconds.
+    var millis = 0;
+    for (final format in formats) {
+      if (!((format['mimeType'] as String?)?.startsWith('audio/') ?? false)) continue;
+      final value = int.tryParse('${format['approxDurationMs'] ?? ''}') ?? 0;
+      if (value > millis) millis = value;
+    }
+    if (millis == 0) {
+      millis = (int.tryParse('${data['videoDetails']?['lengthSeconds'] ?? ''}') ?? 0) * 1000;
+    }
+
+    final audioUrl = _pickBestAppleCompatibleAudioUrl(formats);
+    final hls = streaming?['hlsManifestUrl'] as String?;
+    final streams = (
+      audioUrl: (audioUrl == null || audioUrl.isEmpty) ? null : audioUrl,
+      hlsManifestUrl: (hls == null || hls.isEmpty) ? null : hls,
+      duration: millis > 0 ? Duration(milliseconds: millis) : null,
+    );
+    final expires = DateTime.now().add(_urlCacheTtl);
+    _streamsCache[videoId] = (streams, expires);
+    _pruneCache(_streamsCache);
+    if (streams.audioUrl != null) {
+      _audioUrlCache[videoId] = (streams.audioUrl!, expires);
+      _pruneCache(_audioUrlCache);
+    }
+    return streams;
+  }
+
+  /// Real length of [videoId], known once its streams have been looked up.
+  Duration? streamDuration(String videoId) => _streamsCache[videoId]?.$1.duration;
+
+  /// HLS manifest of [videoId] with every rendition, video included: the
+  /// last resort, since playing it downloads the video as well.
+  Future<String?> getHlsUrl(String videoId) async =>
+      (await _visionOsStreams(videoId))?.hlsManifestUrl;
+
+  /// Audio-only HLS playlist of [videoId]: the format AVPlayer handles best.
+  /// Unlike the direct stream, its length is reported correctly and seeking
+  /// fetches only the segment needed. Null when the video has none.
+  Future<String?> getHlsAudioUrl(String videoId, {bool force = false}) async {
+    if (videoId.isEmpty) return null;
+    if (!force) {
+      final cached = _hlsAudioCache[videoId];
+      if (cached != null && DateTime.now().isBefore(cached.$2)) return cached.$1;
+    }
+    final manifest = (await _visionOsStreams(videoId, force: force))?.hlsManifestUrl;
+    if (manifest == null) return null;
+
+    try {
+      final response = await http
+          .get(Uri.parse(manifest), headers: const {'User-Agent': _appleMediaUa})
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        debugPrint('YTMusic.hlsAudio $videoId: HTTP ${response.statusCode}');
+        return null;
+      }
+      final url = pickHlsAudioRendition(
+        response.body,
+        Uri.parse(manifest),
+        highQuality: StorageService.instance.isHighQuality,
+      );
+      if (url == null) {
+        debugPrint('YTMusic.hlsAudio $videoId: nessuna traccia solo audio nel manifest');
+        return null;
+      }
+      _hlsAudioCache[videoId] = (url, DateTime.now().add(_urlCacheTtl));
+      _pruneCache(_hlsAudioCache);
+      return url;
+    } catch (e) {
+      debugPrint('YTMusic.hlsAudio $videoId: $e');
+      return null;
+    }
+  }
+
+  static final RegExp _hlsAttribute = RegExp(r'([A-Z0-9-]+)=("[^"]*"|[^,]*)');
+
+  static Map<String, String> _hlsAttributes(String line) => {
+        for (final match in _hlsAttribute.allMatches(line.substring(line.indexOf(':') + 1)))
+          match.group(1)!: match.group(2)!.replaceAll('"', ''),
+      };
+
+  /// Picks the audio-only playlist out of an HLS master manifest: the
+  /// default track (not a dubbed one), AAC-LC for high quality and the
+  /// lighter HE-AAC otherwise.
+  static String? pickHlsAudioRendition(String manifest, Uri base, {required bool highQuality}) {
+    final lines = manifest.split('\n').map((line) => line.trim()).toList();
+
+    // Which codec each audio group carries, from the variants that use it.
+    final groupCodec = <String, String>{};
+    for (final line in lines) {
+      if (!line.startsWith('#EXT-X-STREAM-INF')) continue;
+      final attributes = _hlsAttributes(line);
+      final group = attributes['AUDIO'];
+      if (group == null) continue;
+      final codec = (attributes['CODECS'] ?? '')
+          .split(',')
+          .map((c) => c.trim())
+          .firstWhere((c) => c.startsWith('mp4a'), orElse: () => '');
+      if (codec.isNotEmpty) groupCodec.putIfAbsent(group, () => codec);
+    }
+
+    final renditions = <({String uri, String group, bool isDefault})>[];
+    for (final line in lines) {
+      if (!line.startsWith('#EXT-X-MEDIA')) continue;
+      final attributes = _hlsAttributes(line);
+      final uri = attributes['URI'];
+      if (attributes['TYPE'] != 'AUDIO' || uri == null || uri.isEmpty) continue;
+      renditions.add((
+        uri: uri,
+        group: attributes['GROUP-ID'] ?? '',
+        isDefault: attributes['DEFAULT'] == 'YES',
+      ));
+    }
+    if (renditions.isEmpty) return null;
+
+    final originals = renditions.where((r) => r.isDefault).toList();
+    final pool = originals.isNotEmpty ? originals : renditions;
+    // mp4a.40.2 is AAC-LC (about 128 kbps), mp4a.40.5 is HE-AAC (about 48).
+    bool isFull(({String uri, String group, bool isDefault}) r) =>
+        groupCodec[r.group] == 'mp4a.40.2';
+    final chosen = pool.firstWhere(
+      (r) => isFull(r) == highQuality,
+      orElse: () => pool.first,
+    );
+    return base.resolve(chosen.uri).toString();
   }
 
   /// Selects the best audio stream natively compatible with Apple iOS AVPlayer.

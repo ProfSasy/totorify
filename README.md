@@ -10,7 +10,7 @@ Nata come client ispirato a [Kreate](https://github.com/knighthat/Kreate) (fork 
 - **Lock Screen e Control Center**: copertina, controlli e avanzamento del brano.
 - **Download e ascolto offline**: i brani scaricati vengono riprodotti dal file locale, senza rete.
 - **Copertine originali**: le miniature video di YouTube vengono sostituite con la copertina ufficiale dell'album.
-- **Canvas**: il video in loop di Spotify dietro al player. Se il brano non ne ha uno, viene usato quello dello stesso artista con la data di uscita più vicina.
+- **Canvas**: il video in loop di Spotify dietro al player. Se il brano non ne ha uno, viene usato quello di un altro brano dello stesso album, poi (per i feat) di un brano con almeno due degli stessi artisti, infine quello dello stesso artista con la data di uscita più vicina.
 - **Testi sincronizzati**: da LRCLIB, con ripiego su altre fonti.
 - **Artisti**: pagina artista con brani popolari e artisti simili; gli artisti seguiti compaiono in Libreria.
 - **Consigli**: basati sul brano in ascolto e sulla cronologia; alimentano Smart Shuffle, la sezione "Consigliati" della coda e la riproduzione automatica a fine coda.
@@ -33,7 +33,8 @@ lib/
   models/                     Song, Playlist, Artist, Lyrics
   services/
     audio_handler.dart        ponte tra UI, audio_service e il lettore nativo
-                              (stream audio diretto, o file locale per l'offline)
+                              (playlist HLS solo audio, stream diretto come riserva,
+                              file locale per l'offline)
     playback_queue.dart       regole della coda: ordine, shuffle, repeat
     track_matcher_service.dart  da brano di catalogo a video YouTube
     ytmusic_service.dart      ricerca e stream YouTube Music

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
@@ -32,10 +33,11 @@ enum _Open {
 /// Bridge between the UI, audio_service and the native player.
 ///
 /// Audio is played by AVPlayer (through [VideoPlayerController]) from one of
-/// three sources, tried in this order:
+/// these sources, tried in this order:
 /// 1. the downloaded file, for songs saved offline;
-/// 2. the direct AAC stream of the matched YouTube video;
-/// 3. the HLS stream of the same video.
+/// 2. the audio-only HLS playlist of the matched YouTube video;
+/// 3. the direct AAC stream of the same video;
+/// 4. its full HLS manifest, video included.
 /// When a video cannot be played at all, the next best match is tried.
 ///
 /// Playing natively is what makes background playback and the lock screen
@@ -58,6 +60,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   static const Duration _openTimeout = Duration(seconds: 20);
   static const int _maxSourceAttempts = 3;
+  static const Duration _seekTimeout = Duration(seconds: 8);
+  // How close to the end a track counts as finished.
+  static const Duration _endMargin = Duration(milliseconds: 250);
 
   VideoPlayerController? _player;
   double _volume = 1.0;
@@ -88,7 +93,18 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   final Map<String, int> _errorReloads = {};
   int _errorHandledFor = -1;
 
-  (AudioProcessingState, bool)? _lastPublished;
+  // Real length of what is playing. AVPlayer reports twice the real length
+  // for YouTube's direct audio streams, so its own figure is not trusted
+  // when a better one is known.
+  Duration _trackDuration = Duration.zero;
+
+  // A seek in flight: the player still reports the old position meanwhile.
+  bool _seeking = false;
+  int _seekGeneration = 0;
+  // A seek asked while the track was still loading: it starts from there.
+  Duration? _pendingSeek;
+
+  (AudioProcessingState, bool, int)? _lastPublished;
 
   // Sleep timer state
   Timer? _sleepTimer;
@@ -101,9 +117,12 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   Song? get currentSong => _queue.current;
 
-  Stream<Duration> get positionStream => Stream.periodic(const Duration(milliseconds: 200), (_) => position);
-  Stream<Duration?> get durationStream => mediaItem.map((item) => item?.duration);
-  Duration get position => playbackState.value.updatePosition;
+  /// Playback position, refreshed a few times a second while playing. It is
+  /// kept out of [playbackState], which is published only when the state
+  /// changes: publishing it at every tick rebuilt the whole player several
+  /// times a second and kept restarting the progress bar.
+  final ValueNotifier<Duration> positionNotifier = ValueNotifier<Duration>(Duration.zero);
+  Duration get position => positionNotifier.value;
   Duration? get duration => mediaItem.value?.duration;
 
   // --- Player events ---
@@ -175,18 +194,21 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       playbackIndicator.value = indicator;
     }
 
-    final published = (processing, playing);
-    if (published != _lastPublished) {
-      _lastPublished = published;
-      PlaybackLogService.instance
-          .log('STATE', '${processing.name} playing=$playing');
-    }
-
     if (playing && pollPosition) {
       if (_positionTimer == null) _startPositionTimer();
     } else {
       _stopPositionTimer();
     }
+
+    // The player notifies ten times a second while playing: only a real
+    // change is passed on.
+    final published = (processing, playing, _queue.index);
+    if (published == _lastPublished) return;
+    if (_lastPublished?.$1 != processing || _lastPublished?.$2 != playing) {
+      PlaybackLogService.instance
+          .log('STATE', '${processing.name} playing=$playing');
+    }
+    _lastPublished = published;
 
     playbackState.add(
       playbackState.value.copyWith(
@@ -211,6 +233,10 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         processingState: processing,
         playing: playing,
         queueIndex: _queue.index >= 0 ? _queue.index : 0,
+        // The lock screen counts on from here by itself.
+        updatePosition: position,
+        bufferedPosition: position,
+        speed: _speed,
       ),
     );
   }
@@ -219,13 +245,17 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _positionTimer?.cancel();
     _positionTimer = Timer.periodic(const Duration(milliseconds: 200), (_) async {
       final player = _player;
-      if (player == null || _loading) return;
+      if (player == null || _loading || _seeking) return;
       try {
-        // Asked to the player each time: the value it caches is refreshed
-        // only twice a second, too coarse for synced lyrics.
         final position = await player.position;
-        if (position != null && identical(player, _player) && !_loading) {
-          _setPosition(position, player.value.playbackSpeed);
+        if (position == null || !identical(player, _player) || _loading || _seeking) return;
+        _setPosition(position);
+        // The end is called here, a moment early, rather than left to the
+        // player: it can believe the track is twice as long, and once it has
+        // stopped by itself it is busy parking at the end, which gets in the
+        // way of repeating the track.
+        if (_trackDuration > Duration.zero && position >= _trackDuration - _endMargin) {
+          unawaited(_onTrackEnded());
         }
       } catch (_) {
         // The player was disposed between the check and the call.
@@ -238,14 +268,36 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _positionTimer = null;
   }
 
-  void _setPosition(Duration position, double speed) {
+  /// Updates the position shown by the app. [announce] also tells the system
+  /// (lock screen, Control Center), which otherwise counts on by itself:
+  /// needed after a jump.
+  void _setPosition(Duration position, {bool announce = false}) {
+    var shown = position < Duration.zero ? Duration.zero : position;
+    if (_trackDuration > Duration.zero && shown > _trackDuration) shown = _trackDuration;
+    positionNotifier.value = shown;
+    if (!announce) return;
     playbackState.add(
       playbackState.value.copyWith(
-        updatePosition: position,
-        bufferedPosition: position,
-        speed: speed,
+        updatePosition: shown,
+        bufferedPosition: shown,
+        speed: _speed,
       ),
     );
+  }
+
+  /// Length of what is playing. [known] comes from YouTube and is exact;
+  /// without it the player's figure is used, halved when it is twice the
+  /// catalog length (a file downloaded from a direct stream).
+  Duration _resolveDuration(Duration reported, Duration? known, Song? song) {
+    if (known != null && known > Duration.zero) return known;
+    final catalog = song?.duration ?? Duration.zero;
+    if (reported <= Duration.zero) return catalog;
+    if (catalog > Duration.zero) {
+      final doubled = catalog * 2;
+      final tolerance = Duration(milliseconds: max(4000, doubled.inMilliseconds ~/ 25));
+      if ((reported - doubled).abs() <= tolerance) return reported ~/ 2;
+    }
+    return reported;
   }
 
   void _updateQueueBroadcast() {
@@ -259,7 +311,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     final song = currentSong;
     if (song == null) return;
     final item = song.toMediaItem();
-    final actual = _loading ? Duration.zero : (_player?.value.duration ?? Duration.zero);
+    final actual = _trackDuration;
     final known = item.duration ?? Duration.zero;
     final differs = (actual - known).abs() > const Duration(seconds: 1);
     mediaItem.add(actual > Duration.zero && differs ? item.copyWith(duration: actual) : item);
@@ -288,9 +340,26 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   }
 
   Future<void> _restartCurrent() async {
+    final player = _player;
+    if (player == null) return;
+    // The player reached the end by itself: it is pausing and moving to the
+    // last instant, and a seek sent now would be undone by that.
+    if (player.value.isCompleted) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (!identical(player, _player)) return;
+    }
+    final start = _startOffsetOf(currentSong);
+    // Not polled meanwhile: the old position would end the track again.
+    _seeking = true;
+    try {
+      await player.seekTo(start);
+    } finally {
+      _seeking = false;
+    }
+    if (!identical(player, _player)) return;
+    _setPosition(start, announce: true);
     _endGateOpen = true;
-    await _player?.seekTo(_startOffsetOf(currentSong));
-    await _player?.play();
+    await player.play();
   }
 
   /// Where [song] starts: the user's manual offset for sources that open
@@ -354,7 +423,12 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _endGateOpen = true;
     _userPaused = false;
     _loading = true;
+    _seeking = false;
+    _seekGeneration++;
+    _pendingSeek = null;
+    _trackDuration = Duration.zero;
     final start = startSeconds ?? _startOffsetOf(song).inMilliseconds / 1000;
+    positionNotifier.value = Duration(milliseconds: (start * 1000).round());
     final log = PlaybackLogService.instance;
     log.log('LOAD', '#$generation "${song.title}" - ${song.artist} id=${song.id}'
         '${start > 0 ? ' da ${start.toStringAsFixed(1)}s' : ''}');
@@ -416,8 +490,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     }
   }
 
-  /// Streams [videoId]: its direct AAC stream first, then its HLS stream.
-  /// [unavailable] is true when YouTube returned no stream at all for it.
+  /// Streams [videoId]: its audio-only HLS playlist first, then the direct
+  /// AAC stream, then the full HLS manifest. [unavailable] is true when
+  /// YouTube returned no stream at all for it.
   Future<({_Open result, bool unavailable})> _openStream(
     String videoId,
     int generation, {
@@ -437,10 +512,21 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
           generation,
           start: start,
           source: '$label $videoId',
+          knownDuration: yt.streamDuration(videoId),
         );
 
     final hadRemembered = yt.hasCachedAudioUrl(videoId);
-    var url = await yt.getAudioStreamUrl(videoId, force: freshUrl);
+
+    // [freshUrl] makes this first lookup forget every remembered URL of the
+    // video, so the ones asked below are new as well.
+    final hlsAudio = await yt.getHlsAudioUrl(videoId, force: freshUrl);
+    if (generation != _loadGeneration) return superseded;
+    if (hlsAudio != null) {
+      final opened = await openUrl(hlsAudio, 'HLS audio', format: VideoFormat.hls);
+      if (opened != _Open.failed) return (result: opened, unavailable: false);
+    }
+
+    var url = await yt.getAudioStreamUrl(videoId);
     if (generation != _loadGeneration) return superseded;
 
     if (url == null) {
@@ -464,10 +550,13 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     final hls = await yt.getHlsUrl(videoId);
     if (generation != _loadGeneration) return superseded;
     if (hls != null) {
-      final opened = await openUrl(hls, 'HLS', format: VideoFormat.hls);
+      final opened = await openUrl(hls, 'HLS completo', format: VideoFormat.hls);
       if (opened != _Open.failed) return (result: opened, unavailable: false);
     }
-    return (result: _Open.failed, unavailable: url == null && hls == null);
+    return (
+      result: _Open.failed,
+      unavailable: url == null && hls == null && hlsAudio == null,
+    );
   }
 
   /// Creates a player for one source, waits until it can play and makes it
@@ -477,6 +566,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     int generation, {
     required double start,
     required String source,
+    Duration? knownDuration,
   }) async {
     final log = PlaybackLogService.instance;
     final watch = Stopwatch()..start();
@@ -494,16 +584,22 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       controller.addListener(() => _onPlayerValue(controller));
       unawaited(_disposeQuietly(previous));
 
+      final reported = controller.value.duration;
+      _trackDuration = _resolveDuration(reported, knownDuration, currentSong);
+      final misreported = (reported - _trackDuration).abs() > const Duration(seconds: 2);
+
       await controller.setVolume(_volume);
       await controller.setPlaybackSpeed(_speed);
-      if (start > 0) {
-        await controller.seekTo(Duration(milliseconds: (start * 1000).round()));
-      }
+      final startAt = _pendingSeek ?? Duration(milliseconds: (start * 1000).round());
+      _pendingSeek = null;
+      if (startAt > Duration.zero) await controller.seekTo(startAt);
+      _setPosition(startAt, announce: true);
       _publishCurrentMediaItem();
       log.log(
         'PLAY',
         '#$generation $source pronto in ${watch.elapsedMilliseconds}ms, '
-        'durata ${controller.value.duration.inSeconds}s',
+        'durata ${_trackDuration.inSeconds}s'
+        '${misreported ? ' (il lettore ne dichiara ${reported.inSeconds})' : ''}',
       );
 
       if (_userPaused) {
@@ -513,7 +609,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         await _activateSession();
         await controller.play();
       }
-      _setPosition(controller.value.position, _speed);
       return _Open.ok;
     } catch (e, stack) {
       log.error(
@@ -622,7 +717,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     try {
       if (StorageService.instance.isDownloaded(song.id)) return;
       final videoId = await TrackMatcherService.instance.resolveAndCacheStreamId(song);
-      if (videoId != null) await YTMusicService.instance.getAudioStreamUrl(videoId);
+      if (videoId == null) return;
+      final yt = YTMusicService.instance;
+      if (await yt.getHlsAudioUrl(videoId) == null) await yt.getAudioStreamUrl(videoId);
     } catch (e) {
       debugPrint('AudioPlayerHandler._prefetchNext: $e');
     }
@@ -674,7 +771,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     }
   }
 
-  double _currentSeconds() => (_player?.value.position.inMilliseconds ?? 0) / 1000;
+  double _currentSeconds() => position.inMilliseconds / 1000;
 
   @override
   Future<void> play() async {
@@ -693,9 +790,14 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     final player = _player;
     if (player == null || _loading) return;
 
-    final value = player.value;
-    if (value.isCompleted || (value.duration > Duration.zero && value.position >= value.duration)) {
-      await player.seekTo(_startOffsetOf(currentSong));
+    final atEnd = player.value.isCompleted ||
+        (_trackDuration > Duration.zero && position >= _trackDuration - _endMargin);
+    if (atEnd) {
+      // Finished (sleep timer at the end of the track): start it again.
+      final start = _startOffsetOf(currentSong);
+      await player.seekTo(start);
+      _setPosition(start, announce: true);
+      _endGateOpen = true;
     }
     await _activateSession();
     await player.play();
@@ -718,6 +820,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     PlaybackLogService.instance.log('CMD', 'stop');
     _userStopped = true;
     _loading = false;
+    _seeking = false;
+    _pendingSeek = null;
     // Cancels a load in progress.
     _loadGeneration++;
     _stopPositionTimer();
@@ -730,12 +834,49 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   @override
   Future<void> seek(Duration position) async {
-    PlaybackLogService.instance.log('CMD', 'seek ${position.inSeconds}s');
-    if (_loading) return;
-    await _player?.seekTo(position);
-    // The position is polled only while playing: publish it now so a seek
-    // made while paused moves the progress bar too.
-    _setPosition(position, _speed);
+    final log = PlaybackLogService.instance;
+    var target = position < Duration.zero ? Duration.zero : position;
+    if (_trackDuration > Duration.zero && target > _trackDuration) target = _trackDuration;
+    log.log('CMD', 'seek ${target.inSeconds}s (inCaricamento=$_loading)');
+
+    final player = _player;
+    if (_loading) {
+      // Nothing to move yet: the track starts from there once it is ready.
+      _pendingSeek = target;
+      _setPosition(target, announce: true);
+      return;
+    }
+    if (player == null) return;
+
+    // The bar and the lock screen move at once; the player follows. Until it
+    // has, what it reports is the old position and must not be shown.
+    final generation = ++_seekGeneration;
+    _seeking = true;
+    _setPosition(target, announce: true);
+    if (target < _trackDuration - _endMargin) _endGateOpen = true;
+
+    final watch = Stopwatch()..start();
+    try {
+      // Bounded: a seek the player never confirms must not freeze the bar.
+      await player.seekTo(target).timeout(_seekTimeout);
+    } catch (e) {
+      log.error('SEEK', 'spostamento a ${target.inSeconds}s non confermato: $e');
+    }
+    // A newer seek or another track took over meanwhile.
+    if (generation != _seekGeneration || !identical(player, _player)) return;
+    _seeking = false;
+
+    Duration? reached;
+    try {
+      reached = await player.position;
+    } catch (_) {
+      // Disposed meanwhile: nothing to report.
+    }
+    log.log(
+      'SEEK',
+      'a ${target.inSeconds}s in ${watch.elapsedMilliseconds}ms, '
+      'il lettore è a ${reached == null ? '?' : (reached.inMilliseconds / 1000).toStringAsFixed(1)}s',
+    );
   }
 
   @override
@@ -1044,7 +1185,10 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       _ => PlaybackRepeat.off,
     };
     _queue.setRepeat(mode);
-    playbackState.add(playbackState.value.copyWith(repeatMode: repeatMode));
+    playbackState.add(playbackState.value.copyWith(
+      repeatMode: repeatMode,
+      updatePosition: position,
+    ));
   }
 
   @override
@@ -1055,6 +1199,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     if (!enabled && smartShuffleNotifier.value) await setSmartShuffle(false);
     playbackState.add(playbackState.value.copyWith(
       shuffleMode: enabled ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
+      updatePosition: position,
     ));
   }
 
