@@ -31,7 +31,6 @@ class PlaybackQueue {
 
   List<Song> get items => List.unmodifiable(_items);
   int get index => _index;
-  bool get isEmpty => _items.isEmpty;
   bool get shuffle => _shuffle;
   PlaybackRepeat get repeat => _repeat;
 

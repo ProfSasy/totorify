@@ -20,9 +20,6 @@ class DownloadService {
   final ValueNotifier<Map<String, double>> downloadProgressNotifier =
       ValueNotifier<Map<String, double>>({});
 
-  final ValueNotifier<(int, int)> downloadResultNotifier =
-      ValueNotifier<(int, int)>((0, 0));
-
   Future<String> _getDownloadDir() async {
     final appDir = await getApplicationDocumentsDirectory();
     final downloadDir = Directory('${appDir.path}/downloads');
@@ -141,11 +138,7 @@ class DownloadService {
         await tempFile.rename(filePath);
         _updateProgress(song.id, 1.0);
 
-        final downloadedSong = song.copyWith(
-          localFilePath: filePath,
-          isDownloaded: true,
-        );
-        await StorageService.instance.saveDownloadedSong(downloadedSong);
+        await StorageService.instance.saveDownloadedSong(song);
 
         await Future.delayed(const Duration(milliseconds: 250));
         _removeProgress(song.id);
@@ -300,13 +293,14 @@ class DownloadService {
     }
   }
 
-  /// Downloads all songs in a playlist concurrently with a worker pool (3 parallel songs).
-  Future<void> downloadPlaylist(List<Song> songs, {bool forceRefresh = false}) async {
+  /// Downloads all songs in a playlist, three at a time. Returns how many
+  /// downloads succeeded and how many failed.
+  Future<(int, int)> downloadPlaylist(List<Song> songs, {bool forceRefresh = false}) async {
     final pending = songs
         .where((s) => forceRefresh || !StorageService.instance.isDownloaded(s.id))
         .toList();
 
-    if (pending.isEmpty) return;
+    if (pending.isEmpty) return (0, 0);
 
     int successes = 0;
     int failures = 0;
@@ -324,7 +318,7 @@ class DownloadService {
       },
     );
 
-    downloadResultNotifier.value = (successes, failures);
+    return (successes, failures);
   }
 
   /// Helper to run async tasks with controlled concurrency.

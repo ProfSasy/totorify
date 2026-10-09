@@ -14,7 +14,7 @@ class LogEntry {
 }
 
 /// Diagnostic log of the whole app, used to follow a session on a real
-/// device: commands, player and iframe state changes, source matching,
+/// device: commands, player state changes, source matching,
 /// network failures and every uncaught error with its stack trace.
 ///
 /// Entries live in a ring buffer and are also written to a file, so the log

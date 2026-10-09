@@ -111,7 +111,7 @@ class PlaylistImporterService {
             // 1. Recupera copertina HD album Spotify
             final hdCover = await SpotifyService.instance.fetchTrackCoverHD(trackId);
 
-            // 2. Pre-risolve lo stream YouTube Music con scoring Spotube e lo mette in cache
+            // 2. Pre-risolve il video YouTube da riprodurre e lo mette in cache
             final ytId = StorageService.instance.getCachedYouTubeMapping(song.id) ??
                 await TrackMatcherService.instance.resolveAndCacheStreamId(song);
 

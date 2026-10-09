@@ -3,17 +3,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
-/// Google Sign-In + token management service.
-/// Tokens are stored in iOS Keychain via flutter_secure_storage.
+/// Optional Google sign-in. The access token is a fallback way to ask
+/// YouTube for a stream; the name, email and photo are kept in the iOS
+/// Keychain so the account row can be shown before the session is restored.
 class AuthService extends ChangeNotifier {
   static final AuthService instance = AuthService._internal();
   AuthService._internal();
 
-  // ── IMPORTANT: Replace this placeholder with your real iOS OAuth Client ID
-  // obtained from Google Cloud Console → APIs & Services → Credentials.
-  // Format: XXXXXXXXX.apps.googleusercontent.com
-  // The Reversed Client ID (com.googleusercontent.apps.XXXXXXXXX) also needs
-  // to be added to ios/Runner/Info.plist under CFBundleURLSchemes.
+  // iOS OAuth client. Its reversed form is registered as a URL scheme in
+  // ios/Runner/Info.plist.
   static const String _clientId =
       '456905275615-8p3akvegnsoc2iehq8m568i53864e9cc.apps.googleusercontent.com';
 
@@ -21,7 +19,6 @@ class AuthService extends ChangeNotifier {
     iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
   );
 
-  static const _kAccessToken = 'google_access_token';
   static const _kUserName = 'google_user_name';
   static const _kUserEmail = 'google_user_email';
   static const _kUserPhoto = 'google_user_photo';
@@ -36,10 +33,8 @@ class AuthService extends ChangeNotifier {
   );
 
   GoogleSignInAccount? _currentUser;
-  bool _isLoading = false;
 
   bool get isSignedIn => _currentUser != null;
-  bool get isLoading => _isLoading;
   GoogleSignInAccount? get currentUser => _currentUser;
 
   String? _cachedAccessToken;
@@ -62,24 +57,16 @@ class AuthService extends ChangeNotifier {
 
   /// Full sign-in flow (shows Google account picker).
   Future<bool> signIn() async {
-    _isLoading = true;
-    notifyListeners();
     try {
       final account = await _googleSignIn.signIn();
-      if (account == null) {
-        // User cancelled
-        _isLoading = false;
-        notifyListeners();
-        return false;
-      }
+      // Null when the user cancelled.
+      if (account == null) return false;
       _currentUser = account;
       await _refreshAndCacheToken(account);
-      _isLoading = false;
       notifyListeners();
       return true;
     } catch (e) {
-      _isLoading = false;
-      notifyListeners();
+      debugPrint('AuthService.signIn: $e');
       return false;
     }
   }
@@ -122,10 +109,7 @@ class AuthService extends ChangeNotifier {
     // Google access tokens last 1 hour
     _tokenExpiry = DateTime.now().add(const Duration(minutes: 55));
 
-    // Persist to Keychain for next cold start
-    if (auth.accessToken != null) {
-      await _storage.write(key: _kAccessToken, value: auth.accessToken);
-    }
+    // The token itself is not stored: a new one is asked at every start.
     await _storage.write(key: _kUserName, value: account.displayName ?? '');
     await _storage.write(key: _kUserEmail, value: account.email);
     if (account.photoUrl != null) {

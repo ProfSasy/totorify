@@ -241,10 +241,9 @@ class StorageService {
       await _favoritesBox.delete(song.id);
     } else {
       _favoriteIds.add(song.id);
-      final favSong = song.copyWith(isFavorite: true);
-      _cachedFavorites.insert(0, favSong);
+      _cachedFavorites.insert(0, song);
       favoritesNotifier.value = List.unmodifiable(_cachedFavorites);
-      await _favoritesBox.put(song.id, favSong.toMap());
+      await _favoritesBox.put(song.id, song.toMap());
     }
   }
 

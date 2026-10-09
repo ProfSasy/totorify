@@ -9,6 +9,7 @@ import '../../services/canvas_service.dart';
 import '../../services/download_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
+import '../../services/ytmusic_service.dart';
 import 'spotify_web_login_screen.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_theme.dart';
@@ -47,6 +48,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _isAmoled = StorageService.instance.isAmoledTheme;
     _loadStorageSize();
     _loadUserInfo();
+    // This screen lives for the whole session: the figure must follow the
+    // downloads made meanwhile.
+    StorageService.instance.downloadsNotifier.addListener(_loadStorageSize);
+  }
+
+  @override
+  void dispose() {
+    StorageService.instance.downloadsNotifier.removeListener(_loadStorageSize);
+    super.dispose();
+  }
+
+  Future<void> _openSpotifyLogin() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<bool>(builder: (_) => const SpotifyWebLoginScreen()),
+    );
+    _onSpotifyLoginChanged();
+  }
+
+  /// After a login or logout: what Spotify can answer has changed, also for
+  /// the songs whose Canvas was already looked up.
+  void _onSpotifyLoginChanged() {
+    CanvasService.instance.clearCache();
+    if (!mounted) return;
+    setState(() => _hasSpDcCookie = SpotifyInternalAuthService.instance.hasSpDcCookie);
   }
 
   Future<void> _loadStorageSize() async {
@@ -129,16 +154,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _buildSectionHeader('AUDIO & STREAMING'),
               _buildCardContainer([
                 SwitchListTile.adaptive(
-                  title: Text('Qualità Audio Alta (320kbps / AAC)'),
+                  title: Text('Qualità audio alta'),
                   subtitle: Text(
-                      'Stream audio ad alto bitrate fedele allo studio originale'),
+                      'AAC a 128 kbps. Disattivala per consumare meno dati (circa 48 kbps).'),
                   value: _isHighQuality,
                   activeTrackColor: primaryColor,
                   onChanged: (val) {
                     PlaybackLogService.instance
-                        .log('UI', 'settings: alta qualit? = $val');
+                        .log('UI', 'settings: alta qualità = $val');
                     setState(() => _isHighQuality = val);
                     StorageService.instance.setHighQuality(val);
+                    // Streams already looked up were picked with the old
+                    // setting: the next track asks again.
+                    YTMusicService.instance.clearStreamCaches();
                   },
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
@@ -157,18 +185,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         PlaybackLogService.instance
                             .log('UI', 'settings: canvas = $val');
                         CanvasService.instance.setCanvasEnabled(val);
-
                       },
                     );
-                  },
-                ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
-                ListTile(
-                  title: Text('Sblocca Canvas Alta Qualità'),
-                  subtitle: Text('Fai il login su Spotify per abilitare il download automatico dal server ufficiale', style: TextStyle(fontSize: 12)),
-                  trailing: const Icon(CupertinoIcons.chevron_right, size: 16),
-                  onTap: () {
-                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SpotifyWebLoginScreen()));
                   },
                 ),
               ]),
@@ -265,30 +283,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 20),
 
-
-              const SizedBox(height: 20),
-              _buildSectionHeader('SPOTIFY (SP_DC)'),
+              // ── Spotify ───────────────────────────────────────────────────────
+              _buildSectionHeader('SPOTIFY'),
               _buildCardContainer([
                 ListTile(
                   leading: Icon(CupertinoIcons.music_note, color: primaryColor),
-                  title: Text(_hasSpDcCookie ? 'Connesso a Spotify' : 'Collega sp_dc cookie'),
+                  title: Text(_hasSpDcCookie ? 'Connesso a Spotify' : 'Accedi a Spotify'),
                   subtitle: Text(
-                    _hasSpDcCookie 
-                      ? 'Autenticazione ibrida attiva. Tocca per disconnettere.' 
-                      : 'Accedi tramite cookie per libreria senza limiti'
+                    _hasSpDcCookie
+                        ? 'I Canvas arrivano direttamente da Spotify. Tocca per scollegare.'
+                        : 'Facoltativo: i Canvas vengono chiesti direttamente a Spotify',
                   ),
                   trailing: Icon(CupertinoIcons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 18),
                   onTap: () {
                     if (_hasSpDcCookie) {
                       _confirmRemoveSpDc(context);
                     } else {
-                      _showSpDcInputDialog(context);
+                      _openSpotifyLogin();
                     }
                   },
                 ),
+                if (!_hasSpDcCookie) ...[
+                  const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                  ListTile(
+                    title: Text('Inserisci il cookie a mano'),
+                    subtitle: Text('Per chi ha già il valore del cookie sp_dc'),
+                    trailing: Icon(CupertinoIcons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 18),
+                    onTap: () => _showSpDcInputDialog(context),
+                  ),
+                ],
               ]),
 
-              // ?? Diagnostica ───────────────────────────────────────────────────
+              const SizedBox(height: 20),
+
+              // ── Diagnostica ───────────────────────────────────────────────────
               _buildSectionHeader('DIAGNOSTICA'),
               _buildCardContainer([
                 ListTile(
@@ -523,9 +551,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               final val = controller.text.trim();
               if (val.isNotEmpty) {
                 await SpotifyInternalAuthService.instance.saveSpDcCookie(val);
-                if (mounted) {
-                  setState(() => _hasSpDcCookie = true);
-                }
+                _onSpotifyLoginChanged();
               }
               if (ctx.mounted) Navigator.pop(ctx);
             },
@@ -540,7 +566,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (ctx) => CupertinoAlertDialog(
         title: const Text('Scollega Spotify'),
-        content: const Text('Vuoi rimuovere il cookie sp_dc? Le funzioni di integrazione ibrida verranno disabilitate.'),
+        content: const Text('I Canvas torneranno a essere cercati nell\'archivio pubblico, senza il tuo account.'),
         actions: [
           CupertinoDialogAction(
             child: const Text('Annulla'),
@@ -551,9 +577,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: const Text('Scollega'),
             onPressed: () async {
               await SpotifyInternalAuthService.instance.saveSpDcCookie('');
-              if (mounted) {
-                setState(() => _hasSpDcCookie = false);
-              }
+              _onSpotifyLoginChanged();
               if (ctx.mounted) Navigator.pop(ctx);
             },
           ),

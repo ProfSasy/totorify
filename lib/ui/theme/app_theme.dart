@@ -19,12 +19,12 @@ class AppTheme {
   static const Color amoledSurface = Color(0xFF0F0F14);
   static const Color amoledSurfaceHigh = Color(0xFF191920);
 
-  static const Color accentColor = Color(0xFFFFFFFF); // Default Kreate Coral
-  static const Color accentPurple = Color(0xFF7B2CBF);
+  // Used only when no accent is passed; the app always passes the user's.
+  static const Color accentColor = Color(0xFFFF2A54);
 
   // Preset Colors for User Customization
   static const List<(String, Color)> presetColors = [
-    ('Kreate Coral', Color(0xFFFF2A54)),
+    ('Coral', Color(0xFFFF2A54)),
     ('Cyan Sky', Color(0xFF00B4D8)),
     ('Electric Blue', Color(0xFF2A75FF)),
     ('Royal Purple', Color(0xFF9D4EDD)),
@@ -97,16 +97,6 @@ class AppTheme {
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: [cs.primary, lift(cs.primary, 0.28)],
-      );
-
-  /// Subtle top-sheen applied to glass panels.
-  static LinearGradient glassSheen() => LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          Colors.white.withValues(alpha: 0.10),
-          Colors.white.withValues(alpha: 0.01),
-        ],
       );
 
   static ThemeData getTheme({bool isAmoled = false, Color? customAccent}) {

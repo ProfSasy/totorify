@@ -9,7 +9,6 @@ import '../../services/auth_service.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/spotify_catalog_service.dart';
 import '../../services/storage_service.dart';
-import '../../services/itunes_service.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
@@ -32,14 +31,11 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
   @override
   bool get wantKeepAlive => true;
 
-  String _selectedCategory = 'Top Hits Italia';
-  final List<String> _categories = [
-    'Top Hits Italia',
-    'Nuove Uscite',
-    'Pop & Trap',
-    'Relax & Chill',
-    'Workout Energy',
-  ];
+  // Each chip is a Spotify editorial playlist.
+  static final List<String> _categories =
+      SpotifyCatalogService.homeCategories.keys.toList();
+  static const int _categorySongs = 30;
+  String _selectedCategory = _categories.first;
 
   List<Song> _trendingSongs = [];
   bool _isLoading = true;
@@ -69,19 +65,29 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     super.dispose();
   }
 
-  Future<void> _fetchTrending() async {
+  Future<void> _fetchTrending({bool refresh = false}) async {
     final generation = ++_trendingGeneration;
-    final category = _selectedCategory;
+    final playlistId = SpotifyCatalogService.homeCategories[_selectedCategory]!;
     setState(() => _isLoading = true);
-    final songs =
-        await ITunesService.instance.getTrendingSongs(category);
+    final songs = await SpotifyCatalogService.instance
+        .getPlaylistSongs(playlistId, refresh: refresh);
     // A stale response from a previously selected chip must not overwrite
     // the list of the current one.
     if (!mounted || generation != _trendingGeneration) return;
     setState(() {
-      _trendingSongs = songs;
+      _trendingSongs = songs.take(_categorySongs).toList();
       _isLoading = false;
     });
+  }
+
+  void _showPlaylistUnavailable() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Playlist non raggiungibile. Riprova tra poco.'),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   String _greeting() {
@@ -140,6 +146,10 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
       final songs =
           await SpotifyCatalogService.instance.getPlaylistSongs(bundle.id);
       if (!mounted) return;
+      if (songs.isEmpty) {
+        _showPlaylistUnavailable();
+        return;
+      }
 
       final pl = Playlist(
         id: bundle.id,
@@ -147,6 +157,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
         description: bundle.subtitle,
         thumbnailUrl: bundle.coverUrl,
         songs: songs,
+        isSystem: true,
       );
 
       Navigator.push(
@@ -170,7 +181,11 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     try {
       final songs =
           await SpotifyCatalogService.instance.getPlaylistSongs(bundle.id);
-      if (!mounted || songs.isEmpty) return;
+      if (!mounted) return;
+      if (songs.isEmpty) {
+        _showPlaylistUnavailable();
+        return;
+      }
 
       widget.audioHandler.playSong(songs.first, queue: songs);
       PlayerSheet.show(context, widget.audioHandler);
@@ -184,7 +199,6 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     super.build(context);
     final primaryColor = Theme.of(context).colorScheme.primary;
     final cs = Theme.of(context).colorScheme;
-    final favorites = StorageService.instance.getFavorites();
 
     return Scaffold(
       body: Stack(
@@ -207,7 +221,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
             child: RefreshIndicator(
               onRefresh: () {
                 PlaybackLogService.instance.log('UI', 'home: refresh');
-                return _fetchTrending();
+                return _fetchTrending(refresh: true);
               },
               color: primaryColor,
               child: CustomScrollView(
@@ -223,19 +237,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                     title: _greetingTitle(cs, fontSize: 24),
                     actions: [
                       IconButton(
-                        icon: Icon(CupertinoIcons.bell,
-                            size: 24, color: cs.onSurface),
-                        onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Nessuna nuova notifica'),
-                              behavior: SnackBarBehavior.floating,
-                              duration: Duration(seconds: 2),
-                            ),
-                          );
-                        },
-                      ),
-                      IconButton(
+                        tooltip: 'Ascoltati di recente',
                         icon: Icon(CupertinoIcons.time,
                             size: 24, color: cs.onSurface),
                         onPressed: () {
@@ -251,6 +253,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                                     description: 'I tuoi ultimi brani riprodotti',
                                     songs: history,
                                     thumbnailUrl: history.first.thumbnailUrl,
+                                    isSystem: true,
                                   ),
                                   audioHandler: widget.audioHandler,
                                 ),
@@ -272,16 +275,14 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                         builder: (context, recent, _) {
                           final tiles = recent.isEmpty
                               ? <Widget>[
-                                  _buildFavoritesQuickTile(primaryColor, favorites),
+                                  _buildFavoritesQuickTile(),
                                   ...SpotifyCatalogService.instance.featuredPlaylists
                                       .take(5)
-                                      .map((bundle) => _buildSpotifyQuickTile(
-                                          bundle, primaryColor)),
+                                      .map(_buildSpotifyQuickTile),
                                 ]
                               : recent
                                   .take(6)
-                                  .map((song) => _buildRecentQuickTile(
-                                      song, recent, primaryColor))
+                                  .map((song) => _buildRecentQuickTile(song, recent))
                                   .toList();
                           return GridView.count(
                             crossAxisCount: 2,
@@ -322,7 +323,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                         separatorBuilder: (_, _) => const SizedBox(width: 14),
                         itemBuilder: (context, index) {
                           final bundle = SpotifyCatalogService.instance.featuredPlaylists[index];
-                          return _buildFeaturedPlaylistCard(bundle, primaryColor);
+                          return _buildFeaturedPlaylistCard(bundle);
                         },
                       ),
                     ),
@@ -355,7 +356,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                                 separatorBuilder: (_, _) => const SizedBox(width: 14),
                                 itemBuilder: (context, index) {
                                   final song = history[index];
-                                  return _buildRecentSongCard(song, history, primaryColor);
+                                  return _buildRecentSongCard(song, history);
                                 },
                               ),
                             ),
@@ -494,21 +495,23 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     );
   }
 
-  /// The Spotify-style Favorites quick tile with heart gradient
-  Widget _buildFavoritesQuickTile(Color primaryColor, List<Song> favorites) {
+  /// Quick tile that opens the favourites.
+  Widget _buildFavoritesQuickTile() {
     return InkWell(
       onTap: () {
+        final favorites = StorageService.instance.getFavorites();
         if (favorites.isNotEmpty) {
           Navigator.push(
             context,
             CupertinoPageRoute(
               builder: (_) => PlaylistScreen(
                 playlist: Playlist(
-                  id: 'favorites',
+                  id: 'system_favorites',
                   title: 'Brani che ti piacciono',
                   description: 'Tutti i tuoi brani preferiti',
                   songs: favorites,
                   thumbnailUrl: favorites.first.thumbnailUrl,
+                  isSystem: true,
                 ),
                 audioHandler: widget.audioHandler,
               ),
@@ -564,8 +567,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     );
   }
 
-  Widget _buildRecentQuickTile(
-      Song song, List<Song> queue, Color primaryColor) {
+  Widget _buildRecentQuickTile(Song song, List<Song> queue) {
     return InkWell(
       onTap: () {
         widget.audioHandler.playSong(song, queue: queue);
@@ -648,8 +650,8 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     );
   }
 
-  /// Spotify-style 2x3 Quick-Access Tile with Left Thumbnail and Right Action
-  Widget _buildSpotifyQuickTile(SpotifyPlaylistBundle bundle, Color primaryColor) {
+  /// Quick-access tile of a playlist: cover on the left, play on the right.
+  Widget _buildSpotifyQuickTile(SpotifyPlaylistBundle bundle) {
     return InkWell(
       onTap: () => _openSpotifyPlaylist(bundle),
       borderRadius: BorderRadius.circular(AppRadius.md),
@@ -720,8 +722,8 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     );
   }
 
-  /// Square Spotify Cover Card for Horizontal Carousel
-  Widget _buildFeaturedPlaylistCard(SpotifyPlaylistBundle bundle, Color primaryColor) {
+  /// Square cover card of the playlist carousel.
+  Widget _buildFeaturedPlaylistCard(SpotifyPlaylistBundle bundle) {
     return GestureDetector(
       onTap: () => _openSpotifyPlaylist(bundle),
       child: SizedBox(
@@ -805,8 +807,8 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     );
   }
 
-  /// Square Cover Card for Recent Song
-  Widget _buildRecentSongCard(Song song, List<Song> queue, Color primaryColor) {
+  /// Square cover card of a recently played song.
+  Widget _buildRecentSongCard(Song song, List<Song> queue) {
     return GestureDetector(
       onTap: () {
         widget.audioHandler.playSong(song, queue: queue);

@@ -3,21 +3,19 @@ import 'package:flutter/material.dart';
 /// Shared spacing scale. Every screen should compose paddings and gaps
 /// from these steps so the rhythm stays consistent.
 class AppSpacing {
-  static const double xxs = 2;
   static const double xs = 4;
   static const double sm = 8;
   static const double md = 12;
   static const double lg = 16;
   static const double xl = 24;
   static const double xxl = 32;
-  static const double xxxl = 48;
 
   /// Bottom clearance for scrollables: floating nav bar + floating mini
   /// player + home indicator.
   static const double bottomContentInset = 184;
 }
 
-/// One radius ladder for the whole app. Cards sit at [md], panels at [lg],
+/// One radius ladder for the whole app. Cards sit at [md],
 /// floating chrome (mini player, nav bar) at [xl]; everything interactive
 /// that is not a surface is a [pill].
 class AppRadius {
@@ -29,7 +27,6 @@ class AppRadius {
   static const double pill = 999;
 
   static BorderRadius get card => BorderRadius.circular(md);
-  static BorderRadius get panel => BorderRadius.circular(lg);
   static BorderRadius get floating => BorderRadius.circular(xl);
   static BorderRadius get chip => BorderRadius.circular(pill);
   static BorderRadius get sheet =>
@@ -41,14 +38,11 @@ class AppRadius {
 class AppMotion {
   static const Duration fast = Duration(milliseconds: 160);
   static const Duration base = Duration(milliseconds: 240);
-  static const Duration slow = Duration(milliseconds: 360);
 
   /// Palette cross-fades and ambient breathing.
   static const Duration ambience = Duration(milliseconds: 900);
 
   static const Curve standard = Curves.easeOutCubic;
-  static const Curve emphasized = Curves.easeOutQuart;
-  static const Curve exit = Curves.easeInCubic;
 }
 
 /// Typography tokens. They always resolve colors from the active

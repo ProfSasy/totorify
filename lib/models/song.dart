@@ -1,6 +1,4 @@
-import 'dart:convert';
 import 'package:audio_service/audio_service.dart';
-import 'package:flutter/foundation.dart';
 
 class Song {
   final String id;
@@ -9,13 +7,11 @@ class Song {
   final String? album;
   final Duration duration;
   final String thumbnailUrl;
-  final String? audioUrl;
-  final String? localFilePath;
-  final bool isDownloaded;
-  final bool isFavorite;
+
+  /// YouTube video to play instead of the one the matcher would pick: a
+  /// source chosen by the user, or pre-resolved when a playlist is imported.
   final String? youtubeVideoId;
   final String? spotifyTrackId;
-  final String? canvasUrl;
 
   const Song({
     required this.id,
@@ -24,13 +20,8 @@ class Song {
     this.album,
     required this.duration,
     required this.thumbnailUrl,
-    this.audioUrl,
-    this.localFilePath,
-    this.isDownloaded = false,
-    this.isFavorite = false,
     this.youtubeVideoId,
     this.spotifyTrackId,
-    this.canvasUrl,
   });
 
   Song copyWith({
@@ -40,13 +31,8 @@ class Song {
     String? album,
     Duration? duration,
     String? thumbnailUrl,
-    String? audioUrl,
-    String? localFilePath,
-    bool? isDownloaded,
-    bool? isFavorite,
     String? youtubeVideoId,
     String? spotifyTrackId,
-    String? canvasUrl,
   }) {
     return Song(
       id: id ?? this.id,
@@ -55,13 +41,8 @@ class Song {
       album: album ?? this.album,
       duration: duration ?? this.duration,
       thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
-      audioUrl: audioUrl ?? this.audioUrl,
-      localFilePath: localFilePath ?? this.localFilePath,
-      isDownloaded: isDownloaded ?? this.isDownloaded,
-      isFavorite: isFavorite ?? this.isFavorite,
       youtubeVideoId: youtubeVideoId ?? this.youtubeVideoId,
       spotifyTrackId: spotifyTrackId ?? this.spotifyTrackId,
-      canvasUrl: canvasUrl ?? this.canvasUrl,
     );
   }
 
@@ -73,16 +54,12 @@ class Song {
       'album': album,
       'durationMs': duration.inMilliseconds,
       'thumbnailUrl': thumbnailUrl,
-      'audioUrl': audioUrl,
-      'localFilePath': localFilePath,
-      'isDownloaded': isDownloaded,
-      'isFavorite': isFavorite,
       'youtubeVideoId': youtubeVideoId,
       'spotifyTrackId': spotifyTrackId,
-      'canvasUrl': canvasUrl,
     };
   }
 
+  /// Maps saved by older versions carry more keys; they are ignored.
   factory Song.fromMap(Map<String, dynamic> map) {
     return Song(
       id: map['id'] as String? ?? '',
@@ -91,35 +68,8 @@ class Song {
       album: map['album'] as String?,
       duration: Duration(milliseconds: map['durationMs'] as int? ?? 0),
       thumbnailUrl: map['thumbnailUrl'] as String? ?? '',
-      audioUrl: map['audioUrl'] as String?,
-      localFilePath: map['localFilePath'] as String?,
-      isDownloaded: map['isDownloaded'] as bool? ?? false,
-      isFavorite: map['isFavorite'] as bool? ?? false,
       youtubeVideoId: map['youtubeVideoId'] as String?,
       spotifyTrackId: map['spotifyTrackId'] as String?,
-      canvasUrl: map['canvasUrl'] as String?,
-    );
-  }
-
-  String toJson() => json.encode(toMap());
-
-  factory Song.fromJson(String source) {
-    try {
-      final decoded = json.decode(source);
-      if (decoded is Map<String, dynamic>) {
-        return Song.fromMap(decoded);
-      } else if (decoded is Map) {
-        return Song.fromMap(Map<String, dynamic>.from(decoded));
-      }
-    } catch (e) {
-      debugPrint('Song.fromJson decode error: $e');
-    }
-    return const Song(
-      id: '',
-      title: 'Unknown',
-      artist: 'Unknown',
-      duration: Duration.zero,
-      thumbnailUrl: '',
     );
   }
 
@@ -138,27 +88,6 @@ class Song {
       artist: artist,
       duration: duration > Duration.zero ? duration : const Duration(seconds: 1),
       artUri: validUri,
-      extras: {
-        'audioUrl': audioUrl,
-        'localFilePath': localFilePath,
-        'isDownloaded': isDownloaded,
-        'canvasUrl': canvasUrl,
-      },
-    );
-  }
-
-  factory Song.fromMediaItem(MediaItem item) {
-    return Song(
-      id: item.id,
-      title: item.title,
-      artist: item.artist ?? 'Artista sconosciuto',
-      album: item.album,
-      duration: item.duration ?? Duration.zero,
-      thumbnailUrl: item.artUri?.toString() ?? '',
-      audioUrl: item.extras?['audioUrl'] as String?,
-      localFilePath: item.extras?['localFilePath'] as String?,
-      isDownloaded: item.extras?['isDownloaded'] as bool? ?? false,
-      canvasUrl: item.extras?['canvasUrl'] as String?,
     );
   }
 

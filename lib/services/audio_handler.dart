@@ -48,8 +48,6 @@ enum _Open {
 class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler {
   final PlaybackQueue _queue = PlaybackQueue();
 
-  final bool _isAutoplayEnabled = true;
-
   final _errorController = StreamController<String>.broadcast();
   Stream<String> get errorStream => _errorController.stream;
 
@@ -82,6 +80,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   // True from a load until its player is attached: the previous player is
   // still around and what it reports must not be published.
   bool _loading = false;
+  // True from the moment a new player is attached until it is told to play:
+  // meanwhile it reports "paused", which would flash on the lock screen.
+  bool _starting = false;
 
   // Natural track end can be reported more than once. The gate lets only the
   // first report through until the next track starts.
@@ -135,6 +136,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       unawaited(_onPlaybackError(value.errorDescription ?? 'errore sconosciuto'));
       return;
     }
+    if (_starting) return;
     _publish(processing: _processingStateOf(value), playing: value.isPlaying);
 
     if (value.isCompleted) unawaited(_onTrackEnded());
@@ -374,7 +376,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   Future<void> _advance() async {
     var target = _queue.peekNext();
 
-    if (target == null && _isAutoplayEnabled && currentSong != null) {
+    if (target == null && currentSong != null) {
       final related = (await _freshSuggestions(currentSong!)).take(20);
       final firstNew = _queue.items.length;
       if (_queue.appendUnique(related) > 0) {
@@ -423,6 +425,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _endGateOpen = true;
     _userPaused = false;
     _loading = true;
+    _starting = false;
     _seeking = false;
     _seekGeneration++;
     _pendingSeek = null;
@@ -581,6 +584,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       final previous = _player;
       _player = controller;
       _loading = false;
+      _starting = true;
       controller.addListener(() => _onPlayerValue(controller));
       unawaited(_disposeQuietly(previous));
 
@@ -604,10 +608,14 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
       if (_userPaused) {
         // Paused while it was loading: ready, but silent.
+        _starting = false;
         _publish(processing: AudioProcessingState.ready, playing: false);
       } else {
         await _activateSession();
         await controller.play();
+        _starting = false;
+        // What it reported while starting was skipped: publish where it is.
+        _onPlayerValue(controller);
       }
       return _Open.ok;
     } catch (e, stack) {
@@ -618,6 +626,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       );
       if (identical(_player, controller)) {
         _player = null;
+        _starting = false;
         _loading = generation == _loadGeneration;
       }
       await _disposeQuietly(controller);
@@ -820,6 +829,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     PlaybackLogService.instance.log('CMD', 'stop');
     _userStopped = true;
     _loading = false;
+    _starting = false;
     _seeking = false;
     _pendingSeek = null;
     // Cancels a load in progress.
@@ -884,6 +894,21 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     PlaybackLogService.instance.log('CMD', 'skipToNext');
     _endGateOpen = false;
     await _advance();
+  }
+
+  /// Plays the queued track at [index], keeping the queue as it is. Tapping
+  /// the track that is playing starts it again.
+  @override
+  Future<void> skipToQueueItem(int index) async {
+    if (index < 0 || index >= _queue.items.length) return;
+    PlaybackLogService.instance.log('CMD', 'skipToQueueItem $index');
+    if (index == _queue.index && !_userStopped) {
+      await seek(_startOffsetOf(currentSong));
+      if (!playbackState.value.playing) await play();
+      return;
+    }
+    _endGateOpen = false;
+    await _playIndex(index);
   }
 
   @override

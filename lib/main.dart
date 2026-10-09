@@ -12,6 +12,7 @@ import 'services/storage_service.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/main_shell.dart';
 import 'ui/theme/app_theme.dart';
+import 'ui/widgets/player_sheet.dart';
 
 late AudioPlayerHandler audioHandler;
 
@@ -147,20 +148,21 @@ Future<void> _startApp() async {
   });
 
   PlaybackLogService.instance.log('INIT', 'audio service + sessione configurati');
-  runApp(const KreateApp());
+  runApp(const TotorifyApp());
 }
 
-class KreateApp extends StatefulWidget {
-  const KreateApp({super.key});
+class TotorifyApp extends StatefulWidget {
+  const TotorifyApp({super.key});
 
   @override
-  State<KreateApp> createState() => _KreateAppState();
+  State<TotorifyApp> createState() => _TotorifyAppState();
 }
 
-class _KreateAppState extends State<KreateApp> with WidgetsBindingObserver {
+class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
   bool _isAmoled = false;
   // true after first-launch login is done (or skipped)
   bool _isLoggedIn = false;
+  bool _wasSignedIn = false;
 
   @override
   void initState() {
@@ -168,6 +170,7 @@ class _KreateAppState extends State<KreateApp> with WidgetsBindingObserver {
     _isAmoled = StorageService.instance.isAmoledTheme;
     // If already signed in from previous session, skip login screen
     _isLoggedIn = StorageService.instance.hasSeenLogin;
+    _wasSignedIn = AuthService.instance.isSignedIn;
     // Signing out from Settings must bring the user back to the login screen.
     AuthService.instance.addListener(_onAuthChanged);
     WidgetsBinding.instance.addObserver(this);
@@ -176,9 +179,14 @@ class _KreateAppState extends State<KreateApp> with WidgetsBindingObserver {
 
   void _onAuthChanged() {
     if (!mounted) return;
-    if (!AuthService.instance.isSignedIn && _isLoggedIn) {
+    final signedIn = AuthService.instance.isSignedIn;
+    // Only an actual sign-out goes back to the login screen. Someone using
+    // the app without an account is "not signed in" all along, and must not
+    // be thrown out by any other change of the auth state.
+    if (_wasSignedIn && !signedIn && _isLoggedIn) {
       setState(() => _isLoggedIn = false);
     }
+    _wasSignedIn = signedIn;
   }
 
   @override
@@ -254,7 +262,8 @@ class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
   void initState() {
     super.initState();
     _errorSub = widget.audioHandler.errorStream.listen((msg) {
-      if (!mounted) return;
+      // The open player covers the snack bar and shows the message itself.
+      if (!mounted || PlayerSheet.isOpen) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(msg),

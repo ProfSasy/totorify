@@ -1,5 +1,3 @@
-import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'song.dart';
 
 class Playlist {
@@ -61,21 +59,5 @@ class Playlist {
           [],
       isSystem: map['isSystem'] as bool? ?? false,
     );
-  }
-
-  String toJson() => json.encode(toMap());
-
-  factory Playlist.fromJson(String source) {
-    try {
-      final decoded = json.decode(source);
-      if (decoded is Map<String, dynamic>) {
-        return Playlist.fromMap(decoded);
-      } else if (decoded is Map) {
-        return Playlist.fromMap(Map<String, dynamic>.from(decoded));
-      }
-    } catch (e) {
-      debugPrint('Playlist.fromJson decode error: $e');
-    }
-    return const Playlist(id: '', title: 'Error');
   }
 }

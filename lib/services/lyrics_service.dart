@@ -9,11 +9,16 @@ class LyricsService {
   LyricsService._internal();
 
   static const int _maxCacheSize = 100;
+  // "No lyrics" is remembered only for a while: the sources are often
+  // briefly unavailable, and the lyrics of a new release arrive later.
+  static const Duration _missTtl = Duration(minutes: 10);
   final Map<String, Lyrics> _memoryCache = {};
+  final Map<String, DateTime> _missUntil = {};
+  final Map<String, Future<Lyrics>> _inFlight = {};
   final http.Client _client = http.Client();
 
   static const Map<String, String> _headers = {
-    'User-Agent': 'Totorify/1.0.0 (https://github.com/ProfSasy/kreate-ios)',
+    'User-Agent': 'Totorify/1.0.0 (https://github.com/ProfSasy/totorify)',
   };
 
   static final RegExp _titleParenthesesRegex = RegExp(
@@ -201,20 +206,24 @@ class LyricsService {
       final searchData = json.decode(searchResp.body);
       final infoList = searchData['data']?['info'] as List<dynamic>? ?? [];
       
+      // A result is accepted only when artist and length agree: this
+      // catalog is huge and the first hit is often another song, and wrong
+      // lyrics are worse than none.
+      final wantedArtist = artist.toLowerCase();
       String? targetHash;
       for (final info in infoList) {
         final duration = (info['duration'] as num?)?.toInt() ?? 0;
-        if (durationSec == null || durationSec <= 0 || (duration - durationSec).abs() <= 8) {
-          targetHash = info['hash'] as String?;
-          if (targetHash != null && targetHash.isNotEmpty) break;
-        }
+        final singer = (info['singername'] as String? ?? '').toLowerCase();
+        final artistOk = wantedArtist.isNotEmpty && singer.contains(wantedArtist);
+        final durationOk = durationSec == null ||
+            durationSec <= 0 ||
+            (duration - durationSec).abs() <= 8;
+        if (!artistOk || !durationOk) continue;
+        targetHash = info['hash'] as String?;
+        if (targetHash != null && targetHash.isNotEmpty) break;
       }
-      
-      if (targetHash == null && infoList.isNotEmpty) {
-        targetHash = infoList.first['hash'] as String?;
-      }
-      
-      if (targetHash == null) return null;
+
+      if (targetHash == null || targetHash.isEmpty) return null;
       
       final lyricsSearchUrl = Uri.parse('https://lyrics.kugou.com/search').replace(
         queryParameters: {
@@ -261,11 +270,30 @@ class LyricsService {
     return null;
   }
 
-  Future<Lyrics> getLyrics(Song song) async {
-    if (_memoryCache.containsKey(song.id)) {
-      return _memoryCache[song.id]!;
+  /// Lyrics of [song], empty when no source has them. [refresh] searches
+  /// again even if "no lyrics" was the answer a moment ago. Concurrent
+  /// requests for the same song share one search.
+  Future<Lyrics> getLyrics(Song song, {bool refresh = false}) {
+    final cached = _memoryCache[song.id];
+    if (cached != null) {
+      final missUntil = _missUntil[song.id];
+      final stale = cached.isEmpty &&
+          (refresh || missUntil == null || DateTime.now().isAfter(missUntil));
+      if (!stale) return Future.value(cached);
     }
+    final pending = _inFlight[song.id];
+    if (pending != null) return pending;
 
+    final future = _searchLyrics(song);
+    _inFlight[song.id] = future;
+    // Block body on purpose: the callback must not return the future.
+    return future.whenComplete(() {
+      _inFlight.remove(song.id);
+    });
+  }
+
+  Future<Lyrics> _searchLyrics(Song song) async {
+    _missUntil.remove(song.id);
     try {
       final (cleanTitle, cleanArtist) = _parseSongMetadata(song.title, song.artist);
       final durationSec = song.duration.inSeconds;
@@ -315,6 +343,7 @@ class LyricsService {
     // Cache negative results too: without lyrics is a legitimate answer and
     // must not trigger six HTTP requests on every player rebuild.
     _cacheLyrics(song.id, Lyrics.empty);
+    _missUntil[song.id] = DateTime.now().add(_missTtl);
     return Lyrics.empty;
   }
 

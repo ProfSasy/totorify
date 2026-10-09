@@ -140,12 +140,31 @@ class PlaylistScreen extends StatelessWidget {
         top: false,
         child: MiniPlayer(audioHandler: audioHandler),
       ),
-      body: ValueListenableBuilder<List<Playlist>>(
-        valueListenable: StorageService.instance.playlistsNotifier,
-        builder: (context, playlists, _) {
-          final current = playlist.isSystem
-              ? playlist
-              : playlists.firstWhere((p) => p.id == playlist.id, orElse: () => playlist);
+      body: ListenableBuilder(
+        listenable: Listenable.merge([
+          StorageService.instance.playlistsNotifier,
+          StorageService.instance.favoritesNotifier,
+          StorageService.instance.downloadsNotifier,
+        ]),
+        builder: (context, _) {
+          final storage = StorageService.instance;
+          final stored = storage.playlistsNotifier.value
+              .where((p) => p.id == playlist.id)
+              .firstOrNull;
+          // Favourites and downloads follow the library while the page is
+          // open; a saved playlist follows its stored copy; anything else (a
+          // chart, the history) is shown as it was opened.
+          final current = switch (playlist.id) {
+            'system_favorites' =>
+              playlist.copyWith(songs: storage.favoritesNotifier.value),
+            'system_downloads' =>
+              playlist.copyWith(songs: storage.downloadsNotifier.value),
+            _ => stored ?? playlist,
+          };
+          // Only a playlist saved in the library can lose songs or be
+          // deleted. Swiping a row of anything else would dismiss a widget
+          // that is still in the list, which Flutter treats as an error.
+          final editable = stored != null && !playlist.isSystem;
           final songs = current.songs;
           final totalDuration = _formatTotalDuration(songs);
           // Every collection wears its own colors: the ambiance is derived
@@ -182,8 +201,9 @@ class PlaylistScreen extends StatelessWidget {
                         onPressed: () => Navigator.pop(context),
                       ),
                       actions: [
-                        if (!playlist.isSystem)
+                        if (editable)
                           IconButton(
+                            tooltip: 'Elimina playlist',
                             icon: Icon(CupertinoIcons.trash, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 20),
                             onPressed: () => _confirmDelete(context),
                           ),
@@ -309,7 +329,7 @@ class PlaylistScreen extends StatelessWidget {
                                     onPressed: () async {
                                       final messenger = ScaffoldMessenger.of(context);
                                       if (allDownloaded) {
-                                        final shouldRedownload = await showCupertinoDialog<bool>(
+                                        final again = await showCupertinoDialog<bool>(
                                           context: context,
                                           builder: (ctx) => CupertinoAlertDialog(
                                             title: Text('Playlist già Scaricata'),
@@ -328,46 +348,26 @@ class PlaylistScreen extends StatelessWidget {
                                             ],
                                           ),
                                         );
-                                        if (shouldRedownload == true) {
-                                          messenger.showSnackBar(
-                                            SnackBar(
-                                              content: Text('Download avviato per ${songs.length} brani...'),
-                                              behavior: SnackBarBehavior.floating,
-                                            ),
-                                          );
-                                          await DownloadService.instance.downloadPlaylist(songs, forceRefresh: true);
-                                          final (ok, failed) = DownloadService.instance.downloadResultNotifier.value;
-                                          messenger.showSnackBar(
-                                            SnackBar(
-                                              content: Text(
-                                                failed == 0
-                                                    ? 'Download completato: $ok brani'
-                                                    : 'Download completato: $ok riusciti, $failed falliti',
-                                              ),
-                                              behavior: SnackBarBehavior.floating,
-                                            ),
-                                          );
-                                        }
-                                      } else {
-                                        messenger.showSnackBar(
-                                          SnackBar(
-                                            content: Text('Download avviato per ${songs.length} brani...'),
-                                            behavior: SnackBarBehavior.floating,
-                                          ),
-                                        );
-                                        await DownloadService.instance.downloadPlaylist(songs);
-                                        final (ok, failed) = DownloadService.instance.downloadResultNotifier.value;
-                                        messenger.showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              failed == 0
-                                                  ? 'Download completato: $ok brani'
-                                                  : 'Download completato: $ok riusciti, $failed falliti',
-                                            ),
-                                            behavior: SnackBarBehavior.floating,
-                                          ),
-                                        );
+                                        if (again != true) return;
                                       }
+                                      messenger.showSnackBar(
+                                        SnackBar(
+                                          content: Text('Download avviato per ${songs.length} brani...'),
+                                          behavior: SnackBarBehavior.floating,
+                                        ),
+                                      );
+                                      final (ok, failed) = await DownloadService.instance
+                                          .downloadPlaylist(songs, forceRefresh: allDownloaded);
+                                      messenger.showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            failed == 0
+                                                ? 'Download completato: $ok brani'
+                                                : 'Download completato: $ok riusciti, $failed falliti',
+                                          ),
+                                          behavior: SnackBarBehavior.floating,
+                                        ),
+                                      );
                                     },
                                   );
                                 },
@@ -460,13 +460,7 @@ class PlaylistScreen extends StatelessWidget {
                                 },
                               );
 
-                              // System collections (Favorites/Downloads/History) do
-                              // not support swipe removal: removing from them is a
-                              // different operation and a Dismissible without an
-                              // actual removal crashes the list.
-                              if (playlist.isSystem) {
-                                return tile;
-                              }
+                              if (!editable) return tile;
 
                               return Dismissible(
                                 key: ValueKey('pl_${song.id}_$index'),

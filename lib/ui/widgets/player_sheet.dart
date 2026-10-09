@@ -28,6 +28,10 @@ class PlayerSheet extends StatefulWidget {
 
   const PlayerSheet({super.key, required this.audioHandler});
 
+  /// True while the sheet is on screen. It covers the whole screen, snack
+  /// bars included, so it shows playback messages itself.
+  static bool isOpen = false;
+
   static void show(BuildContext context, AudioPlayerHandler audioHandler) {
     PlaybackLogService.instance.log('UI', 'player: apri');
     showModalBottomSheet(
@@ -80,9 +84,14 @@ class _PlayerSheetState extends State<PlayerSheet>
   String? _canvasRetriedFor;
   int _canvasAttempt = 0;
 
+  // Short message shown over the player (a failed track, a timer set).
+  String? _notice;
+  Timer? _noticeTimer;
+
   @override
   void initState() {
     super.initState();
+    PlayerSheet.isOpen = true;
     _enterController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 340),
@@ -130,17 +139,15 @@ class _PlayerSheetState extends State<PlayerSheet>
     // Sync karaoke lyrics on position tick
     widget.audioHandler.positionNotifier.addListener(_syncLyricsToPosition);
 
-    // Error stream listener
-    _errorSub = widget.audioHandler.errorStream.listen((msg) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          backgroundColor: Theme.of(context).colorScheme.surface,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+    _errorSub = widget.audioHandler.errorStream.listen(_showNotice);
+  }
+
+  void _showNotice(String message) {
+    if (!mounted) return;
+    _noticeTimer?.cancel();
+    setState(() => _notice = message);
+    _noticeTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _notice = null);
     });
   }
 
@@ -160,6 +167,8 @@ class _PlayerSheetState extends State<PlayerSheet>
     StorageService.instance.accentColorNotifier.removeListener(_onAccentColorChanged);
     widget.audioHandler.positionNotifier.removeListener(_syncLyricsToPosition);
     _errorSub?.cancel();
+    _noticeTimer?.cancel();
+    PlayerSheet.isOpen = false;
     PlaybackLogService.instance.log('UI', 'player: chiudi');
     _lyricsFollowTimer?.cancel();
     _enterController.dispose();
@@ -260,7 +269,7 @@ class _PlayerSheetState extends State<PlayerSheet>
     }
   }
 
-  Future<void> _loadLyrics(Song song) async {
+  Future<void> _loadLyrics(Song song, {bool refresh = false}) async {
     if (_lastLoadedLyricsSongId == song.id && (_lyrics.isNotEmpty || _isLoadingLyrics)) return;
     _lastLoadedLyricsSongId = song.id;
     _lyricsFollowTimer?.cancel();
@@ -272,7 +281,7 @@ class _PlayerSheetState extends State<PlayerSheet>
       });
     }
     _activeLyricIndexNotifier.value = -1;
-    final lyrics = await LyricsService.instance.getLyrics(song);
+    final lyrics = await LyricsService.instance.getLyrics(song, refresh: refresh);
     if (mounted && _lastLoadedLyricsSongId == song.id) {
       setState(() {
         _lyrics = lyrics;
@@ -442,6 +451,37 @@ class _PlayerSheetState extends State<PlayerSheet>
                         builder: (context, value, child) =>
                             Opacity(opacity: value, child: child),
                         child: _buildCanvasToggle(context),
+                      ),
+                    ),
+                  if (_notice != null)
+                    Positioned(
+                      left: 20,
+                      right: 20,
+                      // Below the header and the Canvas toggle.
+                      top: topInset + 112,
+                      child: IgnorePointer(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: colorScheme.surfaceContainerHigh,
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            border: Border.all(
+                              color: colorScheme.onSurface.withValues(alpha: 0.12),
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 12),
+                            child: Text(
+                              _notice!,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: colorScheme.onSurface,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                 ],
@@ -995,10 +1035,10 @@ class _PlayerSheetState extends State<PlayerSheet>
                         Expanded(
                           child: TextButton.icon(
                             onPressed: () => _showPlaybackSettings(context),
-                            icon: Icon(CupertinoIcons.speaker_2_fill,
+                            icon: Icon(CupertinoIcons.slider_horizontal_3,
                                 size: 16, color: colorScheme.primary),
                             label: Text(
-                              'Uscita audio',
+                              'Velocità e timer',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -1199,7 +1239,7 @@ class _PlayerSheetState extends State<PlayerSheet>
                 final current = widget.audioHandler.currentSong;
                 if (current != null) {
                   _lastLoadedLyricsSongId = null;
-                  _loadLyrics(current);
+                  _loadLyrics(current, refresh: true);
                 }
               },
             ),
@@ -1459,8 +1499,9 @@ class _PlayerSheetState extends State<PlayerSheet>
                 onTap: () {
                   PlaybackLogService.instance
                       .log('UI', 'coda: tap "${song.title}"');
-                  widget.audioHandler
-                      .playSong(song, queue: playlist.toList());
+                  // By position: the queue stays as it is, and a song queued
+                  // twice plays the copy that was tapped.
+                  widget.audioHandler.skipToQueueItem(index);
                 },
               ),
             );
@@ -1474,7 +1515,7 @@ class _PlayerSheetState extends State<PlayerSheet>
     showCupertinoModalPopup(
       context: context,
       builder: (ctx) => CupertinoActionSheet(
-        title: Text('Controlli Audio & Opzioni'),
+        title: Text('Opzioni di riproduzione'),
         actions: [
           CupertinoActionSheetAction(
             onPressed: () {
@@ -1514,7 +1555,7 @@ class _PlayerSheetState extends State<PlayerSheet>
                 );
               }
             },
-            child: Text('Fonti Audio Alternative (Spotube)'),
+            child: Text('Fonti audio alternative'),
           ),
         ],
         cancelButton: CupertinoActionSheetAction(
@@ -1533,7 +1574,7 @@ class _PlayerSheetState extends State<PlayerSheet>
         actions: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map((speed) {
           return CupertinoActionSheetAction(
             onPressed: () {
-              PlaybackLogService.instance.log('UI', 'player: velocit? ${speed}x');
+              PlaybackLogService.instance.log('UI', 'player: velocità ${speed}x');
               widget.audioHandler.setSpeed(speed);
               Navigator.pop(ctx);
             },
@@ -1575,12 +1616,7 @@ class _PlayerSheetState extends State<PlayerSheet>
                   .log('UI', 'player: sleep timer fine brano');
               widget.audioHandler.setSleepTimer(null, endOfTrack: true);
               Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('La musica si fermerà alla fine del brano'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
+              _showNotice('La musica si fermerà alla fine del brano');
             },
             child: Text('Fine del Brano'),
           ),
@@ -1605,7 +1641,6 @@ class _PlayerSheetState extends State<PlayerSheet>
   }
 }
 
-/// Spotify-grade smooth seeker bar with touch-drag isolation and precision seeking.
 /// "Consigliati" list under the queue: tracks that fit after the current
 /// song, each one tap away from the queue.
 class _QueueSuggestions extends StatefulWidget {
@@ -1691,6 +1726,8 @@ class _QueueSuggestionsState extends State<_QueueSuggestions> {
   }
 }
 
+/// Progress bar of the player: follows the position, and while it is being
+/// dragged shows where the finger is instead.
 class _SeekerBar extends StatefulWidget {
   final AudioPlayerHandler audioHandler;
   final MediaItem mediaItem;

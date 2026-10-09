@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import '../../services/storage_service.dart';
+import '../../services/spotify_internal_auth_service.dart';
 
+/// Spotify's own login page in a web view. Once the user is in, the session
+/// cookie (`sp_dc`) is read from the web view and saved; the page then
+/// closes by itself.
 class SpotifyWebLoginScreen extends StatefulWidget {
   const SpotifyWebLoginScreen({super.key});
 
@@ -10,32 +13,26 @@ class SpotifyWebLoginScreen extends StatefulWidget {
 }
 
 class _SpotifyWebLoginScreenState extends State<SpotifyWebLoginScreen> {
-  InAppWebViewController? webViewController;
   bool _cookieFound = false;
 
-  void _checkCookies() async {
+  Future<void> _checkCookies() async {
     if (_cookieFound) return;
-    CookieManager cookieManager = CookieManager.instance();
-    final cookies = await cookieManager.getCookies(url: WebUri("https://accounts.spotify.com"));
-    
-    for (var cookie in cookies) {
-      if (cookie.name == 'sp_dc') {
-        _cookieFound = true;
-        // Found it!
-        final spDc = cookie.value;
-        await StorageService.instance.setSpDcCookie(spDc);
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Cookie estratto con successo! Canvas sbloccati.'),
-              backgroundColor: Theme.of(context).colorScheme.primary,
-            ),
-          );
-          Navigator.of(context).pop(true);
-        }
-        break;
+    final cookies = await CookieManager.instance()
+        .getCookies(url: WebUri('https://accounts.spotify.com'));
+
+    for (final cookie in cookies) {
+      final value = '${cookie.value}';
+      if (cookie.name != 'sp_dc' || value.isEmpty || _cookieFound) continue;
+      _cookieFound = true;
+      await SpotifyInternalAuthService.instance.saveSpDcCookie(value);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Spotify collegato.')),
+        );
+        Navigator.of(context).pop(true);
       }
+      return;
     }
   }
 
@@ -54,10 +51,7 @@ class _SpotifyWebLoginScreenState extends State<SpotifyWebLoginScreen> {
           transparentBackground: true,
           javaScriptEnabled: true,
         ),
-        onWebViewCreated: (controller) {
-          webViewController = controller;
-        },
-        onLoadStop: (controller, url) async {
+        onLoadStop: (controller, url) {
           _checkCookies();
         },
         onUpdateVisitedHistory: (controller, url, androidIsReload) {

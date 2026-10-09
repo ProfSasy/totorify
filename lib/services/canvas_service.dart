@@ -191,6 +191,14 @@ class CanvasService {
     _canvasCache.remove(songId);
   }
 
+  /// Forgets every answer. Logging in or out of Spotify changes what can be
+  /// found, including for songs already answered "no canvas".
+  void clearCache() {
+    _canvasCache.clear();
+    _albumCanvasCache.clear();
+    _searchBlockedUntil = null;
+  }
+
   /// Canvas video URL for [song], or null when it has none. Concurrent
   /// requests for the same song (background prefetch and the player) share
   /// one resolution.
@@ -233,9 +241,6 @@ class CanvasService {
   }
 
   Future<_Lookup> _resolve(Song song) async {
-    if (song.canvasUrl != null && song.canvasUrl!.isNotEmpty) {
-      return (value: song.canvasUrl, failed: false);
-    }
     final log = PlaybackLogService.instance;
 
     final track = await _spotifyTrackIds(song);

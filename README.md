@@ -1,6 +1,6 @@
 # Totorify per iOS
 
-App Flutter di streaming musicale per iOS, distribuita come `.ipa` per il sideloading. Il catalogo e i metadati arrivano da Spotify, Apple e Deezer; l'audio viene riprodotto da YouTube.
+App Flutter di streaming musicale per iOS, distribuita come `.ipa` per il sideloading. Il catalogo e i metadati arrivano da Spotify e Deezer; l'audio viene riprodotto da YouTube.
 
 Nata come client ispirato a [Kreate](https://github.com/knighthat/Kreate) (fork di RiMusic).
 

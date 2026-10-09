@@ -4,10 +4,10 @@ import 'package:video_player/video_player.dart';
 
 import 'playback_log_service.dart';
 
-/// Keeps up to three Canvas video controllers warm (initialized but paused):
-/// the current track and the two that follow. The player sheet, the skip
-/// transitions and the close/reopen cycle then show the video instantly
-/// instead of paying the AVPlayer startup cost every time.
+/// Keeps up to four Canvas video controllers warm (initialized but paused):
+/// the current track, the one before and the two that follow. The player
+/// sheet, the skip transitions and the close/reopen cycle then show the
+/// video instantly instead of paying the AVPlayer startup cost every time.
 class CanvasVideoPool {
   CanvasVideoPool._();
   static final CanvasVideoPool instance = CanvasVideoPool._();
@@ -82,10 +82,8 @@ class CanvasVideoPool {
     });
   }
 
-  /// Hands a warm controller to the player widget, awaiting an in-flight
-  /// warm-up if necessary. Returns null when no healthy controller matches
-  /// [url].
-  
+  /// A controller that is already warm for [url], without waiting: null
+  /// while it is still warming up or when there is none.
   VideoPlayerController? takeSync(String url) {
     if (_warming[url] != null) return null;
     final controller = _controllers[url];
@@ -99,6 +97,9 @@ class CanvasVideoPool {
     return null;
   }
 
+  /// Hands a warm controller to the player widget, awaiting an in-flight
+  /// warm-up if necessary. Returns null when no healthy controller matches
+  /// [url].
   Future<VideoPlayerController?> take(String url) async {
     final pending = _warming[url];
     if (pending != null) {

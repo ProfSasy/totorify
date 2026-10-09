@@ -161,6 +161,14 @@ class YTMusicService {
     return future.whenComplete(() => _audioUrlInFlight.remove(videoId));
   }
 
+  /// Forgets every remembered stream URL. They are picked by the audio
+  /// quality setting, so a change of it must not keep serving the old ones.
+  void clearStreamCaches() {
+    _audioUrlCache.clear();
+    _streamsCache.clear();
+    _hlsAudioCache.clear();
+  }
+
   /// Drops everything remembered about the streams of [videoId].
   void _forget(String videoId) {
     _audioUrlCache.remove(videoId);
@@ -444,7 +452,7 @@ class YTMusicService {
       return bBit.compareTo(aBit);
     });
 
-    // "Alta qualit?" picks the highest bitrate; otherwise prefer the lightest
+    // "Alta qualità" picks the highest bitrate; otherwise prefer the lightest
     // stream to save data on the go.
     final hq = StorageService.instance.isHighQuality;
     final chosen = hq ? targetList.first : targetList.last;

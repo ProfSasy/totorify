@@ -10,7 +10,6 @@ import '../../services/track_matcher_service.dart';
 
 /// Modal bottom sheet allowing users to view, inspect, and choose alternative
 /// audio stream sources from YouTube/YouTube Music for a given song.
-/// Inspired by Spotube's Alternative Track Sources feature.
 class AlternativeSourcesSheet extends StatefulWidget {
   final Song song;
   final AudioPlayerHandler audioHandler;
@@ -201,7 +200,7 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Fonti Audio Alternative',
+                        'Fonti audio alternative',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -210,7 +209,7 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Motore di matching Spotube per ${widget.song.title}',
+                        'Sorgenti trovate per ${widget.song.title}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -317,7 +316,7 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
-                              'SPOTIFY TARGET',
+                              'BRANO',
                               style: TextStyle(
                                 fontSize: 9,
                                 fontWeight: FontWeight.bold,
@@ -370,7 +369,7 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
                         ),
                         const SizedBox(height: 14),
                         Text(
-                          'Scansione delle sorgenti audio e scoring Spotube...',
+                          'Cerco le sorgenti audio…',
                           style: TextStyle(
                             fontSize: 13,
                             color: Theme.of(context).colorScheme.onSurfaceVariant,

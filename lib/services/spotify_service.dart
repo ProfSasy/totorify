@@ -8,17 +8,13 @@ class SpotifyTrack {
   final String trackId;
   final String title;
   final String artist;
-  final String? album;
   final int durationMs;
-  final String? coverUrl;
 
   const SpotifyTrack({
     required this.trackId,
     required this.title,
     required this.artist,
-    this.album,
     required this.durationMs,
-    this.coverUrl,
   });
 }
 
@@ -43,6 +39,15 @@ class SpotifyService {
   SpotifyService._internal();
 
   static const int _maxCacheSize = 300;
+
+  // Spotify counts requests to its public pages per browser identity, and
+  // answers 429 once one has asked too much: the second is tried then.
+  static const _mobileUa =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 '
+      '(KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
+  static const _desktopUa =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/126.0 Safari/537.36';
   final Map<String, String> _coverCache = {};
   final http.Client _client = http.Client();
 
@@ -62,9 +67,7 @@ class SpotifyService {
       final oembedUrl = 'https://open.spotify.com/oembed?url=https://open.spotify.com/track/$trackId';
       final response = await _client.get(
         Uri.parse(oembedUrl),
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
-        },
+        headers: const {'User-Agent': _mobileUa},
       ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
@@ -100,14 +103,17 @@ class SpotifyService {
 
     try {
       final embedUrl = 'https://open.spotify.com/embed/playlist/$playlistId';
-      final response = await _client.get(
-        Uri.parse(embedUrl),
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
-          'Accept': 'text/html,application/xhtml+xml',
-          'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-        },
-      ).timeout(const Duration(seconds: 10));
+      Future<http.Response> request(String userAgent) => _client.get(
+            Uri.parse(embedUrl),
+            headers: {
+              'User-Agent': userAgent,
+              'Accept': 'text/html,application/xhtml+xml',
+              'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+            },
+          ).timeout(const Duration(seconds: 10));
+
+      var response = await request(_mobileUa);
+      if (response.statusCode == 429) response = await request(_desktopUa);
 
       if (response.statusCode != 200) {
         debugPrint('SpotifyService: HTTP ${response.statusCode} on embed');
@@ -184,7 +190,6 @@ class SpotifyService {
           title: trackTitle,
           artist: artist,
           durationMs: durationMs,
-          coverUrl: playlistCover, // copertina di fallback iniziale
         ));
       }
 
@@ -206,7 +211,7 @@ class SpotifyService {
   /// Recupera le copertine originali in HD per una lista di tracce in parallelo.
   Future<Map<String, String>> fetchTrackCoversBatch(
     List<String> trackIds, {
-    int concurrency = 6,
+    int concurrency = 4,
   }) async {
     final results = <String, String>{};
     final toFetch = trackIds.where((id) {
@@ -249,7 +254,7 @@ class SpotifyService {
     final response = await _client.get(url, headers: {
       'Authorization': 'Bearer $token',
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-    });
+    }).timeout(const Duration(seconds: 6));
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -280,9 +285,8 @@ class SpotifyService {
       }
       return result;
     } else {
-      debugPrint('Spotify search failed: ${response.statusCode} - ${response.body}');
+      debugPrint('Spotify search failed: HTTP ${response.statusCode}');
     }
     return [];
   }
-
 }

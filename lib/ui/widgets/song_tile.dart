@@ -196,6 +196,9 @@ class SongTile extends StatelessWidget {
     final isDown = StorageService.instance.isDownloaded(song.id);
     final isFav = StorageService.instance.isFavorite(song.id);
     final primaryColor = Theme.of(context).colorScheme.primary;
+    // Taken now: the row can leave the screen before an action is chosen.
+    final messenger = ScaffoldMessenger.of(context);
+    final snackColor = Theme.of(context).colorScheme.surface;
 
     showCupertinoModalPopup(
       context: context,
@@ -224,17 +227,17 @@ class SongTile extends StatelessWidget {
             ),
           ),
 
-          // 2. Spotify Premium: Aggiungi alla coda
+          // 2. Aggiungi alla coda
           CupertinoActionSheetAction(
             onPressed: () {
               Navigator.pop(ctx);
               PlaybackLogService.instance
                   .log('UI', 'tile menu: aggiungi alla coda "${song.title}"');
               audioHandler.addToQueue(song);
-              ScaffoldMessenger.of(context).showSnackBar(
+              messenger.showSnackBar(
                 SnackBar(
                   content: Text('Aggiunto alla coda: ${song.title}'),
-                  backgroundColor: Theme.of(context).colorScheme.surface,
+                  backgroundColor: snackColor,
                   behavior: SnackBarBehavior.floating,
                   duration: const Duration(seconds: 2),
                 ),
@@ -250,17 +253,17 @@ class SongTile extends StatelessWidget {
             ),
           ),
 
-          // 3. Spotify Premium: Riproduci come prossimo
+          // 3. Riproduci come prossimo
           CupertinoActionSheetAction(
             onPressed: () {
               Navigator.pop(ctx);
               PlaybackLogService.instance
                   .log('UI', 'tile menu: play next "${song.title}"');
               audioHandler.playNext(song);
-              ScaffoldMessenger.of(context).showSnackBar(
+              messenger.showSnackBar(
                 SnackBar(
                   content: Text('Verrà riprodotto dopo: ${song.title}'),
-                  backgroundColor: Theme.of(context).colorScheme.surface,
+                  backgroundColor: snackColor,
                   behavior: SnackBarBehavior.floating,
                   duration: const Duration(seconds: 2),
                 ),
@@ -346,7 +349,7 @@ class SongTile extends StatelessWidget {
             ),
           ),
 
-          // 6. Fonti Audio Alternative (Spotube Matcher)
+          // 6. Fonti audio alternative
           CupertinoActionSheetAction(
             onPressed: () {
               Navigator.pop(ctx);
@@ -361,7 +364,7 @@ class SongTile extends StatelessWidget {
               children: [
                 Icon(CupertinoIcons.tuningfork, color: Theme.of(context).colorScheme.onSurfaceVariant),
                 SizedBox(width: 8),
-                Text('Fonti Audio Alternative (Spotube)'),
+                Text('Fonti audio alternative'),
               ],
             ),
           ),

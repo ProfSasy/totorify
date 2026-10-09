@@ -73,7 +73,6 @@ class _SearchScreenState extends State<SearchScreen> {
 
   /// Live search: fires automatically ~400ms after the last keystroke.
   void _onQueryChanged(String value) {
-    PlaybackLogService.instance.log('UI', 'search: digitato "$value"');
     setState(() {}); // refresh the clear button visibility
     _debounce?.cancel();
     final clean = value.trim();
@@ -178,6 +177,7 @@ class _SearchScreenState extends State<SearchScreen> {
         description: 'I migliori brani del genere ${category.title}',
         thumbnailUrl: category.coverUrl,
         songs: songs,
+        isSystem: true,
       );
 
       Navigator.push(
