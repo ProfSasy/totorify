@@ -120,6 +120,13 @@ class CanvasVideoPool {
     });
   }
 
+  /// True when a video for [url] is ready to be shown without waiting.
+  bool isWarm(String url) {
+    if (_warming[url] != null) return false;
+    final value = _controllers[url]?.value;
+    return value != null && value.isInitialized && !value.hasError;
+  }
+
   /// A controller that is already warm for [url], without waiting: null
   /// while it is still warming up or when there is none.
   VideoPlayerController? takeSync(String url) {

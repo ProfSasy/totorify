@@ -4,13 +4,14 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import '../models/song.dart';
 import 'canvaz_proto.dart';
 import 'deezer_service.dart';
 import 'playback_log_service.dart';
 import 'spotify_internal_auth_service.dart';
 import 'storage_service.dart';
+import 'app_http.dart';
+import 'canvas_file_cache.dart';
 
 /// Outcome of one lookup step. [failed] marks a missing login or a network
 /// error (as opposed to a definite "there is none"), worth retrying soon.
@@ -179,14 +180,14 @@ class CanvasService {
 
     final cached = _canvasCache[songId];
     if (cached != null && DateTime.now().isBefore(cached.$2)) {
-      return (url: cached.$1);
+      return (url: _playable(cached.$1));
     }
 
     final stored = StorageService.instance.getCanvasAnswer(songId, _rulesVersion);
     if (stored == null) return null;
     // An old Canvas is still shown (it is renewed when it is next asked
     // for); an old "none" is not trusted.
-    if (stored.url != null) return (url: stored.url);
+    if (stored.url != null) return (url: _playable(stored.url));
     final fresh = DateTime.now().difference(stored.savedAt) < _storedMissTtl;
     return fresh ? (url: null) : null;
   }
@@ -197,6 +198,11 @@ class CanvasService {
     if (!storage.hasLocalCanvas(songId)) return null;
     return Uri.file(storage.localCanvasPath(songId)).toString();
   }
+
+  /// What to play for the Canvas at [url]: the file kept from the last time
+  /// it was shown, when there is one, otherwise the address itself.
+  String? _playable(String? url) =>
+      url == null ? null : (CanvasFileCache.instance.fileUrlFor(url) ?? url);
 
   String? getCachedCanvasUrlSync(String songId) {
     if (!isEnabled) return null;
@@ -209,6 +215,21 @@ class CanvasService {
   void setCanvasEnabled(bool enabled) {
     isCanvasEnabledNotifier.value = enabled;
     StorageService.instance.setCanvasEnabled(enabled);
+    // Switched off: the videos kept for replays give their space back.
+    if (!enabled) unawaited(CanvasFileCache.instance.clear());
+  }
+
+  /// Keeps the Canvas of [song] as a file, so that the next time the song
+  /// plays its video starts at once. Songs that are downloaded have theirs
+  /// saved with the download instead.
+  Future<void> keepForReplay(Song song) async {
+    if (!isEnabled || StorageService.instance.isDownloaded(song.id)) return;
+    try {
+      final url = await remoteCanvasUrl(song);
+      if (url != null && url.isNotEmpty) await CanvasFileCache.instance.keep(url);
+    } catch (e) {
+      debugPrint('CanvasService.keepForReplay: $e');
+    }
   }
 
   /// Warms the canvas URL for [song] in the background, so the player can
@@ -223,8 +244,12 @@ class CanvasService {
   /// again. Used to retry after the video failed to play.
   void invalidate(String? songId) {
     if (songId == null) return;
-    _canvasCache.remove(songId);
     final storage = StorageService.instance;
+    // The file kept for replays is the first suspect.
+    final remote =
+        _canvasCache[songId]?.$1 ?? storage.getCanvasAnswer(songId, _rulesVersion)?.url;
+    if (remote != null) CanvasFileCache.instance.drop(remote);
+    _canvasCache.remove(songId);
     unawaited(storage.removeCanvasAnswer(songId));
     // A saved video that does not play is a broken file: drop it, the next
     // pass over the downloads saves it again.
@@ -264,7 +289,7 @@ class CanvasService {
     if (!isEnabled) return Future.value(null);
     final saved = _savedCanvas(song.id);
     if (saved != null) return Future.value(saved);
-    return remoteCanvasUrl(song);
+    return remoteCanvasUrl(song).then(_playable);
   }
 
   /// Canvas video of [song] on Spotify's servers, or null when it has none.
@@ -456,7 +481,7 @@ class CanvasService {
     // resolved around the current one.
     final result = _musicBrainzQueue.then<_Lookup>((_) async {
       try {
-        final response = await http
+        final response = await appHttp
             .get(
               Uri.parse('$_musicBrainz/isrc/$isrc?inc=url-rels&fmt=json'),
               headers: _musicBrainzHeaders,
@@ -561,7 +586,7 @@ class CanvasService {
     try {
       final token = await SpotifyInternalAuthService.instance.getInternalAccessToken();
       if (token == null) return null;
-      final response = await http.get(
+      final response = await appHttp.get(
         Uri.parse('$_spotifyApi$path'),
         headers: {'Authorization': 'Bearer $token'},
       ).timeout(const Duration(seconds: 4));
@@ -612,7 +637,7 @@ class CanvasService {
         debugPrint('CanvasService._fromSpotify: accesso a Spotify non valido, nessun token');
         return null;
       }
-      final response = await http.post(
+      final response = await appHttp.post(
         Uri.parse(_spotifyCanvasEndpoint),
         headers: {
           'Authorization': 'Bearer $token',
@@ -639,7 +664,7 @@ class CanvasService {
 
   Future<_Lookup> _fromCanvasDownloader(String trackId) async {
     try {
-      final response = await http.get(
+      final response = await appHttp.get(
         Uri.parse('$_provider/canvas?link=https://open.spotify.com/track/$trackId'),
         headers: _browserHeaders,
       ).timeout(const Duration(seconds: 8));
@@ -825,7 +850,7 @@ class CanvasService {
     final known = _aliveUrls[url];
     if (known != null) return known;
     try {
-      final response = await http
+      final response = await appHttp
           .head(Uri.parse(url), headers: _browserHeaders)
           .timeout(const Duration(seconds: 5));
       final gone = response.statusCode == 404 ||
@@ -950,7 +975,7 @@ class CanvasService {
     final known = _albumOfTrack[trackId];
     if (known != null) return known;
     try {
-      final response = await http
+      final response = await appHttp
           .get(Uri.parse('https://open.spotify.com/track/$trackId'), headers: _browserHeaders)
           .timeout(const Duration(seconds: 8));
       if (response.statusCode != 200) {
@@ -1069,7 +1094,7 @@ class CanvasService {
   /// (no login). Null on failure.
   Future<Map<String, dynamic>?> _embedEntity(String kind, String id) async {
     try {
-      final response = await http
+      final response = await appHttp
           .get(Uri.parse('$_spotifyEmbed/$kind/$id'), headers: _browserHeaders)
           .timeout(const Duration(seconds: 8));
       if (response.statusCode != 200) {
@@ -1152,7 +1177,7 @@ class CanvasService {
       // artists often reuse one canvas for a whole release.
       final found = <String, String>{};
       for (var page = 1; page <= _maxArtistPages; page++) {
-        final response = await http
+        final response = await appHttp
             .get(
               Uri.parse('$_provider/artists/${artist.slug}?page=$page'),
               headers: _browserHeaders,
@@ -1200,7 +1225,7 @@ class CanvasService {
   ) async {
     final wantedName = DeezerService.normalize(artistName);
     try {
-      final response = await http
+      final response = await appHttp
           .get(
             Uri.parse('$_provider/api/search?q=${Uri.encodeQueryComponent(artistName)}'),
             headers: const {..._browserHeaders, 'Accept': 'application/json'},

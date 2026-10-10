@@ -41,6 +41,7 @@ class PlaybackQueue {
 
   void setShuffle(bool enabled) {
     _shuffle = enabled;
+    _plannedId = null;
     _playedRound.clear();
     if (enabled && current != null) _playedRound.add(current!.id);
   }
@@ -58,6 +59,7 @@ class PlaybackQueue {
     }
     _backStack.clear();
     _playedRound.clear();
+    _plannedId = null;
     if (_shuffle) _playedRound.add(start.id);
   }
 
@@ -169,10 +171,25 @@ class PlaybackQueue {
       if (!back && _playedRound.length >= _items.length) _playedRound.clear();
       _playedRound.add(_items[target].id);
     }
+    _plannedId = null;
     _index = target;
   }
 
+  // Shuffle only: the track drawn to come next. It is drawn once, so that
+  // it can be prepared ahead and is then the one that plays.
+  String? _plannedId;
+
   int? _pickShuffled() {
+    final planned =
+        _plannedId == null ? -1 : _items.indexWhere((s) => s.id == _plannedId);
+    if (planned != -1 && planned != _index) return planned;
+
+    final picked = _drawShuffled();
+    _plannedId = picked == null ? null : _items[picked].id;
+    return picked;
+  }
+
+  int? _drawShuffled() {
     final unplayed = <int>[
       for (var i = 0; i < _items.length; i++)
         if (i != _index && !_playedRound.contains(_items[i].id)) i,

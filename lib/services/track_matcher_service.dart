@@ -209,7 +209,13 @@ class TrackMatcherService {
     for (final artist in artists) {
       core = ' $core '.replaceAll(' $artist ', ' ').trim();
     }
-    core = core.split(' ').where((w) => !_neutralWords.contains(w)).join(' ');
+    // Filler words are dropped, unless the title itself is made of them:
+    // "HD", "Video" and "Album" are also names of songs.
+    final titleWords = targetTitle.split(' ').toSet();
+    core = core
+        .split(' ')
+        .where((w) => !_neutralWords.contains(w) || titleWords.contains(w))
+        .join(' ');
 
     if (comparable && candTitle == targetTitle) {
       score += 3000;
@@ -282,6 +288,17 @@ class TrackMatcherService {
 
     return score;
   }
+
+  // Title and artist agree and it is not another version: what a video
+  // of the same song scores against it, its length left out.
+  static const int _sameTrackScore = 4600;
+
+  /// True when [video] is [song] with pictures: the same title once the
+  /// words an upload adds are removed ("Official Video", "Visual"), the
+  /// same artist, and not another version (live, remix). Lengths are not
+  /// compared: a video often opens or closes with a scene.
+  bool isVideoOf(Song video, Song song) =>
+      scoreCandidate(video.copyWith(duration: Duration.zero), song) >= _sameTrackScore;
 
   (Song, int)? _bestOf(List<Song> candidates, Song target, {bool fromMusicCatalog = false}) {
     (Song, int)? best;

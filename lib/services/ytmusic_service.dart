@@ -1,12 +1,12 @@
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist;
 import '../models/song.dart';
 import '../models/playlist.dart';
 import 'auth_service.dart';
 import 'storage_service.dart';
+import 'app_http.dart';
 
 /// Where the audio of a YouTube video can be streamed from, and its length.
 typedef _VideoStreams = ({String? audioUrl, String? hlsManifestUrl, Duration? duration});
@@ -97,7 +97,7 @@ class YTMusicService {
         }
       };
 
-      final resp = await http.post(
+      final resp = await appHttp.post(
         Uri.parse(
             'https://youtubei.googleapis.com/youtubei/v1/visitor_id?prettyPrint=false'),
         headers: _visionOsHeaders,
@@ -237,7 +237,7 @@ class YTMusicService {
           'racyCheckOk': true,
         };
 
-        final resp = await http.post(
+        final resp = await appHttp.post(
           Uri.parse(url),
           headers: _visionOsHeaders,
           body: jsonEncode(body),
@@ -348,7 +348,7 @@ class YTMusicService {
     if (manifest == null) return null;
 
     try {
-      final response = await http
+      final response = await appHttp
           .get(Uri.parse(manifest), headers: const {'User-Agent': _appleMediaUa})
           .timeout(const Duration(seconds: 8));
       if (response.statusCode != 200) {
@@ -486,7 +486,7 @@ class YTMusicService {
         headers['X-Goog-AuthUser'] = '0';
       }
 
-      final response = await http.post(
+      final response = await appHttp.post(
         Uri.parse('$_baseUrl/player?key=$_innerTubeApiKey'),
         headers: headers,
         body: jsonEncode(body),
@@ -574,7 +574,7 @@ class YTMusicService {
         'X-Goog-Api-Format-Version': '1',
       };
 
-      final response = await http.post(
+      final response = await appHttp.post(
         Uri.parse('$_baseUrl/search?key=$_innerTubeApiKey'),
         headers: headers,
         body: jsonEncode(body),
@@ -896,7 +896,7 @@ class YTMusicService {
         'Content-Type': 'application/json',
       };
 
-      final response = await http.post(
+      final response = await appHttp.post(
         Uri.parse('$_baseUrl/next?key=$_innerTubeApiKey'),
         headers: headers,
         body: jsonEncode(body),

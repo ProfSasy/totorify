@@ -463,6 +463,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
           _currentStreamId = null;
           // A song downloaded before Canvas and lyrics were saved with it.
           unawaited(DownloadService.instance.saveExtras(song));
+          _prepareWhatFollows(song, generation);
         }
         // An unreadable file falls through to streaming below.
         if (opened != _Open.failed) return;
@@ -481,7 +482,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
       final outcome = await _openStream(videoId, generation, start: start, freshUrl: freshUrl);
       if (outcome.result == _Open.ok) {
-        unawaited(_prefetchNext());
+        _prepareWhatFollows(song, generation);
         return;
       }
       if (outcome.result == _Open.superseded || generation != _loadGeneration) return;
@@ -727,11 +728,25 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     await _loadAndPlayCurrent(allowLocal: false);
   }
 
+  /// The current track has started: what comes next is prepared now, and
+  /// not before, so that nothing competes with its first seconds. The next
+  /// track's stream first, then the Canvas videos around, and last the file
+  /// that makes this track's Canvas instant the next time.
+  void _prepareWhatFollows(Song song, int generation) {
+    unawaited(() async {
+      await _prefetchNext();
+      if (generation != _loadGeneration) return;
+      _warmCanvasAround();
+      await Future<void>.delayed(const Duration(seconds: 4));
+      if (generation != _loadGeneration) return;
+      await CanvasService.instance.keepForReplay(song);
+    }());
+  }
+
   /// Resolves the next track's stream ahead of time, so skipping to it (or
-  /// reaching it) starts without the matching and lookup delay.
+  /// reaching it) starts without the matching and lookup delay. With
+  /// shuffle the next track is the one the queue has drawn.
   Future<void> _prefetchNext() async {
-    // With shuffle the next track is drawn when needed, not known now.
-    if (_queue.shuffle) return;
     final next = _queue.peekNext();
     if (next == null) return;
     final song = _queue.items[next];
@@ -1172,33 +1187,35 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   List<Song> get currentPlaylist => _queue.items;
 
+  /// Looks up and warms the Canvas of the current track, the one the user
+  /// is about to look at. It starts with the track, alongside its audio.
   void _warmCanvasForCurrent() {
     final song = currentSong;
     if (song == null) return;
-    final items = _queue.items;
-    final index = _queue.index;
-
     unawaited(() async {
       final url = await CanvasService.instance.getCanvasUrl(song);
       if (url == null || url.isEmpty || currentSong?.id != song.id) return;
       await CanvasVideoPool.instance.warm(url);
     }());
+  }
 
-    if (index > 0) {
-      final prevSong = items[index - 1];
-      unawaited(() async {
-        final url = await CanvasService.instance.prefetch(prevSong);
-        if (url == null || url.isEmpty) return;
-        await CanvasVideoPool.instance.warm(url);
-      }());
-    }
+  /// Looks up and warms the Canvas of the tracks around the current one
+  /// (the previous, the next and, in queue order, the one after), so that
+  /// skipping shows the video at once.
+  void _warmCanvasAround() {
+    final items = _queue.items;
+    final index = _queue.index;
+    if (index < 0) return;
+    final around = <int>{
+      ?_queue.peekPrevious(),
+      ?_queue.peekNext(),
+      if (!_queue.shuffle && index + 2 < items.length) index + 2,
+    }..remove(index);
 
-    for (var offset = 1; offset <= 2; offset++) {
-      final nextIndex = index + offset;
-      if (nextIndex < 0 || nextIndex >= items.length) break;
-      final nextSong = items[nextIndex];
+    for (final i in around) {
+      final song = items[i];
       unawaited(() async {
-        final url = await CanvasService.instance.prefetch(nextSong);
+        final url = await CanvasService.instance.prefetch(song);
         if (url == null || url.isEmpty) return;
         await CanvasVideoPool.instance.warm(url);
       }());

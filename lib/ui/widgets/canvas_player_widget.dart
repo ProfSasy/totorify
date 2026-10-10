@@ -7,8 +7,15 @@ import '../../services/playback_log_service.dart';
 class CanvasPlayerWidget extends StatefulWidget {
   final String videoUrl;
   final bool isPlaying;
-  final Widget placeholder;
+
+  /// Shown under the video until it is ready. Without one the widget is
+  /// transparent meanwhile, and the owner decides what to show (see
+  /// [onReady]).
+  final Widget? placeholder;
   final double borderRadius;
+
+  /// Called once the video can be shown: its first frame is decoded.
+  final VoidCallback? onReady;
 
   /// Called when the video cannot be initialized/played, so the owner can
   /// refresh the URL and try again.
@@ -24,8 +31,9 @@ class CanvasPlayerWidget extends StatefulWidget {
     super.key,
     required this.videoUrl,
     required this.isPlaying,
-    required this.placeholder,
+    this.placeholder,
     this.borderRadius = 22,
+    this.onReady,
     this.onFailed,
     this.keepWarmWhenDisposed,
   });
@@ -51,6 +59,10 @@ class _CanvasPlayerWidgetState extends State<CanvasPlayerWidget> {
       try {
         if (widget.isPlaying) warmSync.play();
       } catch (_) {}
+      // Not during the build that is creating this widget.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onReady?.call();
+      });
     } else {
       _initVideo();
     }
@@ -106,6 +118,7 @@ class _CanvasPlayerWidgetState extends State<CanvasPlayerWidget> {
       } catch (_) {}
       if (mounted && identical(_controller, warm)) {
         setState(() => _isReady = true);
+        widget.onReady?.call();
       }
       PlaybackLogService.instance.log('CANVAS', 'video mostrato (pool)');
       return;
@@ -148,6 +161,7 @@ class _CanvasPlayerWidgetState extends State<CanvasPlayerWidget> {
             setState(() {
               _isReady = true;
             });
+            widget.onReady?.call();
           }
         });
       }
@@ -204,14 +218,16 @@ class _CanvasPlayerWidgetState extends State<CanvasPlayerWidget> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // Sfondo segnaposto (Artwork statico)
-          widget.placeholder,
+          ?widget.placeholder,
 
-          // Video Canvas in loop con dissolvenza morbida
+          // The video fades in over its placeholder; without one the owner
+          // does the fading, and it is simply there.
           if (hasInitialized)
             AnimatedOpacity(
               opacity: _isReady ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 500),
+              duration: widget.placeholder == null
+                  ? Duration.zero
+                  : const Duration(milliseconds: 500),
               curve: Curves.easeInOut,
               child: SizedBox.expand(
                 child: FittedBox(

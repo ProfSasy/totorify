@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'services/audio_handler.dart';
 import 'services/auth_service.dart';
+import 'services/canvas_file_cache.dart';
 import 'services/canvas_service.dart';
 import 'services/canvas_video_pool.dart';
 import 'services/download_service.dart';
@@ -81,6 +82,8 @@ Future<void> _startApp() async {
   // Initialize Storage Service (Hive DB)
   await StorageService.instance.init();
   PlaybackLogService.instance.log('INIT', 'storage pronto');
+  // Canvas videos kept from earlier listens; nothing waits for them.
+  unawaited(CanvasFileCache.instance.init());
 
   // Restore the previous Google session, without holding the app back: it
   // needs the network, and offline it would delay the start for nothing.

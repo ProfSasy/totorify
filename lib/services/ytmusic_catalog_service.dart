@@ -1,11 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 
 import '../models/album.dart';
 import '../models/artist.dart';
 import '../models/song.dart';
+import 'app_http.dart';
 
 /// Result of a catalog search, one list per kind.
 class CatalogSearch {
@@ -133,7 +133,7 @@ class YTMusicCatalogService {
 
   Future<Map<String, dynamic>?> _post(String endpoint, Map<String, dynamic> body) async {
     try {
-      final response = await http
+      final response = await appHttp
           .post(
             Uri.parse('$_baseUrl/$endpoint?key=$_apiKey&prettyPrint=false'),
             headers: _headers,

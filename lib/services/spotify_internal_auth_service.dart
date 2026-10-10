@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'storage_service.dart';
+import 'app_http.dart';
 
 /// Access token of Spotify's own web player, obtained from the user's
 /// `sp_dc` session cookie. It is what the canvas endpoint asks for.
@@ -65,7 +65,7 @@ class SpotifyInternalAuthService {
     final spDc = StorageService.instance.spDcCookie ?? '';
     try {
       final (code, version) = await _oneTimeCode();
-      final response = await http.get(
+      final response = await appHttp.get(
         Uri.parse(
           '$_tokenUrl?reason=transport&productType=web-player'
           '&totp=$code&totpServer=$code&totpVer=$version',
@@ -112,7 +112,7 @@ class SpotifyInternalAuthService {
   /// The time-based code the web player sends with a token request, and the
   /// version of the secret it was made from.
   Future<(String, int)> _oneTimeCode() async {
-    final secretsResponse = await http.get(Uri.parse(_secretsUrl)).timeout(_requestTimeout);
+    final secretsResponse = await appHttp.get(Uri.parse(_secretsUrl)).timeout(_requestTimeout);
     final secrets = jsonDecode(secretsResponse.body) as List<dynamic>;
 
     var secret = '';
@@ -127,7 +127,7 @@ class SpotifyInternalAuthService {
     }
     if (secret.isEmpty) throw const FormatException('nessun segreto valido');
 
-    final timeResponse = await http.get(Uri.parse(_serverTimeUrl)).timeout(_requestTimeout);
+    final timeResponse = await appHttp.get(Uri.parse(_serverTimeUrl)).timeout(_requestTimeout);
     final serverTime = (jsonDecode(timeResponse.body)['serverTime'] as num).toInt();
     return (_totp(secret, serverTime), version);
   }

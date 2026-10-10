@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:audio_service/audio_service.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
@@ -11,6 +10,7 @@ import '../../models/song.dart';
 import '../../services/audio_handler.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/canvas_service.dart';
+import '../../services/canvas_video_pool.dart';
 import '../../services/lyrics_service.dart';
 import '../../services/storage_service.dart';
 import '../screens/artist_screen.dart';
@@ -65,6 +65,7 @@ class _PlayerSheetState extends State<PlayerSheet>
     with TickerProviderStateMixin {
   // The player is always dark, whatever the cover: its text is white.
   static const Color _ink = Colors.white;
+  static const Duration _canvasFade = Duration(milliseconds: 380);
 
   late TabController _tabController;
   late final AnimationController _enterController;
@@ -93,6 +94,20 @@ class _PlayerSheetState extends State<PlayerSheet>
   // One automatic retry per song when the video fails to initialize.
   String? _canvasRetriedFor;
   int _canvasAttempt = 0;
+  // Identity of the Canvas video whose first frame is ready. Until then the
+  // cover stays where it is, and then gives way to the video: the player
+  // never shows a blown-up cover while a video loads.
+  String? _readyCanvasKey;
+
+  String? get _canvasKey {
+    final url = _currentCanvasUrl;
+    if (url == null) return null;
+    return 'fullscreen_canvas_${widget.audioHandler.currentSong?.id}_${url}_$_canvasAttempt';
+  }
+
+  /// True when the Canvas takes the place of the cover.
+  bool get _canvasShown =>
+      _showCanvas && _currentCanvasUrl != null && _readyCanvasKey == _canvasKey;
 
   // Short message shown over the player (a failed track, a timer set).
   String? _notice;
@@ -370,8 +385,14 @@ class _PlayerSheetState extends State<PlayerSheet>
                 final isPlaying = playbackSnapshot.data?.playing ?? false;
                 final canvasAvailable =
                     _showCanvas && _currentCanvasUrl != null;
-                final canvasVisible =
-                    canvasAvailable && _tabController.index == 0;
+                // Already warm (the track was prepared ahead, or the player
+                // is being reopened): shown from the first frame.
+                if (canvasAvailable &&
+                    _readyCanvasKey != _canvasKey &&
+                    CanvasVideoPool.instance.isWarm(_currentCanvasUrl!)) {
+                  _readyCanvasKey = _canvasKey;
+                }
+                final canvasVisible = _canvasShown && _tabController.index == 0;
 
                 return Stack(
                   fit: StackFit.expand,
@@ -400,31 +421,33 @@ class _PlayerSheetState extends State<PlayerSheet>
                         child: IgnorePointer(
                           child: AnimatedOpacity(
                             opacity: canvasVisible ? 1 : 0,
-                            duration: AppMotion.base,
-                            child: _buildFullscreenCanvas(
-                              currentSong,
-                              isPlaying,
-                              mediaItem,
-                            ),
+                            duration: _canvasFade,
+                            curve: Curves.easeOut,
+                            child: _buildFullscreenCanvas(isPlaying),
                           ),
                         ),
                       ),
                     // Scrim that keeps the header and the controls readable
-                    // over the video.
-                    if (canvasVisible)
+                    // over the video; it comes and goes with it.
+                    if (canvasAvailable)
                       Positioned.fill(
                         child: IgnorePointer(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.black.withValues(alpha: 0.5),
-                                  Colors.black.withValues(alpha: 0.08),
-                                  Colors.black.withValues(alpha: 0.86),
-                                ],
-                                stops: const [0.0, 0.42, 1.0],
+                          child: AnimatedOpacity(
+                            opacity: canvasVisible ? 1 : 0,
+                            duration: _canvasFade,
+                            curve: Curves.easeOut,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Colors.black.withValues(alpha: 0.5),
+                                    Colors.black.withValues(alpha: 0.08),
+                                    Colors.black.withValues(alpha: 0.86),
+                                  ],
+                                  stops: const [0.0, 0.42, 1.0],
+                                ),
                               ),
                             ),
                           ),
@@ -605,7 +628,7 @@ class _PlayerSheetState extends State<PlayerSheet>
       builder: (context, constraints) {
         final isShortScreen = constraints.maxHeight < 620;
         final gap = isShortScreen ? 6.0 : 14.0;
-        final hasCanvas = _showCanvas && _currentCanvasUrl != null;
+        final hasCanvas = _canvasShown;
         // Room for the Canvas / cover switch, which floats over this tab.
         final hasSwitch = _currentCanvasUrl != null || _isLoadingCanvas;
         final isPlaying = playback?.playing ?? false;
@@ -620,9 +643,17 @@ class _PlayerSheetState extends State<PlayerSheet>
           child: Column(
             children: [
               Expanded(
-                child: hasCanvas
-                    ? const SizedBox.expand()
+                // The cover fades out as the Canvas fades in behind it.
+                child: AnimatedSwitcher(
+                  duration: _canvasFade,
+                  layoutBuilder: (currentChild, previousChildren) => Stack(
+                    fit: StackFit.expand,
+                    children: [...previousChildren, ?currentChild],
+                  ),
+                  child: hasCanvas
+                    ? const SizedBox.expand(key: ValueKey('canvas_space'))
                     : Padding(
+                        key: const ValueKey('cover_space'),
                         padding: EdgeInsets.fromLTRB(
                           AppSpacing.xl,
                           hasSwitch ? 46 : AppSpacing.sm,
@@ -666,6 +697,7 @@ class _PlayerSheetState extends State<PlayerSheet>
                           },
                         ),
                       ),
+                ),
               ),
               Padding(
                 padding: EdgeInsets.fromLTRB(
@@ -926,24 +958,18 @@ class _PlayerSheetState extends State<PlayerSheet>
   /// Fullscreen Canvas for the current track. Reuses pooled decoders and
   /// hands the controller back when the sheet closes, so the video is
   /// already warm when the player reopens.
-  Widget _buildFullscreenCanvas(
-    Song? currentSong,
-    bool isPlaying,
-    MediaItem mediaItem,
-  ) {
+  Widget _buildFullscreenCanvas(bool isPlaying) {
     final url = _currentCanvasUrl!;
+    final key = _canvasKey!;
     return CanvasPlayerWidget(
-      key: ValueKey<String>(
-        'fullscreen_canvas_${currentSong?.id}_${url}_$_canvasAttempt',
-      ),
+      key: ValueKey<String>(key),
       videoUrl: url,
       isPlaying: isPlaying && _tabController.index == 0,
       borderRadius: 0,
-      placeholder: CachedNetworkImage(
-        imageUrl: mediaItem.artUri?.toString() ?? '',
-        fit: BoxFit.cover,
-        errorWidget: (_, _, _) => const SizedBox.shrink(),
-      ),
+      onReady: () {
+        if (!mounted || _canvasKey != key || _readyCanvasKey == key) return;
+        setState(() => _readyCanvasKey = key);
+      },
       // Reopening the player or re-enabling the canvas must be instant; a
       // stale track's video is never kept warm.
       keepWarmWhenDisposed: () => _currentCanvasUrl == url,
@@ -982,6 +1008,8 @@ class _PlayerSheetState extends State<PlayerSheet>
   /// Pill that switches between the Canvas video and the cover.
   Widget _buildCanvasToggle(BuildContext context, AmbientPalette palette) {
     final enabled = _currentCanvasUrl != null;
+    // Looking the Canvas up, or waiting for its first frame.
+    final waiting = _isLoadingCanvas || (_showCanvas && enabled && !_canvasShown);
     final tint = _showCanvas && enabled ? palette.accent : _ink;
     return Semantics(
       button: true,
@@ -1010,7 +1038,7 @@ class _PlayerSheetState extends State<PlayerSheet>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (_isLoadingCanvas)
+                if (waiting)
                   const Padding(
                     padding: EdgeInsets.only(right: 1),
                     child: CupertinoActivityIndicator(radius: 6, color: _ink),

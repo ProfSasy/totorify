@@ -11,6 +11,7 @@ import '../../services/cover_art_service.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/spotify_catalog_service.dart';
 import '../../services/storage_service.dart';
+import '../../services/track_matcher_service.dart';
 import '../../services/ytmusic_catalog_service.dart';
 import '../../services/spotify_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
@@ -154,12 +155,31 @@ class _SearchScreenState extends State<SearchScreen> {
   /// nowhere else). Tracks that carry every word of the query come first:
   /// when the catalog has no such song it fills the list with loose matches.
   List<Song> _rankTracks(String query, CatalogSearch found) {
+    // The catalog's best match can be the video of a song that is also in
+    // the list: the song goes in its place, and a video that is the same
+    // length as its song (the same audio, with pictures) is left out.
+    final matcher = TrackMatcherService.instance;
+    final songIds = {for (final song in found.songs) song.id};
+    Song? songOf(Song video) => songIds.contains(video.id)
+        ? null
+        : found.songs.where((song) => matcher.isVideoOf(video, song)).firstOrNull;
+    bool sameAudio(Song video, Song song) =>
+        video.duration > Duration.zero &&
+        song.duration > Duration.zero &&
+        (video.duration - song.duration).abs() <= const Duration(seconds: 10);
+
+    final top = found.topSong;
+    final topSong = top == null ? null : songOf(top);
     final seen = <String>{};
     final tracks = <Song>[
-      ?found.topSong,
+      ?(topSong ?? top),
       ...found.songs,
-      ...found.videos
+      ...[?top, ...found.videos]
           .where((video) => !YTMusicCatalogService.isAlteredVersion(video.title))
+          .where((video) {
+            final song = songOf(video);
+            return song == null || !sameAudio(video, song);
+          })
           .take(8),
     ].where((song) => seen.add(song.id)).toList();
 

@@ -3,10 +3,10 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 
 import '../models/artist.dart';
 import '../models/song.dart';
+import 'app_http.dart';
 
 /// A song matched against the Deezer catalog: its official cover and artist.
 class DeezerTrackMatch {
@@ -75,7 +75,7 @@ class DeezerService {
     }
     _running++;
     try {
-      final response = await http
+      final response = await appHttp
           .get(Uri.parse('$_base$path'))
           .timeout(const Duration(seconds: 10));
       if (response.statusCode != 200) {
