@@ -110,7 +110,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       body: ListView(
-            padding: const EdgeInsets.only(left: 16, right: 16, top: 12, bottom: AppSpacing.bottomContentInset),
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 12,
+              bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xl,
+            ),
             children: [
               // ── Account Google ──────────────────────────────────────────────────
               _buildSectionHeader('Account'),

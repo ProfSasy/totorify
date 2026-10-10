@@ -38,6 +38,9 @@ class _MainShellState extends State<MainShell> {
   void initState() {
     super.initState();
     AppNavigation.currentTab.value = 0;
+    for (final tab in AppNavigation.tabRoutes) {
+      tab.routes.clear();
+    }
     AppNavigation.settingsBuilder = (_) => SettingsScreen(
           audioHandler: widget.audioHandler,
           onThemeChanged: widget.onThemeChanged,
@@ -51,6 +54,7 @@ class _MainShellState extends State<MainShell> {
 
   Widget _tab(int index, Widget root) => Navigator(
         key: AppNavigation.tabKeys[index],
+        observers: [AppNavigation.tabRoutes[index]],
         onGenerateRoute: (settings) => CupertinoPageRoute<void>(
           settings: settings,
           builder: (_) => root,
@@ -65,8 +69,12 @@ class _MainShellState extends State<MainShell> {
     }
     PlaybackLogService.instance.log('UI', 'tab ${_tabNames[index]}');
     FocusManager.instance.primaryFocus?.unfocus();
+    // The tab being left goes back to its first page: coming back to it
+    // must not show a page forgotten open there.
+    final left = _currentIndex;
     AppNavigation.currentTab.value = index;
     setState(() => _currentIndex = index);
+    AppNavigation.resetTab(left);
   }
 
   @override

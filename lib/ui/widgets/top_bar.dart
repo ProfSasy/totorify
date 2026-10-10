@@ -134,7 +134,10 @@ class ProfileButton extends StatelessWidget {
     final builder = AppNavigation.settingsBuilder;
     if (builder == null) return;
     PlaybackLogService.instance.log('UI', 'apri impostazioni');
-    Navigator.of(context).push(CupertinoPageRoute<void>(builder: builder));
+    // Above the tabs: the Settings belong to none of them, and must not be
+    // found again inside the tab they were opened from.
+    Navigator.of(context, rootNavigator: true)
+        .push(CupertinoPageRoute<void>(builder: builder));
   }
 
   @override
