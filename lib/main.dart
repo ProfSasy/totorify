@@ -211,7 +211,8 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     PlaybackLogService.instance.log('APP', 'lifecycle=${state.name}');
-    if (state == AppLifecycleState.paused) CanvasVideoPool.instance.releaseAll();
+    if (state == AppLifecycleState.paused) CanvasVideoPool.instance.suspend();
+    if (state == AppLifecycleState.resumed) CanvasVideoPool.instance.resume();
   }
 
   void _refreshTheme() {

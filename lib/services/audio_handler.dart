@@ -600,9 +600,14 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
       await controller.setVolume(_volume);
       await controller.setPlaybackSpeed(_speed);
+      // A newer load can begin while this player is being set up (skipping
+      // quickly through tracks). It silenced this one and will replace it:
+      // carrying on would start a track that was already skipped.
+      if (generation != _loadGeneration) return _Open.superseded;
       final startAt = _pendingSeek ?? Duration(milliseconds: (start * 1000).round());
       _pendingSeek = null;
       if (startAt > Duration.zero) await controller.seekTo(startAt);
+      if (generation != _loadGeneration) return _Open.superseded;
       _setPosition(startAt, announce: true);
       _publishCurrentMediaItem();
       log.log(
@@ -618,6 +623,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         _publish(processing: AudioProcessingState.ready, playing: false);
       } else {
         await _activateSession();
+        if (generation != _loadGeneration) return _Open.superseded;
         await controller.play();
         _starting = false;
         // What it reported while starting was skipped: publish where it is.

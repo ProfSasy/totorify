@@ -32,10 +32,18 @@ class CanvasVideoPool {
       LinkedHashMap<String, VideoPlayerController>();
   final Map<String, Future<void>> _warming = {};
 
-  /// Disposes every warm video. Called when the app leaves the foreground:
-  /// several decoded videos are what makes iOS pick a paused app to close
-  /// first, and they are warmed again in a moment when it comes back.
-  void releaseAll() {
+  // While the app is in the background nothing is kept warm: nobody is
+  // looking, and tracks keep changing with the screen off.
+  bool _suspended = false;
+
+  /// Back in the foreground: videos are warmed again from the next request.
+  void resume() => _suspended = false;
+
+  /// Disposes every warm video and stops warming new ones until [resume].
+  /// Called when the app leaves the foreground: several decoded videos are
+  /// what makes iOS pick a paused app to close first.
+  void suspend() {
+    _suspended = true;
     final controllers = _controllers.values.toList();
     _controllers.clear();
     _warming.clear();
@@ -55,7 +63,7 @@ class CanvasVideoPool {
   /// Pre-initializes [url] in the background. While paused the controller
   /// only holds the metadata and first frame: no audio, no visible UI.
   Future<void> warm(String url) {
-    if (url.isEmpty) return Future.value();
+    if (url.isEmpty || _suspended) return Future.value();
 
     final existing = _controllers[url];
     if (existing != null) {
