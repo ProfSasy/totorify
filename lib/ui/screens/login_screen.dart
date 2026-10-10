@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../services/playback_log_service.dart';
@@ -55,10 +54,10 @@ class _LoginScreenState extends State<LoginScreen> {
       backgroundColor: cs.surfaceDim,
       body: Stack(
         children: [
-          // Living ambient aurora: the login wears the accent and breathes
-          // while the user decides, matching every other screen.
+          // The accent washes down from the top, as the colors of the music
+          // will once something plays.
           const Positioned.fill(
-            child: AmbientBackdrop(intensity: 0.9),
+            child: AmbientBackdrop(intensity: 1, extent: 0.6),
           ),
 
           SafeArea(
@@ -202,7 +201,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-/// Custom Google Sign-In button with glassmorphism style
+/// "Continue with Google": a white pill, the one bright thing on the page.
 class _GoogleSignInButton extends StatelessWidget {
   final bool isLoading;
   final VoidCallback? onPressed;
@@ -211,76 +210,43 @@ class _GoogleSignInButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final radius = BorderRadius.circular(AppRadius.lg);
+    const ink = Color(0xFF121212);
     return SizedBox(
       width: double.infinity,
-      height: 56,
-      child: ClipRRect(
-        borderRadius: radius,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-          child: Material(
-            color: cs.onSurface.withValues(alpha: 0.1),
-            borderRadius: radius,
-            child: InkWell(
-              borderRadius: radius,
-              onTap: onPressed,
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: cs.onSurface.withValues(alpha: 0.15),
-                  ),
-                  borderRadius: radius,
-                ),
-                child: isLoading
-                    ? Center(
-                        child: CupertinoActivityIndicator(
-                          color: cs.onSurface,
-                          radius: 12,
-                        ),
-                      )
-                    : Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          // Google G logo (SVG-like using text)
-                          Container(
-                            width: 28,
-                            height: 28,
-                            decoration: BoxDecoration(
-                              color: cs.onSurface,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Center(
-                              child: Text(
-                                'G',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  // Dark ink on the light circle: readable
-                                  // with any accent, white included.
-                                  color: cs.surfaceDim,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Text(
-                            'Continua con Google',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: cs.onSurface,
-                            ),
-                          ),
-                        ],
-                      ),
-              ),
-            ),
-          ),
+      height: 52,
+      child: FilledButton(
+        style: FilledButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: ink,
+          disabledBackgroundColor: Colors.white.withValues(alpha: 0.7),
+          disabledForegroundColor: ink,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
         ),
+        onPressed: onPressed,
+        child: isLoading
+            ? const CupertinoActivityIndicator(color: ink, radius: 11)
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 26,
+                    height: 26,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(color: ink, shape: BoxShape.circle),
+                    child: const Text(
+                      'G',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  const Text('Continua con Google'),
+                ],
+              ),
       ),
     );
   }
 }
-

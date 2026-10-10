@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../services/playback_log_service.dart';
+import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 
 /// Shows the diagnostic log so a test session can be copied and shared.
@@ -56,7 +57,7 @@ class PlaybackLogScreen extends StatelessWidget {
         actions: [
           IconButton(
             tooltip: 'Pulisci',
-            icon: const Icon(Icons.delete_outline),
+            icon: const Icon(AppIcons.trash),
             onPressed: log.clear,
           ),
         ],
@@ -85,7 +86,7 @@ class PlaybackLogScreen extends StatelessWidget {
                         log.export(lastLines: _copyLines),
                         'Log copiato: incollalo nella chat',
                       ),
-                      icon: const Icon(Icons.copy_all, size: 18),
+                      icon: const Icon(AppIcons.copy, size: 18),
                       label: const Text('Copia log'),
                     ),
                     Row(

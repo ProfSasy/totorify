@@ -1,4 +1,5 @@
-import 'package:cached_network_image/cached_network_image.dart';
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../models/playlist.dart';
@@ -8,14 +9,20 @@ import '../../services/download_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/playback_log_service.dart';
 import '../theme/app_ambience.dart';
-import '../theme/app_theme.dart';
+import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/app_cover.dart';
 import '../widgets/app_empty_state.dart';
-import '../widgets/mini_player.dart';
+import '../widgets/collection_header.dart';
+import '../widgets/play_button.dart';
 import '../widgets/player_sheet.dart';
+import '../widgets/song_options_sheet.dart';
 import '../widgets/song_tile.dart';
 
-class PlaylistScreen extends StatelessWidget {
+/// Page of a collection of songs: a playlist of the user, a chart, an
+/// album, the favourites, the downloads. Its header and its play button
+/// take the colors of its cover.
+class PlaylistScreen extends StatefulWidget {
   final Playlist playlist;
   final AudioPlayerHandler audioHandler;
 
@@ -25,483 +32,226 @@ class PlaylistScreen extends StatelessWidget {
     required this.audioHandler,
   });
 
+  @override
+  State<PlaylistScreen> createState() => _PlaylistScreenState();
+}
+
+class _PlaylistScreenState extends State<PlaylistScreen> {
+  // Collections that belong to the app itself and cannot be saved as a
+  // playlist of the user.
+  static const Set<String> _builtIn = {
+    'system_favorites',
+    'system_downloads',
+    'history',
+  };
+
+  final ValueNotifier<double> _scrollOffset = ValueNotifier<double>(0);
+
+  Playlist get playlist => widget.playlist;
+  AudioPlayerHandler get audioHandler => widget.audioHandler;
+
+  @override
+  void initState() {
+    super.initState();
+    // A chart or an album saved in the library is opened here with its
+    // tracks of today: the saved copy follows.
+    if (playlist.isSystem &&
+        playlist.songs.isNotEmpty &&
+        StorageService.instance.getPlaylists().any((p) => p.id == playlist.id)) {
+      unawaited(StorageService.instance
+          .savePlaylist(playlist.copyWith(isSystem: false)));
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollOffset.dispose();
+    super.dispose();
+  }
+
   String _formatTotalDuration(List<Song> songs) {
-    if (songs.isEmpty) return '0 min';
     final totalSec = songs.fold<int>(0, (sum, s) => sum + s.duration.inSeconds);
+    if (totalSec == 0) return '';
     final hours = totalSec ~/ 3600;
     final mins = (totalSec % 3600) ~/ 60;
-    if (hours > 0) {
-      return '$hours h ${mins > 0 ? '$mins min' : ''}'.trim();
-    }
+    if (hours > 0) return mins > 0 ? '$hours h $mins min' : '$hours h';
     return '$mins min';
   }
 
-  Widget _buildCoverArt(BuildContext context, Playlist current, Color primaryColor) {
-    // 1. Cover URL ufficiale (da Spotify o YouTube)
-    if (current.thumbnailUrl != null && current.thumbnailUrl!.isNotEmpty) {
-      return CachedNetworkImage(
-        imageUrl: current.thumbnailUrl!,
-        width: 170,
-        height: 170,
-        fit: BoxFit.cover,
-        memCacheWidth: 400,
-        memCacheHeight: 400,
-        placeholder: (_, _) => _buildPlaceholder(context, primaryColor),
-        errorWidget: (_, _, _) => _buildPlaceholder(context, primaryColor),
-      );
-    }
-
-    // 2. Collage 2x2 tipo Spotify con le prime 4 tracce
-    final songsWithThumb = current.songs.where((s) => s.thumbnailUrl.isNotEmpty).toList();
-    if (songsWithThumb.length >= 4) {
-      return SizedBox(
-        width: 170,
-        height: 170,
-        child: Column(
-          children: [
-            Row(
-              children: [
-                _buildMiniThumb(context, songsWithThumb[0].thumbnailUrl),
-                _buildMiniThumb(context, songsWithThumb[1].thumbnailUrl),
-              ],
-            ),
-            Row(
-              children: [
-                _buildMiniThumb(context, songsWithThumb[2].thumbnailUrl),
-                _buildMiniThumb(context, songsWithThumb[3].thumbnailUrl),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-
-    // 3. Prima cover disponibile o placeholder
-    if (songsWithThumb.isNotEmpty) {
-      return CachedNetworkImage(
-        imageUrl: songsWithThumb.first.thumbnailUrl,
-        width: 170,
-        height: 170,
-        fit: BoxFit.cover,
-        memCacheWidth: 400,
-        memCacheHeight: 400,
-        placeholder: (_, _) => _buildPlaceholder(context, primaryColor),
-        errorWidget: (_, _, _) => _buildPlaceholder(context, primaryColor),
-      );
-    }
-
-    return _buildPlaceholder(context, primaryColor);
+  void _play(Song song, List<Song> queue) {
+    audioHandler.playSong(song, queue: queue);
+    PlayerSheet.show(context, audioHandler);
   }
 
-  Widget _buildMiniThumb(BuildContext context, String url) {
-    return CachedNetworkImage(
-      imageUrl: url,
-      width: 85,
-      height: 85,
-      fit: BoxFit.cover,
-      memCacheWidth: 170,
-      memCacheHeight: 170,
-      placeholder: (_, _) => Container(width: 85, height: 85, color: Theme.of(context).colorScheme.surface),
-      errorWidget: (_, _, _) => Container(width: 85, height: 85, color: Theme.of(context).colorScheme.surface),
+  Future<void> _downloadAll(List<Song> songs, bool allDownloaded) async {
+    final messenger = ScaffoldMessenger.of(context);
+    PlaybackLogService.instance.log(
+      'UI',
+      'playlist: scarica "${playlist.title}" '
+      '(${songs.length} brani, già tutti scaricati: $allDownloaded)',
     );
-  }
-
-  Widget _buildPlaceholder(BuildContext context, Color primaryColor) {
-    return Container(
-      width: 170,
-      height: 170,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            primaryColor.withValues(alpha: 0.35),
-            Theme.of(context).colorScheme.surface,
+    if (allDownloaded) {
+      final again = await showCupertinoDialog<bool>(
+        context: context,
+        builder: (ctx) => CupertinoAlertDialog(
+          title: const Text('Già scaricata'),
+          content: const Text(
+              'Tutti i brani sono già salvati sul dispositivo. Vuoi riscaricarli?'),
+          actions: [
+            CupertinoDialogAction(
+              child: const Text('Annulla'),
+              onPressed: () => Navigator.pop(ctx, false),
+            ),
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              child: const Text('Riscarica'),
+              onPressed: () => Navigator.pop(ctx, true),
+            ),
           ],
         ),
-      ),
-      child: Icon(
-        CupertinoIcons.music_albums,
-        size: 64,
-        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+      );
+      if (again != true) return;
+    }
+    messenger.showSnackBar(
+      SnackBar(content: Text('Download avviato per ${songs.length} brani')),
+    );
+    final (ok, failed) = await DownloadService.instance
+        .downloadPlaylist(songs, forceRefresh: allDownloaded);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          failed == 0
+              ? 'Download completato: $ok brani'
+              : 'Download completato: $ok riusciti, $failed falliti',
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final primaryColor = Theme.of(context).colorScheme.primary;
+    final cs = Theme.of(context).colorScheme;
+    final storage = StorageService.instance;
 
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surfaceDim,
-      // The mini player stays visible on pushed pages too (Spotify-style):
-      // it's only hidden in the Settings tab of the main shell.
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: MiniPlayer(audioHandler: audioHandler),
-      ),
+      backgroundColor: cs.surfaceDim,
       body: ListenableBuilder(
         listenable: Listenable.merge([
-          StorageService.instance.playlistsNotifier,
-          StorageService.instance.favoritesNotifier,
-          StorageService.instance.downloadsNotifier,
+          storage.playlistsNotifier,
+          storage.favoritesNotifier,
+          storage.downloadsNotifier,
         ]),
         builder: (context, _) {
-          final storage = StorageService.instance;
           final stored = storage.playlistsNotifier.value
               .where((p) => p.id == playlist.id)
               .firstOrNull;
           // Favourites and downloads follow the library while the page is
-          // open; a saved playlist follows its stored copy; anything else (a
-          // chart, the history) is shown as it was opened.
+          // open; a playlist of the user follows its stored copy; anything
+          // else (a chart, an album, the history) is shown as it was opened.
           final current = switch (playlist.id) {
             'system_favorites' =>
               playlist.copyWith(songs: storage.favoritesNotifier.value),
             'system_downloads' =>
               playlist.copyWith(songs: storage.downloadsNotifier.value),
-            _ => stored ?? playlist,
+            _ => playlist.isSystem ? playlist : (stored ?? playlist),
           };
-          // Only a playlist saved in the library can lose songs or be
-          // deleted. Swiping a row of anything else would dismiss a widget
-          // that is still in the list, which Flutter treats as an error.
+          // Only a playlist of the user can lose songs or be deleted.
           final editable = stored != null && !playlist.isSystem;
+          final savable = playlist.isSystem && !_builtIn.contains(playlist.id);
           final songs = current.songs;
-          final totalDuration = _formatTotalDuration(songs);
-          // Every collection wears its own colors: the ambiance is derived
-          // from its cover (official art, or the first song thumbnail).
-          String? coverUrl = current.thumbnailUrl;
-          if (coverUrl == null || coverUrl.isEmpty) {
-            final withThumb = songs.where((s) => s.thumbnailUrl.isNotEmpty);
-            coverUrl =
-                withThumb.isNotEmpty ? withThumb.first.thumbnailUrl : null;
-          }
+          final coverUrl = playlistCoverUrl(current);
+          final duration = _formatTotalDuration(songs);
 
           return AmbientTint(
             artworkUrl: coverUrl,
-            fallback: primaryColor,
+            fallback: cs.primary,
             builder: (context, palette) => Stack(
               children: [
-                Positioned.fill(
-                  child: AmbientBackdrop(
-                    artworkUrl: coverUrl,
-                    intensity: 0.35,
+                NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification.depth == 0) {
+                      _scrollOffset.value = notification.metrics.pixels;
+                    }
+                    return false;
+                  },
+                  child: CustomScrollView(
+                    physics: const BouncingScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics()),
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: CollectionHeader(
+                          palette: palette,
+                          scrollOffset: _scrollOffset,
+                          artwork: _buildCover(current, coverUrl),
+                          child: _buildInfo(
+                            context,
+                            current: current,
+                            songs: songs,
+                            duration: duration,
+                            palette: palette,
+                            editable: editable,
+                            savable: savable,
+                            saved: stored != null,
+                          ),
+                        ),
+                      ),
+                      if (songs.isEmpty)
+                        const SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: AppEmptyState(
+                            icon: AppIcons.note,
+                            title: 'Nessun brano in questa raccolta',
+                            subtitle:
+                                'Aggiungi brani dal loro menu o dalla ricerca.',
+                          ),
+                        )
+                      else
+                        ValueListenableBuilder<(String?, bool)>(
+                          valueListenable: audioHandler.playbackIndicator,
+                          builder: (context, indicator, _) => SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (context, index) {
+                                final song = songs[index];
+                                return SongTile(
+                                  song: song,
+                                  isPlaying:
+                                      indicator.$2 && indicator.$1 == song.id,
+                                  onTap: () => _play(song, songs),
+                                  onRemove: editable
+                                      ? () {
+                                          PlaybackLogService.instance.log('UI',
+                                              'playlist: rimuovo "${song.title}"');
+                                          storage.removeSongFromPlaylist(
+                                              playlist.id, song.id);
+                                        }
+                                      : null,
+                                );
+                              },
+                              childCount: songs.length,
+                            ),
+                          ),
+                        ),
+                      const SliverToBoxAdapter(
+                          child: SizedBox(height: AppSpacing.bottomContentInset)),
+                    ],
                   ),
                 ),
-                CustomScrollView(
-                  physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
-                  slivers: [
-                    // ── Spotify-Style Sliver App Bar with Dynamic Gradient ────────
-                    SliverAppBar(
-                      expandedHeight: (current.description ?? '').isEmpty ? 330 : 352,
-                      pinned: true,
-                      elevation: 0,
-                      backgroundColor: Theme.of(context).colorScheme.surface,
-                      leading: IconButton(
-                        icon: Icon(CupertinoIcons.back, color: Theme.of(context).colorScheme.onSurface),
-                        onPressed: () => Navigator.pop(context),
+                CollectionTopBar(
+                  title: current.title,
+                  palette: palette,
+                  scrollOffset: _scrollOffset,
+                  actions: [
+                    if (editable)
+                      IconButton(
+                        tooltip: 'Elimina playlist',
+                        icon: const Icon(AppIcons.trash),
+                        onPressed: () => _confirmDelete(context),
                       ),
-                      actions: [
-                        if (editable)
-                          IconButton(
-                            tooltip: 'Elimina playlist',
-                            icon: Icon(CupertinoIcons.trash, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 20),
-                            onPressed: () => _confirmDelete(context),
-                          ),
-                        if (playlist.id == 'system_downloads')
-                          IconButton(
-                            icon: Icon(CupertinoIcons.trash, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 20),
-                            tooltip: 'Elimina tutti i download',
-                            onPressed: () => _confirmClearAllDownloads(context),
-                          ),
-                      ],
-                      flexibleSpace: FlexibleSpaceBar(
-                        collapseMode: CollapseMode.parallax,
-                        background: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            // Ambient Gradient — colored by the playlist's
-                            // own cover.
-                            AnimatedContainer(
-                              duration: AppMotion.ambience,
-                              curve: Curves.easeOut,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [
-                                    palette.primary.withValues(alpha: 0.45),
-                                    Theme.of(context).colorScheme.surface.withValues(alpha: 0.85),
-                                    Theme.of(context).colorScheme.surface,
-                                  ],
-                                  stops: [0.0, 0.75, 1.0],
-                                ),
-                              ),
-                            ),
-
-                            // Header Content (Artwork + Title + Metadata)
-                            SafeArea(
-                              bottom: false,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 20),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    const SizedBox(height: 10),
-                                    // Artwork con ombra colorata dall'ambient
-                                    AnimatedContainer(
-                                      duration: AppMotion.ambience,
-                                      curve: Curves.easeOut,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(AppRadius.sm),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: palette.primary.withValues(alpha: 0.35),
-                                            blurRadius: 42,
-                                            offset: const Offset(0, 18),
-                                          ),
-                                          BoxShadow(
-                                            color: Colors.black.withValues(alpha: 0.35),
-                                            blurRadius: 24,
-                                            offset: const Offset(0, 12),
-                                          ),
-                                        ],
-                                      ),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(AppRadius.sm),
-                                        child: _buildCoverArt(context, current, palette.primary),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 16),
-
-                                    // Titolo Playlist — mai troncato: si
-                                    // ridimensiona quando il nome è lungo.
-                                    FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      child: Text(
-                                        current.title,
-                                        maxLines: 1,
-                                        textAlign: TextAlign.center,
-                                        style: AppText.screenTitle(
-                                                Theme.of(context).colorScheme)
-                                            .copyWith(fontSize: 22),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    if ((current.description ?? '').isNotEmpty) ...[
-                                      Text(
-                                        current.description!,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        textAlign: TextAlign.center,
-                                        style: AppText.tileSubtitle(
-                                            Theme.of(context).colorScheme),
-                                      ),
-                                      const SizedBox(height: 2),
-                                    ],
-
-                                    // Metadati Spotify-like
-                                    Text(
-                                      '${songs.length} brani • $totalDuration',
-                                      style: AppText.tileSubtitle(
-                                          Theme.of(context).colorScheme),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    // ── Spotify Action Row (Play, Shuffle, Download) ──────────────
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                        child: Row(
-                          children: [
-                            // Download button
-                            if (songs.isNotEmpty)
-                              ValueListenableBuilder<List<Song>>(
-                                valueListenable: StorageService.instance.downloadsNotifier,
-                                builder: (context, _, _) {
-                                  final allDownloaded = songs.isNotEmpty &&
-                                      songs.every((s) => StorageService.instance.isDownloaded(s.id));
-
-                                  return IconButton(
-                                    icon: Icon(
-                                      allDownloaded
-                                          ? CupertinoIcons.arrow_down_circle_fill
-                                          : CupertinoIcons.arrow_down_circle,
-                                      color: allDownloaded ? primaryColor : Theme.of(context).colorScheme.onSurfaceVariant,
-                                      size: 26,
-                                    ),
-                                    tooltip: allDownloaded ? 'Scaricata' : 'Scarica offline',
-                                    onPressed: () async {
-                                      final messenger = ScaffoldMessenger.of(context);
-                                      PlaybackLogService.instance.log(
-                                        'UI',
-                                        'playlist: scarica "${playlist.title}" '
-                                        '(${songs.length} brani, già tutti scaricati: $allDownloaded)',
-                                      );
-                                      if (allDownloaded) {
-                                        final again = await showCupertinoDialog<bool>(
-                                          context: context,
-                                          builder: (ctx) => CupertinoAlertDialog(
-                                            title: Text('Playlist già Scaricata'),
-                                            content: Text(
-                                                'Tutti i brani sono già salvati sul dispositivo. Vuoi riscaricarli per verificarne l\'integrità?'),
-                                            actions: [
-                                              CupertinoDialogAction(
-                                                child: Text('Annulla'),
-                                                onPressed: () => Navigator.pop(ctx, false),
-                                              ),
-                                              CupertinoDialogAction(
-                                                isDefaultAction: true,
-                                                child: Text('Riscarica'),
-                                                onPressed: () => Navigator.pop(ctx, true),
-                                              ),
-                                            ],
-                                          ),
-                                        );
-                                        if (again != true) return;
-                                      }
-                                      messenger.showSnackBar(
-                                        SnackBar(
-                                          content: Text('Download avviato per ${songs.length} brani...'),
-                                          behavior: SnackBarBehavior.floating,
-                                        ),
-                                      );
-                                      final (ok, failed) = await DownloadService.instance
-                                          .downloadPlaylist(songs, forceRefresh: allDownloaded);
-                                      messenger.showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            failed == 0
-                                                ? 'Download completato: $ok brani'
-                                                : 'Download completato: $ok riusciti, $failed falliti',
-                                          ),
-                                          behavior: SnackBarBehavior.floating,
-                                        ),
-                                      );
-                                    },
-                                  );
-                                },
-                              ),
-
-                            // Shuffle button
-                            if (songs.isNotEmpty)
-                              IconButton(
-                                icon: Icon(CupertinoIcons.shuffle, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 24),
-                                tooltip: 'Riproduzione casuale',
-                                onPressed: () {
-                                  final shuffled = List<Song>.from(songs)..shuffle();
-                                  PlaybackLogService.instance.log(
-                                      'UI', 'playlist: shuffle "${playlist.title}"');
-                                  audioHandler.playSong(shuffled.first, queue: shuffled);
-                                  PlayerSheet.show(context, audioHandler);
-                                },
-                              ),
-
-                            const Spacer(),
-
-                            // Large Circular Spotify-Style Play Button
-                            if (songs.isNotEmpty)
-                              GestureDetector(
-                                onTap: () {
-                                  PlaybackLogService.instance.log(
-                                      'UI', 'playlist: play all "${playlist.title}"');
-                                  audioHandler.playSong(songs.first, queue: songs);
-                                  PlayerSheet.show(context, audioHandler);
-                                },
-                                child: AnimatedContainer(
-                                  duration: AppMotion.ambience,
-                                  curve: Curves.easeOut,
-                                  width: 52,
-                                  height: 52,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: AppTheme.primaryGradient(
-                                        Theme.of(context).colorScheme),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: palette.primary
-                                            .withValues(alpha: 0.45),
-                                        blurRadius: 18,
-                                        offset: const Offset(0, 8),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Icon(
-                                    CupertinoIcons.play_fill,
-                                    color: Theme.of(context).colorScheme.onPrimary,
-                                    size: 24,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    // ── Songs List ────────────────────────────────────────────────
-                    if (songs.isEmpty)
-                      const SliverFillRemaining(
-                        hasScrollBody: false,
-                        child: AppEmptyState(
-                          icon: CupertinoIcons.music_note,
-                          title: 'Nessun brano in questa raccolta',
-                          subtitle: 'Aggiungi brani dalla ricerca o dalla libreria.',
-                        ),
-                      )
-                    else
-                      SliverPadding(
-                        padding: const EdgeInsets.only(bottom: AppSpacing.xl),
-                        sliver: SliverList(
-                          delegate: SliverChildBuilderDelegate(
-                            (context, index) {
-                              final song = songs[index];
-                              return ValueListenableBuilder<(String?, bool)>(
-                                valueListenable: audioHandler.playbackIndicator,
-                                builder: (context, indicator, _) {
-                              final isPlaying =
-                                  indicator.$2 && indicator.$1 == song.id;
-
-                              final tile = SongTile(
-                                song: song,
-                                isPlaying: isPlaying,
-                                onTap: () {
-                                  audioHandler.playSong(song, queue: songs);
-                                  PlayerSheet.show(context, audioHandler);
-                                },
-                              );
-
-                              if (!editable) return tile;
-
-                              return Dismissible(
-                                key: ValueKey('pl_${song.id}_$index'),
-                                direction: DismissDirection.endToStart,
-                                background: Container(
-                                  alignment: Alignment.centerRight,
-                                  padding: const EdgeInsets.only(right: 20),
-                                  color: Theme.of(context).colorScheme.error,
-                                  child: Icon(CupertinoIcons.trash,
-                                      color: Theme.of(context).colorScheme.onError),
-                                ),
-                                onDismissed: (_) {
-                                  PlaybackLogService.instance.log(
-                                      'UI', 'playlist: rimuovo "${song.title}"');
-                                  StorageService.instance
-                                      .removeSongFromPlaylist(playlist.id, song.id);
-                                },
-                                child: tile,
-                              );
-                                },
-                              );
-                            },
-                            childCount: songs.length,
-                          ),
-                        ),
+                    if (playlist.id == 'system_downloads' && songs.isNotEmpty)
+                      IconButton(
+                        tooltip: 'Elimina tutti i download',
+                        icon: const Icon(AppIcons.trash),
+                        onPressed: () => _confirmClearAllDownloads(context),
                       ),
                   ],
                 ),
@@ -513,20 +263,210 @@ class PlaylistScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildCover(Playlist current, String? coverUrl) {
+    final size = CollectionHeader.artworkSize(context);
+    if (playlist.id == 'system_favorites') {
+      final cs = Theme.of(context).colorScheme;
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          borderRadius: AppRadius.cover,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [cs.primary, Color.lerp(cs.primary, Colors.white, 0.45)!],
+          ),
+        ),
+        child: Icon(AppIcons.heartFilled, size: size * 0.4, color: cs.onPrimary),
+      );
+    }
+
+    // A playlist without a cover of its own shows its first four songs.
+    final own = current.thumbnailUrl;
+    final thumbs = <String>{
+      for (final song in current.songs)
+        if (song.thumbnailUrl.isNotEmpty) song.thumbnailUrl,
+    }.take(4).toList();
+    if ((own == null || own.isEmpty) && thumbs.length == 4) {
+      final half = size / 2;
+      return ClipRRect(
+        borderRadius: AppRadius.cover,
+        child: SizedBox.square(
+          dimension: size,
+          child: Wrap(
+            children: [
+              for (final url in thumbs) AppCover(url: url, size: half, radius: 0),
+            ],
+          ),
+        ),
+      );
+    }
+    return AppCover(url: coverUrl, size: size, icon: AppIcons.playlist);
+  }
+
+  Widget _buildInfo(
+    BuildContext context, {
+    required Playlist current,
+    required List<Song> songs,
+    required String duration,
+    required AmbientPalette palette,
+    required bool editable,
+    required bool savable,
+    required bool saved,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    final description = current.description ?? '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          current.title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: AppText.screenTitle(cs),
+        ),
+        if (description.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            description,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: AppText.tileSubtitle(cs),
+          ),
+        ],
+        const SizedBox(height: 6),
+        Text(
+          [
+            '${songs.length} brani',
+            if (duration.isNotEmpty) duration,
+          ].join(' • '),
+          style: AppText.caption(cs),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+
+        // ── Actions: download, save, shuffle, play ──────────────────────
+        Row(
+          children: [
+            if (songs.isNotEmpty)
+              ValueListenableBuilder<List<Song>>(
+                valueListenable: StorageService.instance.downloadsNotifier,
+                builder: (context, _, _) {
+                  final allDownloaded = songs
+                      .every((s) => StorageService.instance.isDownloaded(s.id));
+                  return IconButton(
+                    padding: EdgeInsets.zero,
+                    alignment: Alignment.centerLeft,
+                    icon: Icon(
+                      allDownloaded ? AppIcons.downloaded : AppIcons.download,
+                      color: allDownloaded ? palette.accent : cs.onSurfaceVariant,
+                      size: 28,
+                    ),
+                    tooltip: allDownloaded ? 'Scaricata' : 'Scarica',
+                    onPressed: () => _downloadAll(songs, allDownloaded),
+                  );
+                },
+              ),
+            if (savable && songs.isNotEmpty)
+              IconButton(
+                tooltip: saved ? 'Rimuovi dalla libreria' : 'Salva nella libreria',
+                icon: AnimatedSwitcher(
+                  duration: AppMotion.base,
+                  switchInCurve: Curves.easeOutBack,
+                  transitionBuilder: (child, animation) =>
+                      ScaleTransition(scale: animation, child: child),
+                  child: Icon(
+                    saved ? AppIcons.saved : AppIcons.save,
+                    key: ValueKey<bool>(saved),
+                    color: saved ? palette.accent : cs.onSurfaceVariant,
+                    size: 28,
+                  ),
+                ),
+                onPressed: () => _toggleSaved(current, saved),
+              ),
+            const Spacer(),
+            if (songs.isNotEmpty) ...[
+              IconButton(
+                icon: Icon(AppIcons.shuffle, color: cs.onSurfaceVariant, size: 28),
+                tooltip: 'Riproduzione casuale',
+                onPressed: () {
+                  final shuffled = List<Song>.from(songs)..shuffle();
+                  PlaybackLogService.instance
+                      .log('UI', 'playlist: shuffle "${playlist.title}"');
+                  _play(shuffled.first, shuffled);
+                },
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              ValueListenableBuilder<(String?, bool)>(
+                valueListenable: audioHandler.playbackIndicator,
+                builder: (context, indicator, _) {
+                  // The button follows the player while this collection is
+                  // the one playing.
+                  final isCurrent = audioHandler.currentSong != null &&
+                      songs.any((s) => s.id == audioHandler.currentSong!.id);
+                  final playing = isCurrent && indicator.$2;
+                  return PlayButton(
+                    color: palette.accent,
+                    playing: playing,
+                    onPressed: () {
+                      if (playing) {
+                        PlaybackLogService.instance
+                            .log('UI', 'playlist: pausa "${playlist.title}"');
+                        audioHandler.pause();
+                      } else if (isCurrent) {
+                        PlaybackLogService.instance
+                            .log('UI', 'playlist: riprendi "${playlist.title}"');
+                        audioHandler.play();
+                      } else {
+                        PlaybackLogService.instance
+                            .log('UI', 'playlist: play all "${playlist.title}"');
+                        _play(songs.first, songs);
+                      }
+                    },
+                  );
+                },
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _toggleSaved(Playlist current, bool saved) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (saved) {
+      PlaybackLogService.instance
+          .log('UI', 'playlist: tolgo dalla libreria "${current.title}"');
+      await StorageService.instance.deletePlaylist(current.id);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Rimossa dalla tua libreria')),
+      );
+    } else {
+      PlaybackLogService.instance
+          .log('UI', 'playlist: salvo nella libreria "${current.title}"');
+      await StorageService.instance.savePlaylist(current.copyWith(isSystem: false));
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Salvata nella tua libreria')),
+      );
+    }
+  }
+
   void _confirmDelete(BuildContext context) {
     showCupertinoDialog(
       context: context,
       builder: (ctx) => CupertinoAlertDialog(
-        title: Text('Elimina Playlist'),
+        title: const Text('Elimina playlist'),
         content: Text('Vuoi davvero eliminare "${playlist.title}"?'),
         actions: [
           CupertinoDialogAction(
-            child: Text('Annulla'),
+            child: const Text('Annulla'),
             onPressed: () => Navigator.pop(ctx),
           ),
           CupertinoDialogAction(
             isDestructiveAction: true,
-            child: Text('Elimina'),
+            child: const Text('Elimina'),
             onPressed: () {
               Navigator.pop(ctx);
               StorageService.instance.deletePlaylist(playlist.id);
@@ -542,28 +482,24 @@ class PlaylistScreen extends StatelessWidget {
     showCupertinoDialog(
       context: context,
       builder: (ctx) => CupertinoAlertDialog(
-        title: Text('Elimina Tutti i Download'),
-        content: Text(
-            'Sei sicuro di voler eliminare tutti i brani scaricati per liberare memoria?'),
+        title: const Text('Elimina tutti i download'),
+        content: const Text(
+            'Tutti i brani scaricati verranno eliminati dal dispositivo.'),
         actions: [
           CupertinoDialogAction(
-            child: Text('Annulla'),
+            child: const Text('Annulla'),
             onPressed: () => Navigator.pop(ctx),
           ),
           CupertinoDialogAction(
             isDestructiveAction: true,
-            child: Text('Svuota'),
+            child: const Text('Elimina'),
             onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
               Navigator.pop(ctx);
               await DownloadService.instance.clearAllDownloads();
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Tutti i download sono stati eliminati.'),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              }
+              messenger.showSnackBar(
+                const SnackBar(content: Text('Download eliminati')),
+              );
             },
           ),
         ],

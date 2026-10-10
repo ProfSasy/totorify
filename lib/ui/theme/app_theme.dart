@@ -1,29 +1,33 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'app_tokens.dart';
 
-/// Totorify visual language — "Ambient".
+/// Totorify visual language.
 ///
-/// A single accent seeds the whole color scheme, while surfaces follow a
-/// fixed ladder of depth ([ColorScheme.surfaceDim] →
-/// [ColorScheme.surfaceContainerHighest]) so every screen shares the same
-/// rhythm. All "on" colors are derived from luminance, which keeps buttons
-/// readable with any accent — including Pure White.
+/// Neutral, almost black surfaces carry the content; color comes from the
+/// music: the accent chosen by the user for the app's own actions, and the
+/// cover of what is playing for the player (see `app_ambience.dart`). All
+/// "on" colors are derived from luminance, which keeps buttons readable
+/// with any accent, Pure White included.
 class AppTheme {
   AppTheme._();
 
   // ── Core palette ────────────────────────────────────────────────────────
-  static const Color darkBg = Color(0xFF0D0D12); // Deep cinematic canvas
-  static const Color amoledBg = Color(0xFF000000); // True OLED black
-  static const Color darkSurface = Color(0xFF16161D);
-  static const Color darkSurfaceHigh = Color(0xFF1F1F29);
-  static const Color amoledSurface = Color(0xFF0F0F14);
-  static const Color amoledSurfaceHigh = Color(0xFF191920);
+  static const Color darkBg = Color(0xFF121212);
+  static const Color amoledBg = Color(0xFF000000);
+  static const Color darkSurface = Color(0xFF1A1A1A);
+  static const Color darkSurfaceHigh = Color(0xFF242424);
+  static const Color darkSurfaceHighest = Color(0xFF2E2E2E);
+  static const Color amoledSurface = Color(0xFF101010);
+  static const Color amoledSurfaceHigh = Color(0xFF1C1C1C);
+  static const Color amoledSurfaceHighest = Color(0xFF262626);
 
   // Used only when no accent is passed; the app always passes the user's.
-  static const Color accentColor = Color(0xFFFF2A54);
+  static const Color accentColor = Color(0xFF1ED760);
 
   // Preset Colors for User Customization
   static const List<(String, Color)> presetColors = [
+    ('Verde', Color(0xFF1ED760)),
     ('Coral', Color(0xFFFF2A54)),
     ('Cyan Sky', Color(0xFF00B4D8)),
     ('Electric Blue', Color(0xFF2A75FF)),
@@ -39,10 +43,10 @@ class AppTheme {
   /// every preset accent (Pure White gets dark ink, coral keeps white).
   static Color inkOn(Color background) =>
       background.computeLuminance() > 0.30
-          ? const Color(0xFF121216)
-          : const Color(0xFFF7F7FA);
+          ? const Color(0xFF0B0B0B)
+          : const Color(0xFFFFFFFF);
 
-  /// Lightens [color] toward white, used for gradient ends and hints.
+  /// Lightens [color] toward white, used for hints and pressed states.
   static Color lift(Color color, double amount) =>
       Color.lerp(color, Colors.white, amount)!;
 
@@ -52,6 +56,7 @@ class AppTheme {
     final bg = isAmoled ? amoledBg : darkBg;
     final surface = isAmoled ? amoledSurface : darkSurface;
     final surfaceHigh = isAmoled ? amoledSurfaceHigh : darkSurfaceHigh;
+    final surfaceHighest = isAmoled ? amoledSurfaceHighest : darkSurfaceHighest;
     final secondary = Color.lerp(primary, const Color(0xFF7C6BFF), 0.35)!;
     final tertiary = Color.lerp(primary, const Color(0xFF3ED6C4), 0.45)!;
 
@@ -66,19 +71,19 @@ class AppTheme {
       onSecondaryContainer: lift(secondary, 0.55),
       tertiary: tertiary,
       onTertiary: inkOn(tertiary),
-      error: const Color(0xFFFF5D6C),
+      error: const Color(0xFFF15E6C),
       onError: Colors.white,
       errorContainer: const Color(0xFF3A1218),
       onErrorContainer: const Color(0xFFFFB3BB),
       surface: surface,
-      onSurface: const Color(0xFFF5F5F8),
-      onSurfaceVariant: const Color(0xFFA3A3B2),
-      outline: Colors.white.withValues(alpha: 0.28),
+      onSurface: Colors.white,
+      onSurfaceVariant: const Color(0xFFB3B3B3),
+      outline: Colors.white.withValues(alpha: 0.30),
       outlineVariant: Colors.white.withValues(alpha: 0.08),
       shadow: Colors.black,
       scrim: Colors.black,
-      inverseSurface: const Color(0xFFEAEAEF),
-      onInverseSurface: const Color(0xFF141419),
+      inverseSurface: const Color(0xFFEAEAEA),
+      onInverseSurface: const Color(0xFF141414),
       inversePrimary: lift(primary, 0.5),
       surfaceTint: Colors.transparent,
     ).copyWith(
@@ -88,20 +93,25 @@ class AppTheme {
       surfaceContainerLow: surface,
       surfaceContainer: surface,
       surfaceContainerHigh: surfaceHigh,
-      surfaceContainerHighest: lift(surfaceHigh, 0.04),
+      surfaceContainerHighest: surfaceHighest,
     );
   }
-
-  /// Brand gradient used by primary CTAs and active elements.
-  static LinearGradient primaryGradient(ColorScheme cs) => LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [cs.primary, lift(cs.primary, 0.28)],
-      );
 
   static ThemeData getTheme({bool isAmoled = false, Color? customAccent}) {
     final cs = schemeFor(isAmoled: isAmoled, customAccent: customAccent);
     final bg = cs.surfaceDim;
+    // The text styles given to components below replace the ones of the
+    // theme instead of building on them: they are given the platform's font
+    // here, like every other text.
+    final fontFamily = Typography.material2021(platform: defaultTargetPlatform)
+        .white
+        .labelLarge
+        ?.fontFamily;
+    TextStyle label(double size) => TextStyle(
+          fontFamily: fontFamily,
+          fontSize: size,
+          fontWeight: FontWeight.w700,
+        );
 
     return ThemeData(
       useMaterial3: true,
@@ -109,18 +119,20 @@ class AppTheme {
       colorScheme: cs,
       scaffoldBackgroundColor: bg,
       canvasColor: bg,
-      splashColor: cs.primary.withValues(alpha: 0.08),
-      highlightColor: cs.primary.withValues(alpha: 0.04),
+      // Touches answer with a quiet highlight, never with a ripple.
+      splashFactory: NoSplash.splashFactory,
+      splashColor: Colors.transparent,
+      highlightColor: Colors.white.withValues(alpha: 0.06),
       // NOTE: no custom PageTransitionsTheme: iOS already defaults to the
       // Cupertino transition, and the builder class name differs across
       // Flutter releases (CI runs a newer stable than some dev machines).
       appBarTheme: AppBarTheme(
-        backgroundColor: bg.withValues(alpha: 0.92),
+        backgroundColor: bg,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: false,
-        titleTextStyle: AppText.screenTitle(cs),
+        titleTextStyle: AppText.screenTitle(cs).copyWith(fontFamily: fontFamily),
         iconTheme: IconThemeData(color: cs.onSurface, size: 22),
       ),
       cardTheme: CardThemeData(
@@ -145,27 +157,40 @@ class AppTheme {
             horizontal: AppSpacing.xl,
             vertical: 14,
           ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.md),
-          ),
-          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+          shape: const StadiumBorder(),
+          textStyle: label(15),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: cs.onSurface,
+          side: BorderSide(color: cs.outline),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 8),
+          minimumSize: const Size(0, 34),
+          shape: const StadiumBorder(),
+          textStyle: label(13),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(foregroundColor: cs.primary),
+        style: TextButton.styleFrom(
+          foregroundColor: cs.onSurface,
+          textStyle: label(14),
+        ),
       ),
       iconTheme: IconThemeData(color: cs.onSurface),
       chipTheme: ChipThemeData(
-        backgroundColor: cs.surfaceContainerHigh,
-        selectedColor: cs.primaryContainer,
+        backgroundColor: cs.surfaceContainerHighest,
+        selectedColor: cs.primary,
         disabledColor: cs.surfaceContainerHigh,
         labelStyle: TextStyle(
+          fontFamily: fontFamily,
           color: cs.onSurface,
           fontSize: 13,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w500,
         ),
         secondaryLabelStyle: TextStyle(
-          color: cs.onSurface,
+          fontFamily: fontFamily,
+          color: cs.onPrimary,
           fontSize: 13,
           fontWeight: FontWeight.w600,
         ),
@@ -175,10 +200,10 @@ class AppTheme {
       ),
       sliderTheme: SliderThemeData(
         trackHeight: 3.5,
-        activeTrackColor: cs.primary,
-        inactiveTrackColor: cs.onSurface.withValues(alpha: 0.16),
-        thumbColor: cs.primary,
-        overlayColor: cs.primary.withValues(alpha: 0.16),
+        activeTrackColor: cs.onSurface,
+        inactiveTrackColor: cs.onSurface.withValues(alpha: 0.22),
+        thumbColor: cs.onSurface,
+        overlayColor: cs.onSurface.withValues(alpha: 0.12),
         thumbShape: const RoundSliderThumbShape(
           enabledThumbRadius: 5.5,
           elevation: 1,
@@ -186,16 +211,19 @@ class AppTheme {
         overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
       ),
       snackBarTheme: SnackBarThemeData(
-        backgroundColor: cs.surfaceContainerHighest,
+        backgroundColor: cs.inverseSurface,
         contentTextStyle: TextStyle(
-          color: cs.onSurface,
+          fontFamily: fontFamily,
+          color: cs.onInverseSurface,
           fontSize: 13,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w600,
         ),
         behavior: SnackBarBehavior.floating,
+        // Above the mini player, which floats over the tab bar.
+        insetPadding: const EdgeInsets.fromLTRB(AppSpacing.sm, 0, AppSpacing.sm, 72),
         elevation: 6,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.sm),
+          borderRadius: BorderRadius.circular(AppRadius.md),
         ),
       ),
       dialogTheme: DialogThemeData(
@@ -205,36 +233,41 @@ class AppTheme {
           borderRadius: BorderRadius.circular(AppRadius.xl),
         ),
         titleTextStyle: TextStyle(
+          fontFamily: fontFamily,
           color: cs.onSurface,
           fontSize: 18,
           fontWeight: FontWeight.w700,
         ),
         contentTextStyle: TextStyle(
+          fontFamily: fontFamily,
           color: cs.onSurfaceVariant,
           fontSize: 14,
           height: 1.4,
         ),
       ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: cs.surface,
+        backgroundColor: cs.surfaceContainerHigh,
         surfaceTintColor: Colors.transparent,
         modalBackgroundColor: Colors.transparent,
-        modalBarrierColor: Colors.black.withValues(alpha: 0.7),
+        modalBarrierColor: Colors.black.withValues(alpha: 0.6),
         shape: RoundedRectangleBorder(borderRadius: AppRadius.sheet),
         showDragHandle: false,
       ),
       popupMenuTheme: PopupMenuThemeData(
-        color: cs.surfaceContainerHigh,
+        color: cs.surfaceContainerHighest,
         surfaceTintColor: Colors.transparent,
         elevation: 8,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.md),
         ),
-        textStyle: TextStyle(color: cs.onSurface, fontSize: 14),
+        textStyle: TextStyle(fontFamily: fontFamily, color: cs.onSurface, fontSize: 14),
       ),
       listTileTheme: ListTileThemeData(
         iconColor: cs.onSurfaceVariant,
         textColor: cs.onSurface,
+        titleTextStyle: AppText.tileTitle(cs).copyWith(fontFamily: fontFamily),
+        subtitleTextStyle: AppText.tileSubtitle(cs)
+            .copyWith(fontFamily: fontFamily, height: 1.35),
         contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
       ),
       textSelectionTheme: TextSelectionThemeData(
@@ -265,7 +298,7 @@ class AppTheme {
           color: cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(AppRadius.xs),
         ),
-        textStyle: TextStyle(color: cs.onSurface, fontSize: 12),
+        textStyle: TextStyle(fontFamily: fontFamily, color: cs.onSurface, fontSize: 12),
       ),
       textTheme: _textTheme(cs),
     );

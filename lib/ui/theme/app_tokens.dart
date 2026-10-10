@@ -10,24 +10,25 @@ class AppSpacing {
   static const double xl = 24;
   static const double xxl = 32;
 
-  /// Bottom clearance for scrollables: floating nav bar + floating mini
-  /// player + home indicator.
-  static const double bottomContentInset = 184;
+  /// Bottom clearance for scrollables: tab bar + mini player + home
+  /// indicator.
+  static const double bottomContentInset = 176;
 }
 
-/// One radius ladder for the whole app. Cards sit at [md],
-/// floating chrome (mini player, nav bar) at [xl]; everything interactive
-/// that is not a surface is a [pill].
+/// One radius ladder for the whole app. Covers sit at [xs], cards and the
+/// mini player at [md]; everything interactive that is not a surface is a
+/// [pill].
 class AppRadius {
-  static const double xs = 8;
-  static const double sm = 12;
-  static const double md = 16;
-  static const double lg = 20;
-  static const double xl = 28;
+  static const double xs = 4;
+  static const double sm = 6;
+  static const double md = 8;
+  static const double lg = 12;
+  static const double xl = 16;
   static const double pill = 999;
 
+  static BorderRadius get cover => BorderRadius.circular(xs);
   static BorderRadius get card => BorderRadius.circular(md);
-  static BorderRadius get floating => BorderRadius.circular(xl);
+  static BorderRadius get floating => BorderRadius.circular(md);
   static BorderRadius get chip => BorderRadius.circular(pill);
   static BorderRadius get sheet =>
       const BorderRadius.vertical(top: Radius.circular(xl));
@@ -36,11 +37,11 @@ class AppRadius {
 /// Motion language. One set of durations and curves so every transition
 /// in the app feels like it belongs to the same product.
 class AppMotion {
-  static const Duration fast = Duration(milliseconds: 160);
-  static const Duration base = Duration(milliseconds: 240);
+  static const Duration fast = Duration(milliseconds: 140);
+  static const Duration base = Duration(milliseconds: 220);
 
-  /// Palette cross-fades and ambient breathing.
-  static const Duration ambience = Duration(milliseconds: 900);
+  /// Cross-fade of the colors taken from a cover.
+  static const Duration ambience = Duration(milliseconds: 600);
 
   static const Curve standard = Curves.easeOutCubic;
 }
@@ -50,30 +51,31 @@ class AppMotion {
 class AppText {
   /// Largest editorial voice, used sparingly (login, hero titles).
   static TextStyle display(ColorScheme cs) => TextStyle(
-        fontSize: 34,
+        fontSize: 32,
         fontWeight: FontWeight.w800,
         letterSpacing: -1.0,
-        height: 1.2,
+        height: 1.15,
         color: cs.onSurface,
       );
 
   static TextStyle screenTitle(ColorScheme cs) => TextStyle(
-        fontSize: 28,
+        fontSize: 24,
         fontWeight: FontWeight.w800,
-        letterSpacing: -0.8,
+        letterSpacing: -0.6,
         color: cs.onSurface,
       );
 
   static TextStyle sectionTitle(ColorScheme cs) => TextStyle(
-        fontSize: 20,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.4,
+        fontSize: 21,
+        fontWeight: FontWeight.w800,
+        letterSpacing: -0.5,
         color: cs.onSurface,
       );
 
   static TextStyle tileTitle(ColorScheme cs) => TextStyle(
-        fontSize: 15,
-        fontWeight: FontWeight.w600,
+        fontSize: 15.5,
+        fontWeight: FontWeight.w500,
+        letterSpacing: -0.1,
         color: cs.onSurface,
       );
 
@@ -89,14 +91,14 @@ class AppText {
 
   static TextStyle overline(ColorScheme cs) => TextStyle(
         fontSize: 11,
-        fontWeight: FontWeight.w800,
-        letterSpacing: 1.4,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 1.2,
         color: cs.onSurfaceVariant,
       );
 
   static TextStyle action(ColorScheme cs) => TextStyle(
         fontSize: 14,
-        fontWeight: FontWeight.w600,
-        color: cs.primary,
+        fontWeight: FontWeight.w700,
+        color: cs.onSurface,
       );
 }

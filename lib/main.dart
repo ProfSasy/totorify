@@ -132,11 +132,9 @@ Future<void> _startApp() async {
       }
       wasPlayingBeforeInterruption =
           audioHandler.playbackState.value.playing;
-      audioHandler.setInterrupted(true);
       unawaited(audioHandler.pause());
       return;
     }
-    if (event.type != AudioInterruptionType.duck) audioHandler.setInterrupted(false);
     switch (event.type) {
       case AudioInterruptionType.duck:
         unawaited(audioHandler.setVolume(1.0));
@@ -282,26 +280,14 @@ class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
     _downloadSub = DownloadService.instance.failures.listen((msg) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 176),
-          duration: const Duration(seconds: 3),
-        ),
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
       );
     });
     _errorSub = widget.audioHandler.errorStream.listen((msg) {
       // The open player covers the snack bar and shows the message itself.
       if (!mounted || PlayerSheet.isOpen) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          backgroundColor: const Color(0xFF2C1B1B),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 176),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          duration: const Duration(seconds: 3),
-        ),
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
       );
     });
   }

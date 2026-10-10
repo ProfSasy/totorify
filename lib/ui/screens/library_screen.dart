@@ -1,20 +1,23 @@
-import 'package:audio_service/audio_service.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../models/artist.dart';
 import '../../models/playlist.dart';
 import '../../models/song.dart';
 import '../../services/audio_handler.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/playlist_importer_service.dart';
 import '../../services/storage_service.dart';
-import '../theme/app_ambience.dart';
+import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/app_cover.dart';
 import '../widgets/app_empty_state.dart';
+import '../widgets/app_sheet.dart';
+import '../widgets/cover_card.dart';
+import '../widgets/filter_pill.dart';
 import '../widgets/player_sheet.dart';
+import '../widgets/song_options_sheet.dart';
 import '../widgets/song_tile.dart';
+import '../widgets/top_bar.dart';
 import 'artist_screen.dart';
 import 'playlist_screen.dart';
 
@@ -27,12 +30,42 @@ class LibraryScreen extends StatefulWidget {
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
-class _LibraryScreenState extends State<LibraryScreen> {
-  String _selectedFilter = 'Tutti';
-  final List<String> _filters = ['Tutti', 'Preferiti', 'Scaricati', 'Playlist'];
+/// One thing kept in the library, shown as a row or as a card.
+class _Entry {
+  const _Entry({
+    required this.title,
+    required this.subtitle,
+    required this.cover,
+    required this.onTap,
+    this.round = false,
+  });
 
-  String _sortMode = 'Recenti';
-  final List<String> _sortModes = ['Recenti', 'Titolo', 'Artista'];
+  final String title;
+  final String subtitle;
+  final Widget Function(double size) cover;
+  final VoidCallback onTap;
+  final bool round;
+}
+
+class _LibraryScreenState extends State<LibraryScreen> {
+  static const List<String> _filters = ['Playlist', 'Artisti', 'Scaricati', 'Preferiti'];
+  static const List<String> _sortModes = ['Recenti', 'Titolo', 'Artista'];
+  static const double _chipsHeight = 46;
+
+  /// Null shows everything.
+  String? _filter;
+  String _sortMode = _sortModes.first;
+  bool _grid = StorageService.instance.libraryGrid;
+
+  final ValueNotifier<bool> _barSolid = ValueNotifier<bool>(false);
+
+  bool get _showsSongs => _filter == 'Scaricati' || _filter == 'Preferiti';
+
+  @override
+  void dispose() {
+    _barSolid.dispose();
+    super.dispose();
+  }
 
   /// Applies the selected ordering to a song list without mutating it.
   List<Song> _sortSongs(List<Song> songs) {
@@ -40,947 +73,667 @@ class _LibraryScreenState extends State<LibraryScreen> {
     switch (_sortMode) {
       case 'Titolo':
         list.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-        break;
       case 'Artista':
         list.sort((a, b) => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()));
-        break;
-      case 'Recenti':
-      default:
-        break;
     }
     return list;
   }
 
+  /// Playlists follow the same sort menu: by title, or the newest first.
+  List<Playlist> _sortPlaylists(List<Playlist> input) {
+    if (_sortMode == 'Titolo') {
+      return List<Playlist>.from(input)
+        ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    }
+    return input.reversed.toList();
+  }
+
+  void _setFilter(String? filter) {
+    PlaybackLogService.instance.log('UI', 'library: filtro "${filter ?? 'tutto'}"');
+    setState(() => _filter = filter);
+  }
+
+  Future<void> _pickSort() async {
+    final picked = await showChoiceSheet<String>(
+      context,
+      title: 'Ordina per',
+      options: [for (final mode in _sortModes) (mode, mode)],
+      selected: _sortMode,
+    );
+    if (picked == null || !mounted) return;
+    PlaybackLogService.instance.log('UI', 'library: ordina "$picked"');
+    setState(() => _sortMode = picked);
+  }
+
+  void _toggleGrid() {
+    PlaybackLogService.instance.log('UI', 'library: vista ${_grid ? 'elenco' : 'griglia'}');
+    setState(() => _grid = !_grid);
+    StorageService.instance.setLibraryGrid(_grid);
+  }
+
+  void _openPlaylist(Playlist playlist) {
+    PlaybackLogService.instance.log('UI', 'library: apri playlist "${playlist.title}"');
+    Navigator.push(
+      context,
+      CupertinoPageRoute<void>(
+        builder: (_) => PlaylistScreen(
+          playlist: playlist,
+          audioHandler: widget.audioHandler,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final primaryColor = colorScheme.primary;
+    final cs = Theme.of(context).colorScheme;
+    final storage = StorageService.instance;
+    final topInset = TopBar.extent(context, bottom: _chipsHeight);
+    final backdrop = NowPlayingBackdrop(
+      audioHandler: widget.audioHandler,
+      intensity: 0.6,
+      extent: 0.32,
+    );
 
     return Scaffold(
       body: Stack(
         children: [
-          // Ambient aurora, quieter than Home: the Library stays focused on
-          // content while still echoing the track that is playing.
-          Positioned.fill(
-            child: StreamBuilder<MediaItem?>(
-              stream: widget.audioHandler.mediaItem,
-              builder: (context, snapshot) => AmbientBackdrop(
-                artworkUrl: snapshot.data?.artUri?.toString(),
-                intensity: 0.5,
+          Positioned.fill(child: backdrop),
+          NotificationListener<ScrollNotification>(
+            onNotification: TopBar.watch(_barSolid),
+            child: ListenableBuilder(
+              listenable: Listenable.merge([
+                storage.playlistsNotifier,
+                storage.favoritesNotifier,
+                storage.downloadsNotifier,
+                storage.followedArtistsNotifier,
+                widget.audioHandler.playbackIndicator,
+              ]),
+              builder: (context, _) => CustomScrollView(
+                physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics()),
+                slivers: [
+                  SliverToBoxAdapter(child: SizedBox(height: topInset)),
+                  SliverToBoxAdapter(child: _buildSortRow(cs)),
+                  if (_showsSongs)
+                    _buildSongs(
+                      _filter == 'Scaricati'
+                          ? storage.downloadsNotifier.value
+                          : storage.favoritesNotifier.value,
+                    )
+                  else
+                    ..._buildEntries(cs),
+                  const SliverToBoxAdapter(
+                      child: SizedBox(height: AppSpacing.bottomContentInset)),
+                ],
               ),
             ),
           ),
-          CustomScrollView(
-            physics: const BouncingScrollPhysics(
-                parent: AlwaysScrollableScrollPhysics()),
-            slivers: [
-              // Collapsible iOS-style large title — the FittedBox keeps the
-              // whole title visible at any accessibility size (scales, never
-              // truncates).
-              CupertinoSliverNavigationBar(
-                largeTitle: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'La tua Libreria',
-                    maxLines: 1,
-                    style: AppText.display(colorScheme).copyWith(fontSize: 30),
-                  ),
-                ),
-                backgroundColor: colorScheme.surface.withValues(alpha: 0.85),
-                border: Border(
-                  bottom: BorderSide(
-                    color: colorScheme.onSurface.withValues(alpha: 0.06),
-                  ),
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    PopupMenuButton<String>(
-                      tooltip: 'Ordina',
-                      padding: EdgeInsets.zero,
-                      icon: Icon(CupertinoIcons.arrow_up_arrow_down,
-                          color: primaryColor, size: 22),
-                      initialValue: _sortMode,
-                      onSelected: (value) {
-                        PlaybackLogService.instance
-                            .log('UI', 'library: ordina "$value"');
-                        setState(() => _sortMode = value);
-                      },
-                      itemBuilder: (context) => _sortModes
-                          .map(
-                            (mode) => PopupMenuItem<String>(
-                              value: mode,
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    mode == _sortMode
-                                        ? CupertinoIcons.checkmark_circle_fill
-                                        : CupertinoIcons.circle,
-                                    size: 18,
-                                    color: mode == _sortMode
-                                        ? primaryColor
-                                        : colorScheme.onSurfaceVariant,
-                                  ),
-                                  const SizedBox(width: AppSpacing.sm),
-                                  Text(mode),
-                                ],
-                              ),
-                            ),
-                          )
-                          .toList(),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: TopBar(
+              solid: _barSolid,
+              backdrop: backdrop,
+              bottom: SizedBox(height: _chipsHeight, child: _buildChips(cs)),
+              child: Row(
+                children: [
+                  const ProfileButton(),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Text(
+                      'La tua libreria',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.screenTitle(cs).copyWith(fontSize: 22),
                     ),
-                    IconButton(
-                      icon: Icon(CupertinoIcons.plus_circle,
-                          color: primaryColor, size: 26),
-                      tooltip: 'Nuova Playlist',
-                      padding: EdgeInsets.zero,
-                      constraints:
-                          const BoxConstraints(minWidth: 36, minHeight: 36),
-                      onPressed: () => _showNewPlaylistDialog(context),
-                    ),
-                  ],
-                ),
-              ),
-
-              // The segmented filter stays pinned while the content scrolls.
-              SliverPersistentHeader(
-                pinned: true,
-                delegate: _FilterHeaderDelegate(
-                  height: 54,
-                  background: colorScheme.surface,
-                  child: CupertinoSlidingSegmentedControl<String>(
-                    groupValue: _selectedFilter,
-                    backgroundColor: colorScheme.surfaceContainerHigh,
-                    thumbColor: primaryColor,
-                    children: {
-                      for (final filter in _filters)
-                        filter: Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: AppSpacing.md, vertical: 6),
-                          child: Text(
-                            filter,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: filter == _selectedFilter
-                                  ? colorScheme.onPrimary
-                                  : colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                    },
-                    onValueChanged: (value) {
-                      if (value == null || value == _selectedFilter) return;
-                      PlaybackLogService.instance
-                          .log('UI', 'library: filtro "$value"');
-                      setState(() => _selectedFilter = value);
-                    },
                   ),
-                ),
+                  IconButton(
+                    tooltip: 'Crea o importa una playlist',
+                    icon: const Icon(AppIcons.add, size: 30),
+                    onPressed: _showAddMenu,
+                  ),
+                ],
               ),
-
-              _buildFilteredBody(context, primaryColor),
-            ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  /// Id of the row that should look "in riproduzione" (only while playing).
-  String? get _playingSongId {
-    final value = widget.audioHandler.playbackIndicator.value;
-    return value.$2 ? value.$1 : null;
-  }
-
-  Widget _buildFilteredBody(BuildContext context, Color primaryColor) {
-    return ValueListenableBuilder<(String?, bool)>(
-      valueListenable: widget.audioHandler.playbackIndicator,
-      builder: (context, _, _) {
-        switch (_selectedFilter) {
-          case 'Scaricati':
-            return _buildDownloadsView(primaryColor);
-          case 'Preferiti':
-            return _buildFavoritesView(primaryColor);
-          case 'Playlist':
-            return _buildPlaylistsOnlyView(primaryColor);
-          case 'Tutti':
-          default:
-            return _buildAllView(context, primaryColor);
-        }
-      },
-    );
-  }
-
-  /// Full Library Overview (Tutti)
-  Widget _buildAllView(BuildContext context, Color primaryColor) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return SliverMainAxisGroup(
-      slivers: [
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          sliver: SliverList(
-            delegate: SliverChildListDelegate([
-              // System cards: Preferiti & Scaricati
-              Row(
-                children: [
-                  Expanded(
-                    child: ValueListenableBuilder(
-                      valueListenable: StorageService.instance.favoritesNotifier,
-                      builder: (context, favorites, _) {
-                        return _buildCard(
-                          context,
-                          title: 'Preferiti',
-                          subtitle: '${favorites.length} brani',
-                          icon: CupertinoIcons.heart_fill,
-                          color: primaryColor,
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              CupertinoPageRoute(
-                                builder: (_) => PlaylistScreen(
-                                  playlist: Playlist(
-                                    id: 'system_favorites',
-                                    title: 'Brani Preferiti',
-                                    songs: favorites,
-                                    isSystem: true,
-                                  ),
-                                  audioHandler: widget.audioHandler,
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ValueListenableBuilder(
-                      valueListenable: StorageService.instance.downloadsNotifier,
-                      builder: (context, downloads, _) {
-                        return _buildCard(
-                          context,
-                          title: 'Scaricati',
-                          subtitle: '${downloads.length} brani',
-                          icon: CupertinoIcons.arrow_down_circle_fill,
-                          color: primaryColor,
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              CupertinoPageRoute(
-                                builder: (_) => PlaylistScreen(
-                                  playlist: Playlist(
-                                    id: 'system_downloads',
-                                    title: 'Brani Scaricati',
-                                    songs: downloads,
-                                    isSystem: true,
-                                  ),
-                                  audioHandler: widget.audioHandler,
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-
-              // Import action banner
-              InkWell(
-                onTap: () => _showImportPlaylistDialog(context),
-                borderRadius: BorderRadius.circular(AppRadius.lg),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surface,
-                    borderRadius: BorderRadius.circular(AppRadius.lg),
-                    border: Border.all(
-                        color: colorScheme.onSurface.withValues(alpha: 0.06)),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: primaryColor.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                              color: primaryColor.withValues(alpha: 0.28)),
-                        ),
-                        child: Icon(CupertinoIcons.link,
-                            color: primaryColor, size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Importa da Spotify o YouTube',
-                                style: AppText.tileTitle(colorScheme)),
-                            Text(
-                                'Incolla il link di una playlist pubblica Spotify o YouTube',
-                                style: AppText.caption(colorScheme)),
-                          ],
-                        ),
-                      ),
-                      Icon(CupertinoIcons.chevron_right,
-                          color: colorScheme.onSurfaceVariant, size: 16),
-                    ],
-                  ),
+  Widget _buildChips(ColorScheme cs) {
+    return ListView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 4, AppSpacing.lg, 8),
+      children: [
+        if (_filter != null) ...[
+          Semantics(
+            button: true,
+            label: 'Togli il filtro',
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _setFilter(null),
+              child: Container(
+                width: 34,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
                 ),
+                child: Icon(AppIcons.close, size: 18, color: cs.onSurface),
               ),
-              ValueListenableBuilder<List<Artist>>(
-                valueListenable:
-                    StorageService.instance.followedArtistsNotifier,
-                builder: (context, artists, _) {
-                  if (artists.isEmpty) return const SizedBox.shrink();
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 24),
-                      Text('Artisti seguiti',
-                          style: AppText.sectionTitle(colorScheme)),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        height: 148,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: artists.length,
-                          separatorBuilder: (_, _) =>
-                              const SizedBox(width: AppSpacing.md),
-                          itemBuilder: (context, index) => ArtistChip(
-                            artist: artists[index],
-                            onTap: () => ArtistScreen.open(
-                              context,
-                              widget.audioHandler,
-                              artist: artists[index],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 24),
-              Text('Playlist Create',
-                  style: AppText.sectionTitle(colorScheme)),
-              const SizedBox(height: 12),
-            ]),
+            ),
           ),
-        ),
-        _buildPlaylistsList(primaryColor),
-        const SliverToBoxAdapter(
-            child: SizedBox(height: AppSpacing.bottomContentInset)),
+          const SizedBox(width: AppSpacing.sm),
+        ],
+        for (final filter in _filters)
+          if (_filter == null || _filter == filter)
+            Padding(
+              padding: const EdgeInsets.only(right: AppSpacing.sm),
+              child: FilterPill(
+                label: filter,
+                selected: _filter == filter,
+                onTap: () => _setFilter(_filter == filter ? null : filter),
+              ),
+            ),
       ],
     );
   }
 
-  /// Downloads View (Filtered)
-  Widget _buildDownloadsView(Color primaryColor) {
-    return ValueListenableBuilder<List<Song>>(
-      valueListenable: StorageService.instance.downloadsNotifier,
-      builder: (context, downloadsRaw, _) {
-        final downloads = _sortSongs(downloadsRaw);
-        if (downloads.isEmpty) {
-          return const SliverFillRemaining(
-            hasScrollBody: false,
-            child: AppEmptyState(
-              icon: CupertinoIcons.arrow_down_circle,
-              title: 'Nessun brano scaricato offline',
-              subtitle: 'Tocca i 3 puntini su qualsiasi brano per scaricarlo.',
-            ),
-          );
-        }
-
-        return SliverPadding(
-          padding: const EdgeInsets.only(bottom: AppSpacing.bottomContentInset),
-          sliver: SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final song = downloads[index];
-                final isPlaying = _playingSongId == song.id;
-                return SongTile(
-                  song: song,
-                  isPlaying: isPlaying,
-                  onTap: () {
-                    widget.audioHandler.playSong(song, queue: downloads);
-                    PlayerSheet.show(context, widget.audioHandler);
-                  },
-                );
-              },
-              childCount: downloads.length,
+  Widget _buildSortRow(ColorScheme cs) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 2, AppSpacing.xs, 2),
+      child: Row(
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _pickSort,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(AppIcons.sort, size: 18, color: cs.onSurface),
+                  const SizedBox(width: 6),
+                  Text(
+                    _sortMode,
+                    style: AppText.caption(cs).copyWith(
+                      color: cs.onSurface,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        );
-      },
+          const Spacer(),
+          if (!_showsSongs)
+            IconButton(
+              tooltip: _grid ? 'Mostra come elenco' : 'Mostra come griglia',
+              icon: Icon(_grid ? AppIcons.list : AppIcons.grid,
+                  size: 20, color: cs.onSurface),
+              onPressed: _toggleGrid,
+            )
+          else
+            const SizedBox(height: 48),
+        ],
+      ),
     );
   }
 
-  /// Favorites View (Filtered)
-  Widget _buildFavoritesView(Color primaryColor) {
-    return ValueListenableBuilder<List<Song>>(
-      valueListenable: StorageService.instance.favoritesNotifier,
-      builder: (context, favoritesRaw, _) {
-        final favorites = _sortSongs(favoritesRaw);
-        if (favorites.isEmpty) {
-          return const SliverFillRemaining(
-            hasScrollBody: false,
-            child: AppEmptyState(
-              icon: CupertinoIcons.heart,
-              title: 'Nessun brano nei preferiti',
-              subtitle: 'Tocca il cuore su un brano per ritrovarlo qui.',
-            ),
-          );
-        }
+  // ── Playlists and artists ─────────────────────────────────────────────────
 
-        return SliverPadding(
-          padding: const EdgeInsets.only(bottom: AppSpacing.bottomContentInset),
-          sliver: SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final song = favorites[index];
-                final isPlaying = _playingSongId == song.id;
-                return SongTile(
-                  song: song,
-                  isPlaying: isPlaying,
-                  onTap: () {
-                    widget.audioHandler.playSong(song, queue: favorites);
-                    PlayerSheet.show(context, widget.audioHandler);
-                  },
-                );
-              },
-              childCount: favorites.length,
+  List<_Entry> _entries(ColorScheme cs) {
+    final storage = StorageService.instance;
+    final favorites = storage.favoritesNotifier.value;
+    final downloads = storage.downloadsNotifier.value;
+    final showPlaylists = _filter == null || _filter == 'Playlist';
+    final showArtists = _filter == null || _filter == 'Artisti';
+
+    Widget tinted(double size, IconData icon, List<Color> colors, Color ink) =>
+        Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            borderRadius: AppRadius.cover,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: colors,
             ),
           ),
+          child: Icon(icon, size: size * 0.42, color: ink),
         );
-      },
-    );
-  }
 
-  /// Playlists Only View (Filtered)
-  Widget _buildPlaylistsOnlyView(Color primaryColor) {
-    return SliverMainAxisGroup(
-      slivers: [
-        const SliverToBoxAdapter(child: SizedBox(height: 8)),
-        _buildPlaylistsList(primaryColor),
-        const SliverToBoxAdapter(
-            child: SizedBox(height: AppSpacing.bottomContentInset)),
+    return [
+      if (showPlaylists) ...[
+        _Entry(
+          title: 'Brani che ti piacciono',
+          subtitle: 'Playlist • ${favorites.length} brani',
+          cover: (size) => tinted(
+            size,
+            AppIcons.heartFilled,
+            [cs.primary, Color.lerp(cs.primary, Colors.white, 0.45)!],
+            cs.onPrimary,
+          ),
+          onTap: () => _openPlaylist(Playlist(
+            id: 'system_favorites',
+            title: 'Brani che ti piacciono',
+            songs: favorites,
+            isSystem: true,
+          )),
+        ),
+        _Entry(
+          title: 'Brani scaricati',
+          subtitle: 'Sul dispositivo • ${downloads.length} brani',
+          cover: (size) => tinted(
+            size,
+            AppIcons.downloaded,
+            [cs.surfaceContainerHighest, cs.surfaceContainerHigh],
+            cs.primary,
+          ),
+          onTap: () => _openPlaylist(Playlist(
+            id: 'system_downloads',
+            title: 'Brani scaricati',
+            songs: downloads,
+            isSystem: true,
+          )),
+        ),
+        for (final playlist in _sortPlaylists(storage.playlistsNotifier.value))
+          _Entry(
+            title: playlist.title,
+            subtitle: 'Playlist • ${playlist.songs.length} brani',
+            cover: (size) => AppCover(
+              url: playlistCoverUrl(playlist),
+              size: size,
+              icon: AppIcons.playlist,
+            ),
+            onTap: () => _openPlaylist(playlist),
+          ),
       ],
-    );
-  }
-
-  /// Playlists follow the same sort menu as songs where it makes sense.
-  List<Playlist> _sortPlaylists(List<Playlist> input) {
-    final list = List<Playlist>.from(input);
-    if (_sortMode == 'Titolo') {
-      list.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-    }
-    return list;
-  }
-
-  Widget _buildPlaylistsList(Color primaryColor) {
-    return ValueListenableBuilder<List<Playlist>>(
-      valueListenable: StorageService.instance.playlistsNotifier,
-      builder: (context, playlistsRaw, _) {
-        final playlists = _sortPlaylists(playlistsRaw);
-        if (playlists.isEmpty) {
-          return SliverToBoxAdapter(
-            child: AppEmptyState(
-              icon: CupertinoIcons.music_albums,
-              title: 'Nessuna playlist creata',
-              subtitle: 'Crea la tua prima raccolta personalizzata.',
-              actionLabel: 'Crea playlist',
-              onAction: () => _showNewPlaylistDialog(context),
+      if (showArtists)
+        for (final artist in storage.followedArtistsNotifier.value)
+          _Entry(
+            title: artist.name,
+            subtitle: 'Artista',
+            round: true,
+            cover: (size) => AppCover(
+              url: artist.imageUrl,
+              size: size,
+              circle: true,
+              icon: AppIcons.artist,
             ),
-          );
-        }
+            onTap: () => ArtistScreen.open(
+              context,
+              widget.audioHandler,
+              artist: artist,
+            ),
+          ),
+    ];
+  }
 
-        return SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          sliver: SliverList(
+  List<Widget> _buildEntries(ColorScheme cs) {
+    final entries = _entries(cs);
+    if (entries.isEmpty) {
+      return const [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: AppEmptyState(
+            icon: AppIcons.artist,
+            title: 'Non segui ancora nessun artista',
+            subtitle: 'Apri la pagina di un artista e tocca "Segui".',
+          ),
+        ),
+      ];
+    }
+
+    if (_grid) {
+      const spacing = AppSpacing.md;
+      final width = (MediaQuery.sizeOf(context).width - 2 * AppSpacing.lg - 2 * spacing) / 3;
+      return [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
+          sliver: SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              mainAxisExtent: CoverCard.heightFor(width, subtitleLines: 2),
+              crossAxisSpacing: spacing,
+              mainAxisSpacing: AppSpacing.sm,
+            ),
             delegate: SliverChildBuilderDelegate(
               (context, index) {
-                final p = playlists[index];
-                return ListTile(
-                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
-                  leading: _buildPlaylistCover(p, primaryColor),
-                  title: Text(
-                    p.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.tileTitle(Theme.of(context).colorScheme),
-                  ),
-                  subtitle: Text(
-                    'Playlist \u2022 ${p.songs.length} brani',
-                    style: AppText.caption(Theme.of(context).colorScheme),
-                  ),
-                  trailing: Icon(CupertinoIcons.chevron_right,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      size: 16),
-                  onTap: () {
-                    PlaybackLogService.instance
-                        .log('UI', 'library: apri playlist "${p.title}"');
-                    Navigator.push(
-                      context,
-                      CupertinoPageRoute(
-                        builder: (_) => PlaylistScreen(
-                            playlist: p, audioHandler: widget.audioHandler),
-                      ),
-                    );
-                  },
+                final entry = entries[index];
+                return CoverCard(
+                  imageUrl: null,
+                  cover: entry.cover(width),
+                  title: entry.title,
+                  subtitle: entry.subtitle,
+                  subtitleLines: 2,
+                  size: width,
+                  circle: entry.round,
+                  onTap: entry.onTap,
                 );
               },
-              childCount: playlists.length,
+              childCount: entries.length,
             ),
           ),
-        );
-      },
-    );
-  }
-
-  Widget _buildPlaylistCover(Playlist p, Color primaryColor) {
-    if (p.thumbnailUrl != null && p.thumbnailUrl!.isNotEmpty) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-        child: CachedNetworkImage(
-          imageUrl: p.thumbnailUrl!,
-          width: 54,
-          height: 54,
-          fit: BoxFit.cover,
-          memCacheWidth: 140,
-          memCacheHeight: 140,
-          placeholder: (_, _) => _buildPlaceholderCover(primaryColor),
-          errorWidget: (_, _, _) => _buildPlaceholderCover(primaryColor),
         ),
-      );
+      ];
     }
 
-    final songsWithThumb = p.songs.where((s) => s.thumbnailUrl.isNotEmpty).toList();
-    if (songsWithThumb.length >= 4) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-        child: SizedBox(
-          width: 54,
-          height: 54,
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  _buildMiniThumb(songsWithThumb[0].thumbnailUrl),
-                  _buildMiniThumb(songsWithThumb[1].thumbnailUrl),
-                ],
-              ),
-              Row(
-                children: [
-                  _buildMiniThumb(songsWithThumb[2].thumbnailUrl),
-                  _buildMiniThumb(songsWithThumb[3].thumbnailUrl),
-                ],
-              ),
-            ],
-          ),
+    return [
+      SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) => _EntryRow(entry: entries[index]),
+          childCount: entries.length,
         ),
-      );
-    }
-
-    if (songsWithThumb.isNotEmpty) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-        child: CachedNetworkImage(
-          imageUrl: songsWithThumb.first.thumbnailUrl,
-          width: 54,
-          height: 54,
-          fit: BoxFit.cover,
-          memCacheWidth: 140,
-          memCacheHeight: 140,
-          placeholder: (_, _) => _buildPlaceholderCover(primaryColor),
-          errorWidget: (_, _, _) => _buildPlaceholderCover(primaryColor),
-        ),
-      );
-    }
-
-    return _buildPlaceholderCover(primaryColor);
-  }
-
-  Widget _buildMiniThumb(String url) {
-    return CachedNetworkImage(
-      imageUrl: url,
-      width: 27,
-      height: 27,
-      fit: BoxFit.cover,
-      memCacheWidth: 60,
-      memCacheHeight: 60,
-      placeholder: (_, _) => Container(width: 27, height: 27, color: Theme.of(context).colorScheme.surface),
-      errorWidget: (_, _, _) => Container(width: 27, height: 27, color: Theme.of(context).colorScheme.surface),
-    );
-  }
-
-  Widget _buildPlaceholderCover(Color primaryColor) {
-    return Container(
-      width: 54,
-      height: 54,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(AppRadius.sm),
       ),
-      child: Icon(CupertinoIcons.music_albums, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 26),
-    );
+      if (_filter != 'Artisti' && StorageService.instance.playlistsNotifier.value.isEmpty)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg, AppSpacing.xl, AppSpacing.lg, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Crea la tua prima playlist',
+                    style: AppText.tileTitle(cs).copyWith(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                Text(
+                  'Oppure importane una da Spotify o da YouTube Music.',
+                  style: AppText.caption(cs),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                OutlinedButton(
+                  onPressed: _showAddMenu,
+                  child: const Text('Crea o importa'),
+                ),
+              ],
+            ),
+          ),
+        ),
+    ];
   }
 
-  Widget _buildCard(
-    BuildContext context, {
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    final cs = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppRadius.lg),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: cs.surface,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
-          border: Border.all(color: cs.onSurface.withValues(alpha: 0.06)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: color.withValues(alpha: 0.28)),
+  // ── Songs (downloads, favourites) ─────────────────────────────────────────
+
+  Widget _buildSongs(List<Song> raw) {
+    final songs = _sortSongs(raw);
+    if (songs.isEmpty) {
+      return SliverFillRemaining(
+        hasScrollBody: false,
+        child: _filter == 'Scaricati'
+            ? const AppEmptyState(
+                icon: AppIcons.download,
+                title: 'Nessun brano scaricato',
+                subtitle: 'Apri il menu di un brano e scegli "Scarica".',
+              )
+            : const AppEmptyState(
+                icon: AppIcons.heart,
+                title: 'Nessun brano nei preferiti',
+                subtitle: 'Tocca il cuore su un brano per ritrovarlo qui.',
               ),
-              child: Icon(icon, color: color, size: 22),
-            ),
-            const SizedBox(height: 14),
-            Text(title, style: AppText.tileTitle(cs)),
-            const SizedBox(height: 2),
-            Text(subtitle, style: AppText.caption(cs)),
-          ],
-        ),
+      );
+    }
+    final indicator = widget.audioHandler.playbackIndicator.value;
+    final playingId = indicator.$2 ? indicator.$1 : null;
+
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (context, index) {
+          final song = songs[index];
+          return SongTile(
+            song: song,
+            isPlaying: playingId == song.id,
+            onTap: () {
+              widget.audioHandler.playSong(song, queue: songs);
+              PlayerSheet.show(context, widget.audioHandler);
+            },
+          );
+        },
+        childCount: songs.length,
       ),
     );
   }
 
-  void _showNewPlaylistDialog(BuildContext context) async {
-    final controller = TextEditingController();
-    await showCupertinoDialog(
-      context: context,
-      builder: (ctx) => CupertinoAlertDialog(
-        title: Text('Nuova Playlist'),
-        content: Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: CupertinoTextField(
-            controller: controller,
-            placeholder: 'Nome della playlist',
-            autofocus: true,
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+  // ── Create / import ───────────────────────────────────────────────────────
+
+  void _showAddMenu() {
+    final rootContext = Navigator.of(context, rootNavigator: true).context;
+    showAppSheet<void>(
+      context,
+      builder: (sheetContext) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SheetAction(
+            icon: AppIcons.playlist,
+            label: 'Nuova playlist',
+            subtitle: 'Crea una raccolta con i tuoi brani',
+            onTap: () async {
+              Navigator.pop(sheetContext);
+              final name = await askPlaylistName(rootContext);
+              if (name == null) return;
+              final created = await StorageService.instance.createPlaylist(name);
+              if (mounted) _openPlaylist(created);
+            },
           ),
-        ),
-        actions: [
-          CupertinoDialogAction(
-            child: Text('Annulla'),
-            onPressed: () => Navigator.pop(ctx),
-          ),
-          CupertinoDialogAction(
-            isDefaultAction: true,
-            child: Text('Crea'),
-            onPressed: () {
-              final name = controller.text.trim();
-              if (name.isNotEmpty) {
-                StorageService.instance.createPlaylist(name);
-              }
-              Navigator.pop(ctx);
+          SheetAction(
+            icon: AppIcons.link,
+            label: 'Importa una playlist',
+            subtitle: 'Dal link di una playlist pubblica di Spotify o YouTube',
+            onTap: () {
+              Navigator.pop(sheetContext);
+              _showImportSheet();
             },
           ),
         ],
       ),
     );
-    controller.dispose();
   }
 
-  void _showImportPlaylistDialog(BuildContext context) async {
+  void _showImportSheet() {
     PlaybackLogService.instance.log('UI', 'library: import dialog');
-    final controller = TextEditingController();
-    final primaryColor = Theme.of(context).colorScheme.primary;
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (bottomSheetCtx) {
-        bool isLoading = false;
-        String statusText = '';
-
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            return Container(
-              padding: EdgeInsets.only(
-                left: 20,
-                right: 20,
-                top: 24,
-                // Keyboard when open, home indicator otherwise: keeps the
-                // action button clear of both.
-                bottom: MediaQuery.viewInsetsOf(context).bottom +
-                    MediaQuery.viewPaddingOf(context).bottom +
-                    16,
-              ),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius: AppRadius.sheet,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Handle bar
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 20),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: 0.4),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-
-                  // Header with Icon
-                  Row(
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: primaryColor.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                              color: primaryColor.withValues(alpha: 0.28)),
-                        ),
-                        child: Icon(CupertinoIcons.arrow_down_doc_fill, color: primaryColor, size: 22),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Importa Playlist',
-                              style: AppText.tileTitle(Theme.of(context).colorScheme)
-                                  .copyWith(fontSize: 17),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Supporta link Spotify e YouTube Music',
-                              style: AppText.caption(Theme.of(context).colorScheme),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Text Field with Paste Button
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(AppRadius.md),
-                      border: Border.all(
-                          color: Theme.of(context).colorScheme.outlineVariant),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: controller,
-                            enabled: !isLoading,
-                            style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 14),
-                            decoration: InputDecoration(
-                              hintText: 'Incolla link Spotify o YouTube...',
-                              hintStyle: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 14),
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(CupertinoIcons.doc_on_clipboard, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 20),
-                          tooltip: 'Incolla dagli appunti',
-                          onPressed: isLoading
-                              ? null
-                              : () async {
-                                  final data = await Clipboard.getData('text/plain');
-                                  if (data?.text != null) {
-                                    controller.text = data!.text!.trim();
-                                  }
-                                },
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // CTA Button / Loading Indicator
-                  if (isLoading)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2.5, color: primaryColor),
-                          ),
-                          const SizedBox(width: 14),
-                          Text(
-                            statusText.isNotEmpty ? statusText : 'Importazione ultra-veloce in corso...',
-                            style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.85), fontSize: 14),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(AppRadius.md)),
-                      ),
-                      onPressed: () async {
-                        final url = controller.text.trim();
-                        if (url.isEmpty) return;
-
-                        setSheetState(() {
-                          isLoading = true;
-                          statusText = 'Lettura della playlist…';
-                        });
-
-                        final created = await PlaylistImporterService.instance.importFromUrl(
-                          url,
-                          onProgress: (cur, tot) {
-                            setSheetState(() {
-                              statusText = 'Importati $cur di $tot brani...';
-                            });
-                          },
-                        );
-
-                        if (bottomSheetCtx.mounted) {
-                          Navigator.pop(bottomSheetCtx);
-                        }
-                        if (!context.mounted) return;
-
-                        if (created == null) {
-                          PlaybackLogService.instance
-                              .log('UI', 'library: import fallito');
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                  'Import non riuscito: link non valido o playlist privata.'),
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                          return;
-                        }
-                        if (created.songs.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                  'Playlist importata ma senza brani disponibili.'),
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                          return;
-                        }
-
-                        PlaybackLogService.instance
-                            .log('UI', 'library: import ok "${created.title}"');
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Playlist "${created.title}" importata con successo!'),
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
-
-                        // Naviga istantaneamente alla playlist appena creata!
-                        Navigator.push(
-                          context,
-                          CupertinoPageRoute(
-                            builder: (_) => PlaylistScreen(
-                              playlist: created,
-                              audioHandler: widget.audioHandler,
-                            ),
-                          ),
-                        );
-                      },
-                      child: Text(
-                        'Importa Istantaneamente',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+    final messenger = ScaffoldMessenger.of(context);
+    showAppSheet<void>(
+      context,
+      builder: (_) => _ImportSheet(
+        onImported: (created) {
+          if (created == null) {
+            PlaybackLogService.instance.log('UI', 'library: import fallito');
+            messenger.showSnackBar(const SnackBar(
+              content: Text('Import non riuscito: link non valido o playlist privata.'),
+            ));
+            return;
+          }
+          if (created.songs.isEmpty) {
+            messenger.showSnackBar(const SnackBar(
+              content: Text('Playlist importata, ma senza brani disponibili.'),
+            ));
+            return;
+          }
+          PlaybackLogService.instance
+              .log('UI', 'library: import ok "${created.title}"');
+          messenger.showSnackBar(
+            SnackBar(content: Text('"${created.title}" importata')),
+          );
+          if (mounted) _openPlaylist(created);
+        },
+      ),
     );
-    controller.dispose();
   }
 }
 
-/// Keeps the filter segmented control pinned under the large title while the
-/// library content scrolls beneath it.
-class _FilterHeaderDelegate extends SliverPersistentHeaderDelegate {
-  _FilterHeaderDelegate({
-    required this.height,
-    required this.background,
-    required this.child,
-  });
+class _EntryRow extends StatelessWidget {
+  const _EntryRow({required this.entry});
 
-  final double height;
-  final Color background;
-  final Widget child;
+  final _Entry entry;
 
   @override
-  double get minExtent => height;
-
-  @override
-  double get maxExtent => height;
-
-  @override
-  Widget build(
-      BuildContext context, double shrinkOffset, bool overlapsContent) {
-    return Container(
-      color: background,
-      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 6, AppSpacing.lg, 8),
-      child: child,
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: entry.onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 7),
+        child: Row(
+          children: [
+            entry.cover(60),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    entry.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.tileTitle(cs),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    entry.subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.tileSubtitle(cs),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
+  }
+}
+
+/// Sheet that reads a playlist from a link and saves it in the library.
+class _ImportSheet extends StatefulWidget {
+  const _ImportSheet({required this.onImported});
+
+  /// Called once the sheet has closed, with the playlist that was created
+  /// (null when the link could not be read).
+  final void Function(Playlist? created) onImported;
+
+  @override
+  State<_ImportSheet> createState() => _ImportSheetState();
+}
+
+class _ImportSheetState extends State<_ImportSheet> {
+  final TextEditingController _controller = TextEditingController();
+  bool _loading = false;
+  String _status = '';
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _import() async {
+    final url = _controller.text.trim();
+    if (url.isEmpty || _loading) return;
+    // Kept now: the sheet may be closed before the import ends.
+    final onImported = widget.onImported;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _loading = true;
+      _status = 'Lettura della playlist…';
+    });
+
+    final created = await PlaylistImporterService.instance.importFromUrl(
+      url,
+      onProgress: (current, total) {
+        if (mounted) setState(() => _status = 'Importati $current di $total brani…');
+      },
+    );
+    if (mounted) Navigator.pop(context);
+    onImported(created);
   }
 
   @override
-  bool shouldRebuild(_FilterHeaderDelegate oldDelegate) =>
-      oldDelegate.child != child ||
-      oldDelegate.height != height ||
-      oldDelegate.background != background;
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.xl, AppSpacing.sm, AppSpacing.xl, AppSpacing.sm),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Importa una playlist',
+              style: AppText.sectionTitle(cs).copyWith(fontSize: 18)),
+          const SizedBox(height: 4),
+          Text(
+            'Incolla il link di una playlist pubblica di Spotify o YouTube Music.',
+            style: AppText.caption(cs),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          Container(
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    enabled: !_loading,
+                    autocorrect: false,
+                    keyboardType: TextInputType.url,
+                    textInputAction: TextInputAction.go,
+                    onSubmitted: (_) => _import(),
+                    style: TextStyle(color: cs.onSurface, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: 'https://open.spotify.com/playlist/…',
+                      hintStyle: TextStyle(color: cs.onSurfaceVariant, fontSize: 14),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.lg, vertical: 14),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(AppIcons.paste, color: cs.onSurfaceVariant, size: 20),
+                  tooltip: 'Incolla dagli appunti',
+                  onPressed: _loading
+                      ? null
+                      : () async {
+                          final data = await Clipboard.getData('text/plain');
+                          final text = data?.text?.trim();
+                          if (text != null && text.isNotEmpty) _controller.text = text;
+                        },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          if (_loading)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CupertinoActivityIndicator(radius: 9),
+                  const SizedBox(width: AppSpacing.md),
+                  Flexible(
+                    child: Text(
+                      _status,
+                      style: TextStyle(color: cs.onSurface, fontSize: 14),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            FilledButton(onPressed: _import, child: const Text('Importa')),
+        ],
+      ),
+    );
+  }
 }

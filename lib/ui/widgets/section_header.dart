@@ -13,9 +13,9 @@ class SectionHeader extends StatelessWidget {
     this.trailing,
     this.padding = const EdgeInsets.fromLTRB(
       AppSpacing.lg,
+      AppSpacing.xl,
       AppSpacing.lg,
-      AppSpacing.lg,
-      AppSpacing.sm,
+      AppSpacing.md,
     ),
   });
 
@@ -25,31 +25,14 @@ class SectionHeader extends StatelessWidget {
     return Padding(
       padding: padding,
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
-            child: Row(
-              children: [
-                // Accent tick: the section marker of the Ambient language.
-                Container(
-                  width: 3,
-                  height: 16,
-                  margin: const EdgeInsets.only(right: AppSpacing.sm),
-                  decoration: BoxDecoration(
-                    color: cs.primary.withValues(alpha: 0.85),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.sectionTitle(cs),
-                  ),
-                ),
-              ],
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.sectionTitle(cs),
             ),
           ),
           ?trailing,

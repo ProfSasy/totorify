@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'dart:math' as math;
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -12,12 +14,17 @@ import '../../services/deezer_service.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/ytmusic_catalog_service.dart';
+import '../app_navigation.dart';
 import '../theme/app_ambience.dart';
+import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/app_empty_state.dart';
 import '../widgets/app_skeleton.dart';
-import '../widgets/mini_player.dart';
+import '../widgets/collection_header.dart';
+import '../widgets/cover_card.dart';
+import '../widgets/play_button.dart';
 import '../widgets/player_sheet.dart';
+import '../widgets/top_bar.dart';
 import '../widgets/section_header.dart';
 import '../widgets/song_tile.dart';
 import 'album_screen.dart';
@@ -46,7 +53,9 @@ class ArtistScreen extends StatefulWidget {
     Artist? artist,
     Song? song,
   }) {
-    return Navigator.of(context).push(
+    // Also opened from sheets, which live above the tabs.
+    return AppNavigation.push(
+      context,
       CupertinoPageRoute<void>(
         builder: (_) => ArtistScreen(
           audioHandler: audioHandler,
@@ -77,6 +86,8 @@ class _ArtistScreenState extends State<ArtistScreen> {
   bool _openingAllSongs = false;
   bool _showFullBio = false;
 
+  final ValueNotifier<double> _scrollOffset = ValueNotifier<double>(0);
+
   String get _wantedName =>
       widget.artist?.name ?? DeezerService.primaryArtist(widget.song!.artist);
 
@@ -85,6 +96,12 @@ class _ArtistScreenState extends State<ArtistScreen> {
     super.initState();
     _artist = widget.artist;
     _load();
+  }
+
+  @override
+  void dispose() {
+    _scrollOffset.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -207,77 +224,90 @@ class _ArtistScreenState extends State<ArtistScreen> {
     );
   }
 
+  /// Height of the picture at the top of the page.
+  double _heroHeight(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return math.min(size.width * 0.92, size.height * 0.44);
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final artist = _artist;
     final page = _page;
+    final imageUrl =
+        (artist?.imageUrl.isNotEmpty ?? false) ? artist!.imageUrl : null;
+    final heroHeight = _heroHeight(context);
 
     return Scaffold(
       backgroundColor: colorScheme.surfaceDim,
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: MiniPlayer(audioHandler: widget.audioHandler),
-      ),
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: AmbientBackdrop(
-              artworkUrl: (artist?.imageUrl.isNotEmpty ?? false) ? artist!.imageUrl : null,
-              intensity: 0.35,
-            ),
-          ),
-          CustomScrollView(
-            physics: const BouncingScrollPhysics(
-                parent: AlwaysScrollableScrollPhysics()),
-            slivers: [
-              SliverAppBar(
-                pinned: true,
-                elevation: 0,
-                backgroundColor: colorScheme.surface.withValues(alpha: 0.85),
-                leading: IconButton(
-                  icon: Icon(CupertinoIcons.back, color: colorScheme.onSurface),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                title: Text(
-                  artist?.name ?? _wantedName,
-                  style: AppText.screenTitle(colorScheme),
-                ),
-              ),
-              if (artist == null)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: _loading
-                      ? const Center(child: CupertinoActivityIndicator())
-                      : AppEmptyState(
-                          icon: CupertinoIcons.person_crop_circle_badge_xmark,
-                          title: 'Artista non trovato',
-                          subtitle: 'Non ho trovato "$_wantedName" nel catalogo.',
+      body: AmbientTint(
+        artworkUrl: imageUrl,
+        fallback: colorScheme.primary,
+        builder: (context, palette) => Stack(
+          children: [
+            NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (notification.depth == 0) {
+                  _scrollOffset.value = notification.metrics.pixels;
+                }
+                return false;
+              },
+              child: CustomScrollView(
+                physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics()),
+                slivers: [
+                  if (artist == null)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: _loading
+                          ? const Center(child: CupertinoActivityIndicator())
+                          : AppEmptyState(
+                              icon: AppIcons.artistMissing,
+                              title: 'Artista non trovato',
+                              subtitle:
+                                  'Non ho trovato "$_wantedName" nel catalogo.',
+                              actionLabel: 'Riprova',
+                              onAction: _load,
+                            ),
+                    )
+                  else ...[
+                    SliverToBoxAdapter(
+                      child: _buildHero(artist, imageUrl, palette, heroHeight),
+                    ),
+                    SliverToBoxAdapter(
+                      child: _buildActions(artist, palette, colorScheme),
+                    ),
+                    if (_loading)
+                      const SliverToBoxAdapter(child: SongListSkeleton(count: 5))
+                    else if (page == null)
+                      SliverToBoxAdapter(
+                        child: AppEmptyState(
+                          icon: AppIcons.offline,
+                          title: 'Pagina non disponibile',
+                          subtitle:
+                              'Non sono riuscito a leggere la pagina di ${artist.name}.',
                           actionLabel: 'Riprova',
                           onAction: _load,
                         ),
-                )
-              else ...[
-                SliverToBoxAdapter(child: _buildHeader(artist, colorScheme)),
-                if (_loading)
-                  const SliverToBoxAdapter(child: SongListSkeleton(count: 5))
-                else if (page == null)
-                  SliverToBoxAdapter(
-                    child: AppEmptyState(
-                      icon: CupertinoIcons.wifi_exclamationmark,
-                      title: 'Pagina non disponibile',
-                      subtitle: 'Non sono riuscito a leggere la pagina di ${artist.name}.',
-                      actionLabel: 'Riprova',
-                      onAction: _load,
-                    ),
-                  )
-                else
-                  ..._buildSections(page, colorScheme),
-                const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxl)),
-              ],
-            ],
-          ),
-        ],
+                      )
+                    else
+                      ..._buildSections(page, colorScheme),
+                    const SliverToBoxAdapter(
+                        child: SizedBox(height: AppSpacing.bottomContentInset)),
+                  ],
+                ],
+              ),
+            ),
+            CollectionTopBar(
+              title: artist?.name ?? _wantedName,
+              palette: palette,
+              scrollOffset: _scrollOffset,
+              scrim: true,
+              revealAt: heroHeight - TopBar.extent(context) - 56,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -303,15 +333,18 @@ class _ArtistScreenState extends State<ArtistScreen> {
         ),
       if (popular.isNotEmpty) ...[
         const SliverToBoxAdapter(child: SectionHeader('Popolari')),
-        _buildSongs(popular, page.topSongs),
+        _buildSongs(popular, page.topSongs, numbered: true),
         if (page.allSongs != null)
           SliverToBoxAdapter(
-            child: Center(
-              child: TextButton(
-                onPressed: _openingAllSongs ? null : _openAllSongs,
-                child: _openingAllSongs
-                    ? const CupertinoActivityIndicator(radius: 9)
-                    : const Text('Mostra tutti i brani'),
+            child: Padding(
+              padding: const EdgeInsets.only(top: AppSpacing.sm),
+              child: Center(
+                child: OutlinedButton(
+                  onPressed: _openingAllSongs ? null : _openAllSongs,
+                  child: _openingAllSongs
+                      ? const CupertinoActivityIndicator(radius: 8)
+                      : const Text('Mostra tutti i brani'),
+                ),
               ),
             ),
           ),
@@ -345,49 +378,135 @@ class _ArtistScreenState extends State<ArtistScreen> {
     ];
   }
 
-  Widget _buildHeader(Artist artist, ColorScheme colorScheme) {
+  /// The artist's picture, edge to edge, with the name over its lower part.
+  Widget _buildHero(
+    Artist artist,
+    String? imageUrl,
+    AmbientPalette palette,
+    double height,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final placeholder = DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [palette.surface, palette.deep],
+        ),
+      ),
+      child: Icon(
+        AppIcons.artist,
+        size: height * 0.42,
+        color: Colors.white.withValues(alpha: 0.18),
+      ),
+    );
+
+    return SizedBox(
+      height: height,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // Pulled down past its top, the page leaves no gap: the picture
+          // stays attached to the edge of the screen and grows.
+          ValueListenableBuilder<double>(
+            valueListenable: _scrollOffset,
+            builder: (context, offset, picture) {
+              final pull = offset < 0 ? -offset : 0.0;
+              return Positioned(
+                top: -pull,
+                left: 0,
+                right: 0,
+                height: height + pull,
+                child: picture!,
+              );
+            },
+            child: imageUrl == null
+                ? placeholder
+                : CachedNetworkImage(
+                    imageUrl: imageUrl,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
+                    memCacheWidth: (MediaQuery.sizeOf(context).width *
+                            MediaQuery.devicePixelRatioOf(context))
+                        .round(),
+                    fadeInDuration: const Duration(milliseconds: 220),
+                    placeholder: (_, _) => placeholder,
+                    errorWidget: (_, _, _) => placeholder,
+                  ),
+          ),
+          // The picture melts into the page, and darkens under the clock.
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.35),
+                      Colors.black.withValues(alpha: 0),
+                      colorScheme.surfaceDim.withValues(alpha: 0),
+                      colorScheme.surfaceDim,
+                    ],
+                    stops: const [0.0, 0.28, 0.5, 1.0],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: AppSpacing.lg,
+            right: AppSpacing.lg,
+            bottom: AppSpacing.sm,
+            child: Text(
+              artist.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.display(colorScheme).copyWith(
+                fontSize: 42,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -1.4,
+                height: 1.02,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActions(
+    Artist artist,
+    AmbientPalette palette,
+    ColorScheme colorScheme,
+  ) {
     final topSongs = _page?.topSongs ?? const <Song>[];
     // Something to start from even when the catalog has no "popular" list.
     final playable = topSongs.isNotEmpty ? topSongs : _appearsOn;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.sm),
+          AppSpacing.lg, AppSpacing.xs, AppSpacing.lg, 0),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ArtistAvatar(artist: artist, size: 168),
-          const SizedBox(height: AppSpacing.lg),
-          Text(
-            artist.name,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: AppText.display(colorScheme),
-          ),
-          if (artist.audience.isNotEmpty) ...[
-            const SizedBox(height: AppSpacing.xs),
-            Text(artist.audience, style: AppText.caption(colorScheme)),
-          ],
-          const SizedBox(height: AppSpacing.lg),
+          if (artist.audience.isNotEmpty)
+            Text(artist.audience, style: AppText.tileSubtitle(colorScheme)),
+          const SizedBox(height: AppSpacing.sm),
           Row(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               ValueListenableBuilder<List<Artist>>(
                 valueListenable: StorageService.instance.followedArtistsNotifier,
                 builder: (context, _, _) {
                   final following =
                       StorageService.instance.isFollowingArtist(artist.id);
-                  return OutlinedButton.icon(
+                  return OutlinedButton(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: following
-                          ? colorScheme.primary
-                          : colorScheme.onSurface,
+                      foregroundColor:
+                          following ? palette.accent : colorScheme.onSurface,
                       side: BorderSide(
-                        color: following
-                            ? colorScheme.primary
-                            : colorScheme.onSurface.withValues(alpha: 0.3),
+                        color: following ? palette.accent : colorScheme.outline,
                       ),
-                      shape: const StadiumBorder(),
                     ),
                     onPressed: () {
                       PlaybackLogService.instance.log(
@@ -398,24 +517,11 @@ class _ArtistScreenState extends State<ArtistScreen> {
                       );
                       StorageService.instance.toggleFollowArtist(artist);
                     },
-                    icon: Icon(
-                      following ? CupertinoIcons.checkmark : CupertinoIcons.plus,
-                      size: 16,
-                    ),
-                    label: Text(following ? 'Segui già' : 'Segui'),
+                    child: Text(following ? 'Segui già' : 'Segui'),
                   );
                 },
               ),
-              const SizedBox(width: AppSpacing.md),
-              FilledButton.icon(
-                style: FilledButton.styleFrom(shape: const StadiumBorder()),
-                onPressed: playable.isEmpty
-                    ? null
-                    : () => _play(playable.first, playable),
-                icon: const Icon(CupertinoIcons.play_fill, size: 16),
-                label: const Text('Riproduci'),
-              ),
-              const SizedBox(width: AppSpacing.xs),
+              const Spacer(),
               IconButton(
                 tooltip: 'Riproduzione casuale',
                 onPressed: playable.isEmpty
@@ -424,7 +530,33 @@ class _ArtistScreenState extends State<ArtistScreen> {
                         final shuffled = List<Song>.from(playable)..shuffle();
                         _play(shuffled.first, shuffled);
                       },
-                icon: Icon(CupertinoIcons.shuffle, color: colorScheme.onSurfaceVariant),
+                icon: Icon(AppIcons.shuffle,
+                    size: 28, color: colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              ValueListenableBuilder<(String?, bool)>(
+                valueListenable: widget.audioHandler.playbackIndicator,
+                builder: (context, indicator, _) {
+                  final currentId = widget.audioHandler.currentSong?.id;
+                  final isCurrent = currentId != null &&
+                      playable.any((song) => song.id == currentId);
+                  final playing = isCurrent && indicator.$2;
+                  return PlayButton(
+                    color: palette.accent,
+                    playing: playing,
+                    onPressed: playable.isEmpty
+                        ? null
+                        : () {
+                            if (playing) {
+                              widget.audioHandler.pause();
+                            } else if (isCurrent) {
+                              widget.audioHandler.play();
+                            } else {
+                              _play(playable.first, playable);
+                            }
+                          },
+                  );
+                },
               ),
             ],
           ),
@@ -433,16 +565,17 @@ class _ArtistScreenState extends State<ArtistScreen> {
     );
   }
 
-  Widget _buildSongs(List<Song> visible, List<Song> queue) {
+  Widget _buildSongs(List<Song> visible, List<Song> queue, {bool numbered = false}) {
     return ValueListenableBuilder<(String?, bool)>(
       valueListenable: widget.audioHandler.playbackIndicator,
       builder: (context, indicator, _) {
         final playingId = indicator.$2 ? indicator.$1 : null;
         return SliverList(
           delegate: SliverChildListDelegate([
-            for (final song in visible)
+            for (final (i, song) in visible.indexed)
               SongTile(
                 song: song,
+                index: numbered ? i + 1 : null,
                 isPlaying: playingId == song.id,
                 onTap: () => _play(song, queue),
               ),
@@ -454,12 +587,12 @@ class _ArtistScreenState extends State<ArtistScreen> {
 
   Widget _buildReleases(List<Album> releases) {
     return SizedBox(
-      height: 206,
+      height: AlbumCard.rowHeight,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
         itemCount: releases.length,
-        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.md),
+        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.lg),
         itemBuilder: (context, index) => AlbumCard(
           album: releases[index],
           onTap: () =>
@@ -471,12 +604,12 @@ class _ArtistScreenState extends State<ArtistScreen> {
 
   Widget _buildRelated(List<Artist> related) {
     return SizedBox(
-      height: 148,
+      height: ArtistChip.rowHeight,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
         itemCount: related.length,
-        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.md),
+        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.lg),
         itemBuilder: (context, index) => ArtistChip(
           artist: related[index],
           onTap: () => ArtistScreen.open(
@@ -495,11 +628,18 @@ class _ArtistScreenState extends State<ArtistScreen> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => setState(() => _showFullBio = !_showFullBio),
-        child: Text(
-          description,
-          maxLines: _showFullBio ? null : 4,
-          overflow: _showFullBio ? TextOverflow.visible : TextOverflow.ellipsis,
-          style: AppText.caption(colorScheme).copyWith(height: 1.45),
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHigh,
+            borderRadius: AppRadius.card,
+          ),
+          child: Text(
+            description,
+            maxLines: _showFullBio ? null : 5,
+            overflow: _showFullBio ? TextOverflow.visible : TextOverflow.ellipsis,
+            style: AppText.tileSubtitle(colorScheme).copyWith(height: 1.45),
+          ),
         ),
       ),
     );
@@ -515,127 +655,40 @@ class AlbumCard extends StatelessWidget {
 
   static const double _size = 140;
 
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final placeholder = Container(
-      width: _size,
-      height: _size,
-      color: colorScheme.surfaceContainerHigh,
-      child: Icon(CupertinoIcons.music_albums,
-          size: 44, color: colorScheme.onSurfaceVariant),
-    );
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppRadius.sm),
-      child: SizedBox(
-        width: _size,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              child: album.coverUrl.isEmpty
-                  ? placeholder
-                  : CachedNetworkImage(
-                      imageUrl: album.coverUrl,
-                      width: _size,
-                      height: _size,
-                      fit: BoxFit.cover,
-                      memCacheWidth: 420,
-                      placeholder: (_, _) => placeholder,
-                      errorWidget: (_, _, _) => placeholder,
-                    ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              album.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppText.caption(colorScheme).copyWith(
-                color: colorScheme.onSurface,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              album.caption,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppText.caption(colorScheme),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Round artist picture with a placeholder for missing images.
-class ArtistAvatar extends StatelessWidget {
-  final Artist artist;
-  final double size;
-
-  const ArtistAvatar({super.key, required this.artist, required this.size});
+  /// Height of a row of these cards.
+  static double get rowHeight => CoverCard.heightFor(_size);
 
   @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final placeholder = Container(
-      width: size,
-      height: size,
-      color: colorScheme.surfaceContainerHigh,
-      child: Icon(CupertinoIcons.person_fill,
-          size: size * 0.45, color: colorScheme.onSurfaceVariant),
-    );
-
-    return ClipOval(
-      child: artist.imageUrl.isEmpty
-          ? placeholder
-          : CachedNetworkImage(
-              imageUrl: artist.imageUrl,
-              width: size,
-              height: size,
-              fit: BoxFit.cover,
-              memCacheWidth: (size * 3).round(),
-              placeholder: (_, _) => placeholder,
-              errorWidget: (_, _, _) => placeholder,
-            ),
-    );
-  }
+  Widget build(BuildContext context) => CoverCard(
+        imageUrl: album.coverUrl,
+        title: album.title,
+        subtitle: album.caption,
+        size: _size,
+        icon: AppIcons.album,
+        onTap: onTap,
+      );
 }
 
-/// Avatar with the artist name underneath, for horizontal artist rows.
+/// Round picture with the artist name underneath, for horizontal rows.
 class ArtistChip extends StatelessWidget {
   final Artist artist;
   final VoidCallback onTap;
 
   const ArtistChip({super.key, required this.artist, required this.onTap});
 
+  static const double _size = 116;
+
+  /// Height of a row of these cards.
+  static double get rowHeight => CoverCard.heightFor(_size);
+
   @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppRadius.sm),
-      child: SizedBox(
-        width: 104,
-        child: Column(
-          children: [
-            ArtistAvatar(artist: artist, size: 96),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              artist.name,
-              maxLines: 2,
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
-              style: AppText.caption(colorScheme)
-                  .copyWith(color: colorScheme.onSurface),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => CoverCard(
+        imageUrl: artist.imageUrl,
+        title: artist.name,
+        subtitle: 'Artista',
+        size: _size,
+        circle: true,
+        icon: AppIcons.artist,
+        onTap: onTap,
+      );
 }

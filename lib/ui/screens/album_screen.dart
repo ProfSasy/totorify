@@ -7,6 +7,9 @@ import '../../models/song.dart';
 import '../../services/audio_handler.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/ytmusic_catalog_service.dart';
+import '../app_navigation.dart';
+import '../theme/app_icons.dart';
+import '../theme/app_tokens.dart';
 import '../widgets/app_empty_state.dart';
 import 'playlist_screen.dart';
 
@@ -25,7 +28,8 @@ class AlbumScreen extends StatefulWidget {
   ) {
     PlaybackLogService.instance
         .log('UI', 'apri ${album.type.toLowerCase()} "${album.title}" di ${album.artist}');
-    return Navigator.of(context).push(
+    return AppNavigation.push(
+      context,
       CupertinoPageRoute<void>(
         builder: (_) => AlbumScreen(album: album, audioHandler: audioHandler),
       ),
@@ -69,17 +73,21 @@ class _AlbumScreenState extends State<AlbumScreen> {
         return Scaffold(
           backgroundColor: colorScheme.surfaceDim,
           appBar: AppBar(
-            backgroundColor: colorScheme.surface,
             leading: IconButton(
-              icon: Icon(CupertinoIcons.back, color: colorScheme.onSurface),
+              icon: Icon(AppIcons.back, size: 20, color: colorScheme.onSurface),
               onPressed: () => Navigator.pop(context),
             ),
-            title: Text(widget.album.title),
+            titleSpacing: 0,
+            title: Text(
+              widget.album.title,
+              style: AppText.tileTitle(colorScheme)
+                  .copyWith(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
           ),
           body: waiting
               ? const Center(child: CupertinoActivityIndicator())
               : AppEmptyState(
-                  icon: CupertinoIcons.music_albums,
+                  icon: AppIcons.album,
                   title: 'Brani non disponibili',
                   subtitle: 'Non sono riuscito a leggere "${widget.album.title}".',
                   actionLabel: 'Riprova',

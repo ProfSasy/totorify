@@ -1,29 +1,40 @@
 import 'dart:math' as math;
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../main.dart';
 import '../../models/song.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/download_service.dart';
 import '../../services/spotify_service.dart';
 import '../../services/storage_service.dart';
-import '../screens/artist_screen.dart';
+import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
-import 'alternative_sources_sheet.dart';
+import 'app_cover.dart';
+import 'song_options_sheet.dart';
 
+/// Row of a song in any list.
+///
+/// Tap plays it, the dots (or a long press) open its menu, and a swipe to
+/// the right puts it in the queue. Where the list can lose songs
+/// ([onRemove]), a swipe to the left removes it.
 class SongTile extends StatelessWidget {
   final Song song;
   final bool isPlaying;
   final VoidCallback onTap;
-  final VoidCallback? onMoreTap;
+
+  /// Position shown before the cover (the "popular" list of an artist).
+  final int? index;
+
+  /// Makes the row removable with a swipe to the left.
+  final VoidCallback? onRemove;
 
   const SongTile({
     super.key,
     required this.song,
     this.isPlaying = false,
     required this.onTap,
-    this.onMoreTap,
+    this.index,
+    this.onRemove,
   });
 
   String _formatDuration(Duration d) {
@@ -32,9 +43,15 @@ class SongTile extends StatelessWidget {
     return '$m:${s.toString().padLeft(2, '0')}';
   }
 
+  void _openMenu(BuildContext context) {
+    PlaybackLogService.instance.log('UI', 'tile: menu "${song.title}"');
+    showSongOptions(context, song: song, audioHandler: audioHandler);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final primaryColor = Theme.of(context).colorScheme.primary;
+    final cs = Theme.of(context).colorScheme;
+    final accent = cs.primary;
 
     String thumbUrl = song.thumbnailUrl;
     if (song.spotifyTrackId != null &&
@@ -45,380 +62,177 @@ class SongTile extends StatelessWidget {
       }
     }
 
-    return RepaintBoundary(
-      child: InkWell(
-        onTap: () {
-          PlaybackLogService.instance.log('UI', 'tile: play "${song.title}"');
-          onTap();
-        },
-        borderRadius: BorderRadius.circular(12),
-        splashColor: primaryColor.withValues(alpha: 0.08),
-        highlightColor: primaryColor.withValues(alpha: 0.04),
-            child: AnimatedContainer(
-              duration: AppMotion.base,
-              curve: AppMotion.standard,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: isPlaying
-                    ? primaryColor.withValues(alpha: 0.07)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(AppRadius.sm),
+    final row = InkWell(
+      onTap: () {
+        PlaybackLogService.instance.log('UI', 'tile: play "${song.title}"');
+        onTap();
+      },
+      onLongPress: () {
+        HapticFeedback.mediumImpact();
+        _openMenu(context);
+      },
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 7, AppSpacing.xs, 7),
+        child: Row(
+          children: [
+            if (index != null)
+              SizedBox(
+                width: 26,
+                child: Text(
+                  '$index',
+                  style: AppText.tileSubtitle(cs).copyWith(
+                    fontSize: 15,
+                    color: isPlaying ? accent : cs.onSurfaceVariant,
+                  ),
+                ),
               ),
-              child: Row(
-                children: [
-                  // ── Thumbnail ──────────────────────────────────────────────
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Stack(
-                      children: [
-                        CachedNetworkImage(
-                          imageUrl: thumbUrl,
-                          width: 52,
-                          height: 52,
-                          fit: BoxFit.cover,
-                          memCacheWidth: 160,
-                          memCacheHeight: 160,
-                          maxWidthDiskCache: 320,
-                          maxHeightDiskCache: 320,
-                          fadeInDuration: const Duration(milliseconds: 150),
-                          placeholder: (ctx, url) => Container(
-                            width: 52,
-                            height: 52,
-                            color: Theme.of(context).colorScheme.surface,
-                            child: Icon(CupertinoIcons.music_note,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant),
-                          ),
-                          errorWidget: (ctx, url, err) => Container(
-                            width: 52,
-                            height: 52,
-                            color: Theme.of(context).colorScheme.surface,
-                            child: Icon(CupertinoIcons.music_note,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant),
-                          ),
-                        ),
-                        // Animated playing indicator overlay
-                        if (isPlaying)
-                          Container(
-                            width: 52,
-                            height: 52,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .surface
-                                .withValues(alpha: 0.55),
-                            child: _PlayingBars(color: primaryColor),
-                          ),
-                      ],
+
+            // ── Thumbnail ──────────────────────────────────────────────
+            Stack(
+              children: [
+                AppCover(url: thumbUrl, size: 50),
+                if (isPlaying)
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: AppRadius.cover,
+                      ),
+                      child: PlayingBars(color: accent),
                     ),
                   ),
-                  const SizedBox(width: 14),
+              ],
+            ),
+            const SizedBox(width: AppSpacing.md),
 
-                  // ── Title & Artist ─────────────────────────────────────────
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          song.title,
+            // ── Title & Artist ─────────────────────────────────────────
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    song.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.tileTitle(cs).copyWith(
+                      color: isPlaying ? accent : cs.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      _SongDownloadBadge(songId: song.id, color: accent),
+                      Flexible(
+                        child: Text(
+                          song.artist,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: AppText.tileTitle(
-                            Theme.of(context).colorScheme,
-                          ).copyWith(
-                            fontWeight:
-                                isPlaying ? FontWeight.bold : FontWeight.w600,
-                            color: isPlaying
-                                ? primaryColor
-                                : Theme.of(context).colorScheme.onSurface,
-                          ),
+                          style: AppText.tileSubtitle(cs),
                         ),
-                        const SizedBox(height: 3),
-                        Row(
-                          children: [
-                            _SongDownloadBadge(
-                              songId: song.id,
-                              primaryColor: primaryColor,
-                            ),
-                            Expanded(
-                              child: Text(
-                                song.artist,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: AppText.tileSubtitle(
-                                  Theme.of(context).colorScheme,
-                                ),
-                              ),
-                            ),
-                            // Duration — hide if zero
-                            if (song.duration > Duration.zero)
-                              Text(
-                                _formatDuration(song.duration),
-                                style: AppText.caption(
-                                  Theme.of(context).colorScheme,
-                                ).copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant
-                                      .withValues(alpha: 0.7),
-                                ),
-                              ),
-                          ],
+                      ),
+                      // Duration — hide if zero
+                      if (song.duration > Duration.zero)
+                        Text(
+                          '  •  ${_formatDuration(song.duration)}',
+                          style: AppText.tileSubtitle(cs),
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-
-                  // ── More Options ───────────────────────────────────────────
-                  IconButton(
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                    icon: Icon(CupertinoIcons.ellipsis,
-                        size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                    onPressed: () {
-                      PlaybackLogService.instance
-                          .log('UI', 'tile: menu "${song.title}"');
-                      if (onMoreTap != null) {
-                        onMoreTap!();
-                      } else {
-                        _showSongOptionsModal(context);
-                      }
-                    },
+                    ],
                   ),
                 ],
               ),
             ),
-          ),
-        );
-  }
 
-  void _showSongOptionsModal(BuildContext context) {
-    final isDown = StorageService.instance.isDownloaded(song.id);
-    final isFav = StorageService.instance.isFavorite(song.id);
-    final primaryColor = Theme.of(context).colorScheme.primary;
-    // Taken now: the row can leave the screen before an action is chosen.
-    final messenger = ScaffoldMessenger.of(context);
-    final snackColor = Theme.of(context).colorScheme.surface;
-
-    showCupertinoModalPopup(
-      context: context,
-      builder: (ctx) => CupertinoActionSheet(
-        title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        message: Text(song.artist, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
-        actions: [
-          // 1. Preferiti
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              PlaybackLogService.instance
-                  .log('UI', 'tile menu: preferito "${song.title}"');
-              StorageService.instance.toggleFavorite(song);
-            },
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  isFav ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
-                  color: isFav ? primaryColor : Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 8),
-                Text(isFav ? 'Rimuovi dai Preferiti' : 'Aggiungi ai Preferiti'),
-              ],
+            // ── More Options ───────────────────────────────────────────
+            IconButton(
+              tooltip: 'Altro',
+              icon: Icon(AppIcons.more, size: 22, color: cs.onSurfaceVariant),
+              onPressed: () => _openMenu(context),
             ),
-          ),
-
-          // 2. Aggiungi alla coda
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              PlaybackLogService.instance
-                  .log('UI', 'tile menu: aggiungi alla coda "${song.title}"');
-              audioHandler.addToQueue(song);
-              messenger.showSnackBar(
-                SnackBar(
-                  content: Text('Aggiunto alla coda: ${song.title}'),
-                  backgroundColor: snackColor,
-                  behavior: SnackBarBehavior.floating,
-                  duration: const Duration(seconds: 2),
-                ),
-              );
-            },
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.text_badge_plus, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                SizedBox(width: 8),
-                Text('Aggiungi alla Coda'),
-              ],
-            ),
-          ),
-
-          // 3. Riproduci come prossimo
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              PlaybackLogService.instance
-                  .log('UI', 'tile menu: play next "${song.title}"');
-              audioHandler.playNext(song);
-              messenger.showSnackBar(
-                SnackBar(
-                  content: Text('Verrà riprodotto dopo: ${song.title}'),
-                  backgroundColor: snackColor,
-                  behavior: SnackBarBehavior.floating,
-                  duration: const Duration(seconds: 2),
-                ),
-              );
-            },
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.play_arrow, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                SizedBox(width: 8),
-                Text('Riproduci come Prossimo'),
-              ],
-            ),
-          ),
-
-          // Vai all'artista
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              PlaybackLogService.instance
-                  .log('UI', 'tile menu: vai all\'artista "${song.artist}"');
-              ArtistScreen.open(context, audioHandler, song: song);
-            },
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.person_crop_circle, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                SizedBox(width: 8),
-                Text('Vai all\'Artista'),
-              ],
-            ),
-          ),
-
-          // 4. Aggiungi a una Playlist
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              PlaybackLogService.instance
-                  .log('UI', 'tile menu: aggiungi a playlist "${song.title}"');
-              _showAddToPlaylistDialog(context);
-            },
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.music_albums, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                SizedBox(width: 8),
-                Text('Aggiungi a una Playlist'),
-              ],
-            ),
-          ),
-
-          // 5. Download Offline
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              PlaybackLogService.instance.log(
-                'UI',
-                isDown
-                    ? 'tile menu: elimina download "${song.title}"'
-                    : 'tile menu: scarica "${song.title}"',
-              );
-              if (isDown) {
-                DownloadService.instance.deleteDownloadedSong(song.id);
-              } else {
-                DownloadService.instance.downloadSong(song);
-              }
-            },
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  isDown ? CupertinoIcons.trash : CupertinoIcons.arrow_down_circle,
-                  color: isDown ? Theme.of(context).colorScheme.error : primaryColor,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  isDown
-                      ? 'Elimina Download Offline'
-                      : 'Scarica per Ascolto Offline',
-                  style: TextStyle(color: isDown ? Theme.of(context).colorScheme.error : null),
-                ),
-              ],
-            ),
-          ),
-
-          // 6. Fonti audio alternative
-          CupertinoActionSheetAction(
-            onPressed: () {
-              Navigator.pop(ctx);
-              AlternativeSourcesSheet.show(
-                context,
-                song: song,
-                audioHandler: audioHandler,
-              );
-            },
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.tuningfork, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                SizedBox(width: 8),
-                Text('Fonti audio alternative'),
-              ],
-            ),
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          onPressed: () => Navigator.pop(ctx),
-          child: Text('Annulla'),
+          ],
         ),
       ),
     );
+
+    return RepaintBoundary(
+      child: Dismissible(
+        key: ObjectKey(song),
+        direction: onRemove != null
+            ? DismissDirection.horizontal
+            : DismissDirection.startToEnd,
+        dismissThresholds: const {
+          DismissDirection.startToEnd: 0.22,
+          DismissDirection.endToStart: 0.4,
+        },
+        background: _SwipeBackground(
+          color: accent,
+          ink: cs.onPrimary,
+          icon: AppIcons.addToQueue,
+          label: 'In coda',
+          alignment: Alignment.centerLeft,
+        ),
+        secondaryBackground: onRemove == null
+            ? null
+            : _SwipeBackground(
+                color: cs.error,
+                ink: cs.onError,
+                icon: AppIcons.trash,
+                label: 'Rimuovi',
+                alignment: Alignment.centerRight,
+              ),
+        confirmDismiss: (direction) async {
+          if (direction == DismissDirection.endToStart) return onRemove != null;
+          // The row comes back: the swipe only queues the song.
+          HapticFeedback.mediumImpact();
+          PlaybackLogService.instance
+              .log('UI', 'tile swipe: in coda "${song.title}"');
+          audioHandler.addToQueue(song);
+          ScaffoldMessenger.maybeOf(context)
+            ?..hideCurrentSnackBar()
+            ..showSnackBar(const SnackBar(
+              content: Text('Aggiunto in coda'),
+              duration: Duration(milliseconds: 1400),
+            ));
+          return false;
+        },
+        onDismissed: (_) => onRemove?.call(),
+        child: row,
+      ),
+    );
   }
+}
 
-  void _showAddToPlaylistDialog(BuildContext context) {
-    final playlists = StorageService.instance.getPlaylists();
-    // Taken now: the row can leave the screen before a playlist is chosen.
-    final messenger = ScaffoldMessenger.of(context);
-    if (playlists.isEmpty) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text('Nessuna playlist creata. Creane una in Libreria!'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
+class _SwipeBackground extends StatelessWidget {
+  const _SwipeBackground({
+    required this.color,
+    required this.ink,
+    required this.icon,
+    required this.label,
+    required this.alignment,
+  });
 
-    showCupertinoModalPopup(
-      context: context,
-      builder: (ctx) => CupertinoActionSheet(
-        title: Text('Scegli Playlist'),
-        actions: playlists.map((pl) {
-          return CupertinoActionSheetAction(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              PlaybackLogService.instance.log(
-                  'UI', 'tile menu: aggiungo a "${pl.title}"');
-              final added =
-                  await StorageService.instance.addSongToPlaylist(pl.id, song);
-              messenger.showSnackBar(
-                SnackBar(
-                  content: Text(added
-                      ? 'Aggiunto a "${pl.title}"'
-                      : 'Già presente in "${pl.title}"'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            },
-            child: Text(pl.title),
-          );
-        }).toList(),
-        cancelButton: CupertinoActionSheetAction(
-          onPressed: () => Navigator.pop(ctx),
-          child: Text('Annulla'),
-        ),
+  final Color color;
+  final Color ink;
+  final IconData icon;
+  final String label;
+  final Alignment alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: color,
+      alignment: alignment,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: ink, size: 22),
+          const SizedBox(width: AppSpacing.sm),
+          Text(
+            label,
+            style: TextStyle(color: ink, fontWeight: FontWeight.w700, fontSize: 13),
+          ),
+        ],
       ),
     );
   }
@@ -426,12 +240,9 @@ class SongTile extends StatelessWidget {
 
 class _SongDownloadBadge extends StatelessWidget {
   final String songId;
-  final Color primaryColor;
+  final Color color;
 
-  const _SongDownloadBadge({
-    required this.songId,
-    required this.primaryColor,
-  });
+  const _SongDownloadBadge({required this.songId, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -448,7 +259,7 @@ class _SongDownloadBadge extends StatelessWidget {
               child: CircularProgressIndicator(
                 value: progress > 0.05 ? progress : null,
                 strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+                valueColor: AlwaysStoppedAnimation<Color>(color),
               ),
             ),
           );
@@ -458,12 +269,8 @@ class _SongDownloadBadge extends StatelessWidget {
           builder: (context, _, _) {
             if (StorageService.instance.isDownloaded(songId)) {
               return Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: Icon(
-                  CupertinoIcons.arrow_down_circle_fill,
-                  size: 13,
-                  color: primaryColor,
-                ),
+                padding: const EdgeInsets.only(right: 5),
+                child: Icon(AppIcons.downloaded, size: 15, color: color),
               );
             }
             return const SizedBox.shrink();
@@ -474,17 +281,18 @@ class _SongDownloadBadge extends StatelessWidget {
   }
 }
 
-/// Three animated equalizer bars shown while the row's song is playing.
-class _PlayingBars extends StatefulWidget {
+/// Three animated equalizer bars shown where a song is playing.
+class PlayingBars extends StatefulWidget {
   final Color color;
+  final double height;
 
-  const _PlayingBars({required this.color});
+  const PlayingBars({super.key, required this.color, this.height = 18});
 
   @override
-  State<_PlayingBars> createState() => _PlayingBarsState();
+  State<PlayingBars> createState() => _PlayingBarsState();
 }
 
-class _PlayingBarsState extends State<_PlayingBars>
+class _PlayingBarsState extends State<PlayingBars>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
@@ -499,12 +307,14 @@ class _PlayingBarsState extends State<_PlayingBars>
 
   @override
   Widget build(BuildContext context) {
+    final low = widget.height * 0.3;
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, _) {
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: List<Widget>.generate(3, (i) {
             final phase = (_controller.value + i * 0.28) % 1.0;
             final wave = (math.sin(phase * 2 * math.pi) + 1) / 2;
@@ -512,7 +322,7 @@ class _PlayingBarsState extends State<_PlayingBars>
               padding: const EdgeInsets.symmetric(horizontal: 1.5),
               child: Container(
                 width: 3,
-                height: 6 + 13 * wave,
+                height: low + (widget.height - low) * wave,
                 decoration: BoxDecoration(
                   color: widget.color,
                   borderRadius: BorderRadius.circular(2),

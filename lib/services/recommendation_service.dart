@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../models/artist.dart';
 import '../models/song.dart';
 import 'cover_art_service.dart';
 import 'deezer_service.dart';
@@ -162,17 +163,65 @@ class RecommendationService {
     try {
       final artistId = (await DeezerService.instance.artistOf(song))?.id;
       if (artistId == null) return [];
-      final cached = _radioCache[artistId];
-      if (cached != null) return cached;
-
-      final radio = await DeezerService.instance.artistRadio(artistId);
-      if (radio.isNotEmpty) {
-        if (_radioCache.length >= _maxCached) _radioCache.remove(_radioCache.keys.first);
-        _radioCache[artistId] = radio;
-      }
-      return radio;
+      return await _radio(artistId);
     } catch (e) {
       debugPrint('RecommendationService._radioOf: $e');
+      return [];
+    }
+  }
+
+  Future<List<Song>> _radio(String artistId) async {
+    final cached = _radioCache[artistId];
+    if (cached != null) return cached;
+
+    final radio = await DeezerService.instance.artistRadio(artistId);
+    if (radio.isNotEmpty) {
+      if (_radioCache.length >= _maxCached) _radioCache.remove(_radioCache.keys.first);
+      _radioCache[artistId] = radio;
+    }
+    return radio;
+  }
+
+  // ── Mixes of the Home ─────────────────────────────────────────────────────
+
+  /// Keys of the artists [history] says the user plays most, best first.
+  static List<String> topArtistKeys(List<Song> history, {int limit = 6}) {
+    final affinity = artistAffinity(history);
+    return (affinity.keys.toList()
+          ..sort((a, b) => affinity[b]!.compareTo(affinity[a]!)))
+        .take(limit)
+        .toList();
+  }
+
+  /// The artists the user plays most, as the radio catalog knows them: each
+  /// one is the seed of a "Mix" on the Home. Those the catalog does not
+  /// know are left out.
+  Future<List<Artist>> mixArtists(List<Song> history, {int limit = 6}) async {
+    final found = await Future.wait([
+      for (final key in topArtistKeys(history, limit: limit))
+        // The most recent song of each artist identifies it in the catalog.
+        DeezerService.instance
+            .artistOf(history.firstWhere((s) => artistKey(s) == key))
+            .then<Artist?>((artist) => artist)
+            .catchError((Object e) {
+          debugPrint('RecommendationService.mixArtists: $e');
+          return null;
+        }),
+    ]);
+    final seen = <String>{};
+    return [
+      for (final artist in found)
+        if (artist != null && seen.add(artist.id)) artist,
+    ];
+  }
+
+  /// Songs of the mix seeded by [artist] (one of [mixArtists]): its own and
+  /// those of similar artists. Empty when the catalog does not answer.
+  Future<List<Song>> mixOf(Artist artist) async {
+    try {
+      return await _radio(artist.id);
+    } catch (e) {
+      debugPrint('RecommendationService.mixOf: $e');
       return [];
     }
   }

@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'package:audio_service/audio_service.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../models/album.dart';
@@ -16,13 +14,18 @@ import '../../services/storage_service.dart';
 import '../../services/ytmusic_catalog_service.dart';
 import '../../services/spotify_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
-import '../theme/app_ambience.dart';
+import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/app_cover.dart';
 import '../widgets/app_empty_state.dart';
 import '../widgets/app_skeleton.dart';
+import '../widgets/bounce_button.dart';
+import '../widgets/filter_pill.dart';
 import '../widgets/player_sheet.dart';
 import '../widgets/section_header.dart';
+import '../widgets/song_options_sheet.dart';
 import '../widgets/song_tile.dart';
+import '../widgets/top_bar.dart';
 import 'album_screen.dart';
 import 'artist_screen.dart';
 import 'playlist_screen.dart';
@@ -30,22 +33,20 @@ import 'playlist_screen.dart';
 class SearchScreen extends StatefulWidget {
   final AudioPlayerHandler audioHandler;
 
-  /// Called when the user taps the back button before the search bar:
-  /// brings the MainShell back to the Home tab.
-  final VoidCallback? onGoHome;
-
-  const SearchScreen({
-    super.key,
-    required this.audioHandler,
-    this.onGoHome,
-  });
+  const SearchScreen({super.key, required this.audioHandler});
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
 class _SearchScreenState extends State<SearchScreen> {
+  static const String _allKinds = 'Tutto';
+
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+
+  /// Kind of result shown: everything, or one of the pills.
+  String _kind = _allKinds;
   List<Song> _results = [];
   List<Artist> _artistResults = [];
   List<Album> _albumResults = [];
@@ -231,7 +232,17 @@ class _SearchScreenState extends State<SearchScreen> {
   void dispose() {
     _debounce?.cancel();
     _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
+  }
+
+  bool get _searching => _searchController.text.isNotEmpty || _hasSearched;
+
+  void _leaveSearch() {
+    PlaybackLogService.instance.log('UI', 'search: chiudi ricerca');
+    _searchFocus.unfocus();
+    _searchController.clear();
+    _onQueryChanged('');
   }
 
   @override
@@ -241,15 +252,11 @@ class _SearchScreenState extends State<SearchScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          // Ambient aurora: same language as the other tabs, quiet behind
-          // the search content.
           Positioned.fill(
-            child: StreamBuilder<MediaItem?>(
-              stream: widget.audioHandler.mediaItem,
-              builder: (context, snapshot) => AmbientBackdrop(
-                artworkUrl: snapshot.data?.artUri?.toString(),
-                intensity: 0.45,
-              ),
+            child: NowPlayingBackdrop(
+              audioHandler: widget.audioHandler,
+              intensity: 0.6,
+              extent: 0.32,
             ),
           ),
           SafeArea(
@@ -260,125 +267,172 @@ class _SearchScreenState extends State<SearchScreen> {
                 // The title collapses while a search is active: the bar stays,
                 // the header gets out of the way.
                 AnimatedSize(
-                  duration: const Duration(milliseconds: 240),
-                  curve: Curves.easeOutCubic,
+                  duration: AppMotion.base,
+                  curve: AppMotion.standard,
                   alignment: Alignment.topLeft,
-                  child: _searchController.text.isEmpty && !_hasSearched
-                      ? Padding(
-                          padding: const EdgeInsets.fromLTRB(
-                            AppSpacing.lg,
-                            AppSpacing.lg,
-                            AppSpacing.lg,
-                            AppSpacing.md,
-                          ),
-                          child: Text('Cerca', style: AppText.screenTitle(cs)),
-                        )
-                      : const SizedBox(width: double.infinity),
-                ),
-
-                // Search bar with back-to-home button.
-                AnimatedPadding(
-                  duration: const Duration(milliseconds: 240),
-                  curve: Curves.easeOutCubic,
-                  padding: EdgeInsets.fromLTRB(
-                    AppSpacing.lg,
-                    _searchController.text.isEmpty && !_hasSearched
-                        ? 0
-                        : AppSpacing.md,
-                    AppSpacing.lg,
-                    0,
-                  ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'Torna alla Home',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                        icon: Icon(
-                          CupertinoIcons.back,
-                          color: cs.onSurface,
-                          size: 24,
-                        ),
-                        onPressed: () {
-                          FocusScope.of(context).unfocus();
-                          PlaybackLogService.instance
-                              .log('UI', 'search: torna alla Home');
-                          widget.onGoHome?.call();
-                        },
-                      ),
-                      const SizedBox(width: AppSpacing.xs),
-                      Expanded(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: cs.surfaceContainerHigh.withValues(alpha: 0.9),
-                            borderRadius: BorderRadius.circular(AppRadius.md),
-                            border: Border.all(color: cs.outlineVariant),
-                          ),
-                          child: TextField(
-                            controller: _searchController,
-                            onChanged: _onQueryChanged,
-                            onSubmitted: _submitSearch,
-                            textInputAction: TextInputAction.search,
-                            style: TextStyle(
-                              color: cs.onSurface,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            cursorColor: cs.primary,
-                            decoration: InputDecoration(
-                              hintText: 'Cosa vuoi ascoltare?',
-                              hintStyle: TextStyle(
-                                color: cs.onSurfaceVariant,
-                                fontSize: 14,
-                              ),
-                              prefixIcon: Icon(CupertinoIcons.search,
-                                  color: cs.onSurfaceVariant, size: 20),
-                              suffixIcon: _isSearching
-                                  ? Padding(
-                                      padding: const EdgeInsets.all(13),
-                                      child: SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          valueColor:
-                                              AlwaysStoppedAnimation<Color>(
-                                                  cs.primary),
-                                        ),
-                                      ),
-                                    )
-                                  : _searchController.text.isNotEmpty
-                                      ? IconButton(
-                                          icon: Icon(
-                                            CupertinoIcons.clear_circled_solid,
-                                            color: cs.onSurfaceVariant,
-                                            size: 20,
-                                          ),
-                                          onPressed: () {
-                                            _searchController.clear();
-                                            _onQueryChanged('');
-                                          },
-                                        )
-                                      : null,
-                              border: InputBorder.none,
-                              contentPadding:
-                                  const EdgeInsets.symmetric(vertical: 14),
+                  child: _searching
+                      ? const SizedBox(width: double.infinity, height: AppSpacing.sm)
+                      : SizedBox(
+                          height: TopBar.height,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: AppSpacing.lg),
+                            child: Row(
+                              children: [
+                                const ProfileButton(),
+                                const SizedBox(width: AppSpacing.md),
+                                Text(
+                                  'Cerca',
+                                  style: AppText.screenTitle(cs).copyWith(fontSize: 22),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
                 ),
-
-                const SizedBox(height: AppSpacing.lg),
-
-                // Search results / Browse / Recent searches.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.lg, AppSpacing.xs, AppSpacing.lg, 0),
+                  child: _buildSearchField(cs),
+                ),
+                if (_hasResults) _buildResultFilters(),
+                const SizedBox(height: AppSpacing.sm),
                 Expanded(child: _buildBody()),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// The field is light, like a sheet of paper on the dark page: it is the
+  /// one thing this tab is for.
+  Widget _buildSearchField(ColorScheme cs) {
+    const ink = Color(0xFF121212);
+    const hint = Color(0xFF5E5E5E);
+    return Container(
+      height: 46,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Row(
+        children: [
+          if (_searching)
+            IconButton(
+              tooltip: 'Chiudi la ricerca',
+              icon: const Icon(AppIcons.back, color: ink, size: 19),
+              onPressed: _leaveSearch,
+            )
+          else
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              child: Icon(AppIcons.search, color: ink, size: 24),
+            ),
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              focusNode: _searchFocus,
+              onChanged: _onQueryChanged,
+              onSubmitted: _submitSearch,
+              textInputAction: TextInputAction.search,
+              autocorrect: false,
+              style: const TextStyle(
+                color: ink,
+                fontSize: 15.5,
+                fontWeight: FontWeight.w600,
+              ),
+              cursorColor: ink,
+              decoration: const InputDecoration(
+                isCollapsed: true,
+                hintText: 'Cosa vuoi ascoltare?',
+                hintStyle: TextStyle(
+                  color: hint,
+                  fontSize: 15.5,
+                  fontWeight: FontWeight.w500,
+                ),
+                border: InputBorder.none,
+              ),
+            ),
+          ),
+          if (_isSearching)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 14),
+              child: CupertinoActivityIndicator(color: ink, radius: 9),
+            )
+          else if (_searchController.text.isNotEmpty)
+            IconButton(
+              tooltip: 'Cancella',
+              icon: const Icon(AppIcons.clear, color: hint, size: 20),
+              onPressed: () {
+                _searchController.clear();
+                _onQueryChanged('');
+                _searchFocus.requestFocus();
+              },
+            )
+          else
+            const SizedBox(width: AppSpacing.md),
+        ],
+      ),
+    );
+  }
+
+  bool get _hasResults =>
+      _results.isNotEmpty || _artistResults.isNotEmpty || _albumResults.isNotEmpty;
+
+  List<Playlist> get _playlistMatches {
+    final query = _searchController.text.trim().toLowerCase();
+    if (query.isEmpty) return const [];
+    return StorageService.instance
+        .getPlaylists()
+        .where((p) => p.title.toLowerCase().contains(query))
+        .take(5)
+        .toList();
+  }
+
+  List<SpotifyCategoryItem> get _categoryMatches {
+    final query = _searchController.text.trim().toLowerCase();
+    if (query.isEmpty) return const [];
+    return SpotifyCatalogService.instance.browseCategories
+        .where((c) => c.title.toLowerCase().contains(query))
+        .take(5)
+        .toList();
+  }
+
+  /// The kinds of result the search actually found, "all" first.
+  List<String> get _kinds => [
+        _allKinds,
+        if (_results.isNotEmpty) 'Brani',
+        if (_artistResults.isNotEmpty) 'Artisti',
+        if (_albumResults.isNotEmpty) 'Album',
+        if (_playlistMatches.isNotEmpty || _categoryMatches.isNotEmpty) 'Playlist',
+      ];
+
+  /// The kind being shown: a kind that a new search no longer has cannot
+  /// stay selected.
+  String get _activeKind => _kinds.contains(_kind) ? _kind : _allKinds;
+
+  /// One pill per kind of result.
+  Widget _buildResultFilters() {
+    final kinds = _kinds;
+    final selected = _activeKind;
+
+    return SizedBox(
+      height: 46,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.md, AppSpacing.lg, 0),
+        itemCount: kinds.length,
+        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+        itemBuilder: (context, index) => FilterPill(
+          label: kinds[index],
+          selected: kinds[index] == selected,
+          onTap: () {
+            PlaybackLogService.instance.log('UI', 'search: filtro "${kinds[index]}"');
+            setState(() => _kind = kinds[index]);
+          },
+        ),
       ),
     );
   }
@@ -391,22 +445,13 @@ class _SearchScreenState extends State<SearchScreen> {
       );
     }
 
-    if (_results.isNotEmpty || _artistResults.isNotEmpty || _albumResults.isNotEmpty) {
-      final query = _searchController.text.trim().toLowerCase();
-      final userPlaylists = query.isEmpty
-          ? const <Playlist>[]
-          : StorageService.instance
-              .getPlaylists()
-              .where((p) => p.title.toLowerCase().contains(query))
-              .take(5)
-              .toList();
-      final categories = query.isEmpty
-          ? const <SpotifyCategoryItem>[]
-          : SpotifyCatalogService.instance.browseCategories
-              .where((c) => c.title.toLowerCase().contains(query))
-              .take(5)
-              .toList();
+    if (_hasResults) {
+      final userPlaylists = _playlistMatches;
+      final categories = _categoryMatches;
       final playlistMatches = userPlaylists.length + categories.length;
+      final kind = _activeKind;
+      final all = kind == _allKinds;
+      bool visible(String wanted) => all || kind == wanted;
 
       return ValueListenableBuilder<(String?, bool)>(
         valueListenable: widget.audioHandler.playbackIndicator,
@@ -414,120 +459,159 @@ class _SearchScreenState extends State<SearchScreen> {
           final currentId = indicator.$2 ? indicator.$1 : null;
 
           return CustomScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             physics: const BouncingScrollPhysics(
                 parent: AlwaysScrollableScrollPhysics()),
             slivers: [
-              if (_artistResults.isNotEmpty) ...[
-                const SliverToBoxAdapter(
-                  child: SectionHeader(
-                    'Artisti',
-                    padding: EdgeInsets.fromLTRB(
-                        AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.md),
+              if (visible('Artisti') && _artistResults.isNotEmpty) ...[
+                if (all)
+                  const SliverToBoxAdapter(
+                    child: SectionHeader(
+                      'Artisti',
+                      padding: EdgeInsets.fromLTRB(
+                          AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.md),
+                    ),
                   ),
-                ),
-                SliverToBoxAdapter(
-                  child: SizedBox(
-                    height: 148,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                      itemCount: _artistResults.length,
-                      separatorBuilder: (_, _) =>
-                          const SizedBox(width: AppSpacing.md),
-                      itemBuilder: (context, index) => ArtistChip(
-                        artist: _artistResults[index],
-                        onTap: () => ArtistScreen.open(
-                          context,
-                          widget.audioHandler,
+                if (all)
+                  SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: ArtistChip.rowHeight,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                        itemCount: _artistResults.length,
+                        separatorBuilder: (_, _) =>
+                            const SizedBox(width: AppSpacing.lg),
+                        itemBuilder: (context, index) => ArtistChip(
                           artist: _artistResults[index],
+                          onTap: () => ArtistScreen.open(
+                            context,
+                            widget.audioHandler,
+                            artist: _artistResults[index],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-              ],
-              if (_results.isNotEmpty)
-                const SliverToBoxAdapter(
-                  child: SectionHeader(
-                    'Brani',
-                    padding: EdgeInsets.fromLTRB(
-                        AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
-                  ),
-                ),
-              SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final song = _results[index];
-                    final isPlaying = currentId == song.id;
-
-                    return SongTile(
-                      song: song,
-                      isPlaying: isPlaying,
-                      onTap: () {
-                        widget.audioHandler.playSong(song, queue: _results);
-                        PlayerSheet.show(context, widget.audioHandler);
+                  )
+                else
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final artist = _artistResults[index];
+                        return _ResultTile(
+                          title: artist.name,
+                          subtitle: artist.audience.isEmpty
+                              ? 'Artista'
+                              : 'Artista • ${artist.audience}',
+                          coverUrl: artist.imageUrl,
+                          icon: AppIcons.artist,
+                          round: true,
+                          onTap: () => ArtistScreen.open(
+                            context,
+                            widget.audioHandler,
+                            artist: artist,
+                          ),
+                        );
                       },
-                    );
-                  },
-                  childCount: _results.length,
-                ),
-              ),
-              if (_albumResults.isNotEmpty) ...[
-                const SliverToBoxAdapter(
-                  child: SectionHeader(
-                    'Album, singoli ed EP',
-                    padding: EdgeInsets.fromLTRB(
-                        AppSpacing.lg, AppSpacing.xl, AppSpacing.lg, AppSpacing.md),
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: SizedBox(
-                    height: 206,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                      itemCount: _albumResults.length,
-                      separatorBuilder: (_, _) =>
-                          const SizedBox(width: AppSpacing.md),
-                      itemBuilder: (context, index) => AlbumCard(
-                        album: _albumResults[index],
-                        onTap: () => AlbumScreen.open(
-                          context,
-                          widget.audioHandler,
-                          _albumResults[index],
-                        ),
-                      ),
+                      childCount: _artistResults.length,
                     ),
+                  ),
+              ],
+              if (visible('Brani') && _results.isNotEmpty) ...[
+                if (all)
+                  const SliverToBoxAdapter(
+                    child: SectionHeader(
+                      'Brani',
+                      padding: EdgeInsets.fromLTRB(
+                          AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.sm),
+                    ),
+                  ),
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final song = _results[index];
+                      return SongTile(
+                        song: song,
+                        isPlaying: currentId == song.id,
+                        onTap: () {
+                          widget.audioHandler.playSong(song, queue: _results);
+                          PlayerSheet.show(context, widget.audioHandler);
+                        },
+                      );
+                    },
+                    childCount: _results.length,
                   ),
                 ),
               ],
-              if (playlistMatches > 0) ...[
-                const SliverToBoxAdapter(
-                  child: SectionHeader(
-                    'Playlist',
-                    padding: EdgeInsets.fromLTRB(
-                        AppSpacing.lg, AppSpacing.xl, AppSpacing.lg, 0),
+              if (visible('Album') && _albumResults.isNotEmpty) ...[
+                if (all)
+                  const SliverToBoxAdapter(
+                      child: SectionHeader('Album, singoli ed EP')),
+                if (all)
+                  SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: AlbumCard.rowHeight,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                        itemCount: _albumResults.length,
+                        separatorBuilder: (_, _) =>
+                            const SizedBox(width: AppSpacing.lg),
+                        itemBuilder: (context, index) => AlbumCard(
+                          album: _albumResults[index],
+                          onTap: () => AlbumScreen.open(
+                            context,
+                            widget.audioHandler,
+                            _albumResults[index],
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final album = _albumResults[index];
+                        return _ResultTile(
+                          title: album.title,
+                          subtitle: [
+                            album.caption,
+                            if (album.artist.isNotEmpty) album.artist,
+                          ].join(' • '),
+                          coverUrl: album.coverUrl,
+                          icon: AppIcons.album,
+                          onTap: () => AlbumScreen.open(
+                            context,
+                            widget.audioHandler,
+                            album,
+                          ),
+                        );
+                      },
+                      childCount: _albumResults.length,
+                    ),
                   ),
-                ),
+              ],
+              if (visible('Playlist') && playlistMatches > 0) ...[
+                if (all) const SliverToBoxAdapter(child: SectionHeader('Playlist')),
                 SliverList(
                   delegate: SliverChildBuilderDelegate(
                     (context, index) {
                       if (index < userPlaylists.length) {
                         final playlist = userPlaylists[index];
-                        return _PlaylistMatchTile(
+                        return _ResultTile(
                           title: playlist.title,
-                          subtitle:
-                              'Playlist \u2022 ${playlist.songs.length} brani',
-                          coverUrl: _playlistMatchCover(playlist),
-                          icon: CupertinoIcons.music_albums,
+                          subtitle: 'Playlist • ${playlist.songs.length} brani',
+                          coverUrl: playlistCoverUrl(playlist),
+                          icon: AppIcons.playlist,
                           onTap: () {
                             PlaybackLogService.instance.log('UI',
                                 'search: apri playlist "${playlist.title}"');
                             Navigator.push(
                               context,
-                              CupertinoPageRoute(
+                              CupertinoPageRoute<void>(
                                 builder: (_) => PlaylistScreen(
                                   playlist: playlist,
                                   audioHandler: widget.audioHandler,
@@ -537,13 +621,12 @@ class _SearchScreenState extends State<SearchScreen> {
                           },
                         );
                       }
-                      final category =
-                          categories[index - userPlaylists.length];
-                      return _PlaylistMatchTile(
+                      final category = categories[index - userPlaylists.length];
+                      return _ResultTile(
                         title: category.title,
-                        subtitle: 'Playlist Spotify',
+                        subtitle: 'Playlist • Spotify',
                         coverUrl: category.coverUrl,
-                        icon: CupertinoIcons.news,
+                        icon: AppIcons.playlist,
                         onTap: () => _openCategory(category),
                       );
                     },
@@ -561,7 +644,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
     if (_hasSearched) {
       return const AppEmptyState(
-        icon: CupertinoIcons.search,
+        icon: AppIcons.search,
         title: 'Nessun risultato',
         subtitle: 'Prova con un altro titolo o artista.',
       );
@@ -570,12 +653,51 @@ class _SearchScreenState extends State<SearchScreen> {
     return _buildBrowseAllView();
   }
 
-  /// Spotify "Sfoglia tutto" view with tilted album artwork cards
+  /// What the tab shows before a search: the last searches, a few ideas,
+  /// and the genres to browse.
   Widget _buildBrowseAllView() {
     final categories = SpotifyCatalogService.instance.browseCategories;
     final cs = Theme.of(context).colorScheme;
 
+    Widget chip(String query, {IconData? icon}) => GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            PlaybackLogService.instance.log('UI', 'search: chip "$query"');
+            _searchController.text = query;
+            _submitSearch(query);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 7),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.1),
+              borderRadius: AppRadius.chip,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 15, color: cs.onSurfaceVariant),
+                  const SizedBox(width: 6),
+                ],
+                Flexible(
+                  child: Text(
+                    query,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: cs.onSurface,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+
     return CustomScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       physics: const BouncingScrollPhysics(),
       slivers: [
         if (_recentSearches.isNotEmpty) ...[
@@ -583,11 +705,14 @@ class _SearchScreenState extends State<SearchScreen> {
             child: SectionHeader(
               'Ricerche recenti',
               padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg, AppSpacing.sm, AppSpacing.sm, AppSpacing.xs),
-              trailing: TextButton(
-                onPressed: _clearRecentSearches,
-                child: Text('Cancella',
-                    style: AppText.caption(cs).copyWith(color: cs.primary)),
+                  AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.md),
+              trailing: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _clearRecentSearches,
+                child: Text(
+                  'Cancella',
+                  style: AppText.caption(cs).copyWith(fontWeight: FontWeight.w700),
+                ),
               ),
             ),
           ),
@@ -597,159 +722,96 @@ class _SearchScreenState extends State<SearchScreen> {
               child: Wrap(
                 spacing: AppSpacing.sm,
                 runSpacing: AppSpacing.sm,
-                children: _recentSearches.map((query) {
-                  return ActionChip(
-                    avatar: Icon(CupertinoIcons.time,
-                        size: 14, color: cs.onSurfaceVariant),
-                    label: Text(query),
-                    backgroundColor: cs.surfaceContainerHigh,
-                    labelStyle: TextStyle(
-                      color: cs.onSurface,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: AppRadius.chip),
-                    side: BorderSide(color: cs.outlineVariant),
-                    onPressed: () {
-                      PlaybackLogService.instance
-                          .log('UI', 'search: chip "$query"');
-                      _searchController.text = query;
-                      _submitSearch(query);
-                    },
-                  );
-                }).toList(),
+                children: [
+                  for (final query in _recentSearches)
+                    chip(query, icon: AppIcons.history),
+                ],
               ),
             ),
           ),
         ],
-
-        // Suggested searches row
+        const SliverToBoxAdapter(
+          child: SectionHeader(
+            'Prova a cercare',
+            padding: EdgeInsets.fromLTRB(
+                AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.md),
+          ),
+        ),
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.lg, vertical: AppSpacing.xs),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
             child: Wrap(
               spacing: AppSpacing.sm,
               runSpacing: AppSpacing.sm,
-              children: _suggestedQueries.map((query) {
-                return ActionChip(
-                  label: Text(query),
-                  backgroundColor: cs.surfaceContainerHigh,
-                  labelStyle: TextStyle(
-                    color: cs.onSurface,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: AppRadius.chip),
-                  side: BorderSide(color: cs.outlineVariant),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.xs, vertical: 2),
-                  onPressed: () {
-                    _searchController.text = query;
-                    _submitSearch(query);
-                  },
-                );
-              }).toList(),
+              children: [for (final query in _suggestedQueries) chip(query)],
             ),
           ),
         ),
-
-        const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
-
-        // Section Title: "Sfoglia tutto"
-        const SliverToBoxAdapter(
-          child: SectionHeader(
-            'Sfoglia tutto',
-            padding: EdgeInsets.fromLTRB(
-                AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.sm),
-          ),
-        ),
-
-        // 2-Column Grid of Spotify Category Cards with Tilted Artwork
+        const SliverToBoxAdapter(child: SectionHeader('Sfoglia tutto')),
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg, AppSpacing.xs, AppSpacing.lg, 120),
+              AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.bottomContentInset),
           sliver: SliverGrid.count(
             crossAxisCount: 2,
             mainAxisSpacing: AppSpacing.md,
             crossAxisSpacing: AppSpacing.md,
-            childAspectRatio: 1.65,
-            children:
-                categories.map((cat) => _buildSpotifyCategoryCard(cat)).toList(),
+            childAspectRatio: 1.7,
+            children: categories.map(_buildCategoryCard).toList(),
           ),
         ),
       ],
     );
   }
 
-  /// The Spotify-signature category card with tilted cover peeking from bottom right
-  Widget _buildSpotifyCategoryCard(SpotifyCategoryItem category) {
-    return GestureDetector(
-      onTap: () => _openCategory(category),
+  /// Card of a genre: its color, its name, and a cover leaning out of the
+  /// bottom right corner.
+  Widget _buildCategoryCard(SpotifyCategoryItem category) {
+    return BounceButton(
+      onPressed: () => _openCategory(category),
       child: Container(
         decoration: BoxDecoration(
           color: category.color,
           borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.28),
-              blurRadius: 16,
-              offset: const Offset(0, 8),
-            ),
-          ],
         ),
         clipBehavior: Clip.antiAlias,
         child: Stack(
           children: [
-            // Category Title on Top-Left
             Positioned(
-              top: 12,
-              left: 12,
-              right: 48,
+              top: AppSpacing.md,
+              left: AppSpacing.md,
+              right: 52,
               child: Text(
                 category.title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 16,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w800,
                   letterSpacing: -0.3,
-                  color: Theme.of(context).colorScheme.onSurface,
+                  height: 1.15,
+                  color: Colors.white,
                 ),
               ),
             ),
-
-            // Tilted Album Cover Peeking from Bottom Right (Signature Spotify Design)
             Positioned(
-              bottom: -5,
-              right: -15,
+              bottom: -6,
+              right: -16,
               child: Transform.rotate(
-                angle: 25 * (math.pi / 180), // 25 degree clockwise tilt
-                child: Container(
+                angle: 25 * (math.pi / 180),
+                child: DecoratedBox(
                   decoration: BoxDecoration(
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.4),
-                        blurRadius: 10,
-                        offset: const Offset(-2, 4),
+                        color: Colors.black.withValues(alpha: 0.35),
+                        blurRadius: 8,
+                        offset: const Offset(-2, 3),
                       ),
                     ],
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(AppRadius.xs),
-                    child: CachedNetworkImage(
-                      imageUrl: category.coverUrl,
-                      width: 68,
-                      height: 68,
-                      fit: BoxFit.cover,
-                      memCacheWidth: 140,
-                      memCacheHeight: 140,
-                      placeholder: (_, _) => Container(color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.26)),
-                      errorWidget: (_, _, _) => Container(color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.26)),
-                    ),
+                  child: AppCover(
+                    url: category.coverUrl,
+                    size: 70,
+                    icon: AppIcons.playlist,
                   ),
                 ),
               ),
@@ -761,75 +823,61 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 }
 
-/// Playlist row used by the search results: works for both the user's own
-/// playlists and the Spotify browse categories.
-class _PlaylistMatchTile extends StatelessWidget {
-  const _PlaylistMatchTile({
+/// Row of a search result that is not a song: an artist, a release, a
+/// playlist.
+class _ResultTile extends StatelessWidget {
+  const _ResultTile({
     required this.title,
     required this.subtitle,
     required this.coverUrl,
     required this.icon,
     required this.onTap,
+    this.round = false,
   });
 
   final String title;
   final String subtitle;
   final String? coverUrl;
   final IconData icon;
+  final bool round;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return ListTile(
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 2),
-      leading: ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-        child: SizedBox(
-          width: 52,
-          height: 52,
-          child: (coverUrl != null && coverUrl!.isNotEmpty)
-              ? CachedNetworkImage(
-                  imageUrl: coverUrl!,
-                  fit: BoxFit.cover,
-                  memCacheWidth: 140,
-                  memCacheHeight: 140,
-                  placeholder: (_, _) => _placeholder(cs),
-                  errorWidget: (_, _, _) => _placeholder(cs),
-                )
-              : _placeholder(cs),
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 7),
+        child: Row(
+          children: [
+            AppCover(url: coverUrl, size: 50, circle: round, icon: icon),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.tileTitle(cs),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.tileSubtitle(cs),
+                  ),
+                ],
+              ),
+            ),
+            Icon(AppIcons.chevronRight, color: cs.onSurfaceVariant, size: 22),
+          ],
         ),
       ),
-      title: Text(
-        title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: AppText.tileTitle(cs),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: AppText.caption(cs),
-      ),
-      trailing: Icon(CupertinoIcons.chevron_right,
-          color: cs.onSurfaceVariant, size: 16),
-      onTap: onTap,
     );
   }
-
-  Widget _placeholder(ColorScheme cs) => ColoredBox(
-        color: cs.surfaceContainerHigh,
-        child: Icon(icon, color: cs.onSurfaceVariant, size: 24),
-      );
-}
-
-/// Best available cover for a playlist match: official cover, then the first
-/// song thumbnail.
-String? _playlistMatchCover(Playlist p) {
-  if (p.thumbnailUrl != null && p.thumbnailUrl!.isNotEmpty) {
-    return p.thumbnailUrl;
-  }
-  final withThumb = p.songs.where((s) => s.thumbnailUrl.isNotEmpty);
-  if (withThumb.isNotEmpty) return withThumb.first.thumbnailUrl;
-  return null;
 }

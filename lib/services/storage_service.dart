@@ -58,7 +58,7 @@ class StorageService {
   final ValueNotifier<List<Song>> downloadsNotifier = ValueNotifier<List<Song>>([]);
   final ValueNotifier<List<Artist>> followedArtistsNotifier = ValueNotifier<List<Artist>>([]);
   final ValueNotifier<Color> accentColorNotifier =
-      ValueNotifier<Color>(const Color(0xFFFF2A54));
+      ValueNotifier<Color>(const Color(defaultAccentColor));
 
   Future<void> init() async {
     final appDir = await getApplicationDocumentsDirectory();
@@ -78,8 +78,21 @@ class StorageService {
     _lyricsBox = await _openBoxSafe(_lyricsBoxName);
 
     await _forgetSourceChoicesOnce();
+    _removeLockScreenExperiment();
     _loadInitialData();
     _findSavedCanvases();
+  }
+
+  /// The removed "keep the lock screen player" experiment left a setting
+  /// and a file of silence behind.
+  void _removeLockScreenExperiment() {
+    try {
+      _settingsBox.delete('keep_lock_screen_player');
+      final silence = File('$_documentsPath/silenzio.wav');
+      if (silence.existsSync()) silence.deleteSync();
+    } catch (e) {
+      debugPrint('StorageService._removeLockScreenExperiment: $e');
+    }
   }
 
   void _findSavedCanvases() {
@@ -453,8 +466,6 @@ class StorageService {
 
   static const String _canvasSuffix = '.canvas.mp4';
 
-  String get documentsPath => _documentsPath;
-
   String get downloadsPath => '$_documentsPath/downloads';
 
   Future<String> getLocalAudioPath(String songId) async =>
@@ -601,7 +612,7 @@ class StorageService {
     await _downloadsBox.clear();
   }
 
-  static const int defaultAccentColor = 0xFFFF2A54;
+  static const int defaultAccentColor = 0xFF1ED760;
 
   Color get accentColor {
     final val = _settingsBox.get('accent_color', defaultValue: defaultAccentColor);
@@ -620,6 +631,10 @@ class StorageService {
   bool get isAmoledTheme => _settingsBox.get('amoled_theme', defaultValue: false) as bool;
   Future<void> setAmoledTheme(bool value) async => _settingsBox.put('amoled_theme', value);
 
+  /// Whether the Library shows covers in a grid instead of rows.
+  bool get libraryGrid => _settingsBox.get('library_grid', defaultValue: false) as bool? ?? false;
+  Future<void> setLibraryGrid(bool value) async => _settingsBox.put('library_grid', value);
+
   bool get hasSeenLogin => _settingsBox.get('has_seen_login', defaultValue: false) as bool;
   Future<void> setHasSeenLogin(bool value) async => _settingsBox.put('has_seen_login', value);
 
@@ -627,13 +642,6 @@ class StorageService {
       _settingsBox.get('canvas_enabled', defaultValue: true) as bool? ?? true;
   Future<void> setCanvasEnabled(bool value) async =>
       _settingsBox.put('canvas_enabled', value);
-
-  /// Experimental: keep the app awake while paused, so that iOS does not
-  /// take the player off the lock screen after a few minutes.
-  bool get keepsLockScreenPlayer =>
-      _settingsBox.get('keep_lock_screen_player', defaultValue: false) as bool? ?? false;
-  Future<void> setKeepsLockScreenPlayer(bool value) async =>
-      _settingsBox.put('keep_lock_screen_player', value);
 
   /// Whether the Canvas video of a song is saved when the song is downloaded.
   bool get savesCanvasWithDownloads =>

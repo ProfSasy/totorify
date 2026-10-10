@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 
+/// Shrinks its child slightly while it is pressed: the touch is answered
+/// before the action is.
 class BounceButton extends StatefulWidget {
   final Widget child;
   final VoidCallback? onPressed;
   final VoidCallback? onLongPress;
   final double scaleDown;
-  final Duration duration;
   final HitTestBehavior behavior;
 
   const BounceButton({
@@ -13,8 +14,7 @@ class BounceButton extends StatefulWidget {
     required this.child,
     this.onPressed,
     this.onLongPress,
-    this.scaleDown = 0.9,
-    this.duration = const Duration(milliseconds: 150),
+    this.scaleDown = 0.96,
     this.behavior = HitTestBehavior.opaque,
   });
 
@@ -24,25 +24,18 @@ class BounceButton extends StatefulWidget {
 
 class _BounceButtonState extends State<BounceButton>
     with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 90),
+    reverseDuration: const Duration(milliseconds: 180),
+  );
+  late final Animation<double> _curve = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeOut,
+    reverseCurve: Curves.easeOutCubic,
+  );
 
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: widget.duration,
-      reverseDuration: widget.duration,
-    );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: widget.scaleDown).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeOutCubic,
-      ),
-    );
-  }
+  bool get _enabled => widget.onPressed != null || widget.onLongPress != null;
 
   @override
   void dispose() {
@@ -50,36 +43,24 @@ class _BounceButtonState extends State<BounceButton>
     super.dispose();
   }
 
-  void _onTapDown(TapDownDetails details) {
-    if (widget.onPressed != null || widget.onLongPress != null) {
-      _controller.forward();
-    }
-  }
-
-  void _onTapUp(TapUpDetails details) {
-    _controller.reverse();
-    widget.onPressed?.call();
-  }
-
-  void _onTapCancel() {
-    _controller.reverse();
-  }
-
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: widget.behavior,
-      onTapDown: _onTapDown,
-      onTapUp: _onTapUp,
-      onTapCancel: _onTapCancel,
-      onLongPress: () {
-        widget.onLongPress?.call();
-        _controller.reverse();
-      },
+      onTapDown: _enabled ? (_) => _controller.forward() : null,
+      onTapUp: _enabled ? (_) => _controller.reverse() : null,
+      onTapCancel: _enabled ? _controller.reverse : null,
+      onTap: widget.onPressed,
+      onLongPress: widget.onLongPress == null
+          ? null
+          : () {
+              _controller.reverse();
+              widget.onLongPress!();
+            },
       child: AnimatedBuilder(
-        animation: _scaleAnimation,
+        animation: _curve,
         builder: (context, child) => Transform.scale(
-          scale: _scaleAnimation.value,
+          scale: 1 - (1 - widget.scaleDown) * _curve.value,
           child: child,
         ),
         child: widget.child,

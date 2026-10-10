@@ -1,7 +1,5 @@
 import 'dart:async';
 
-import 'package:audio_service/audio_service.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../services/audio_handler.dart';
@@ -13,9 +11,10 @@ import '../../services/storage_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
 import '../../services/ytmusic_service.dart';
 import 'spotify_web_login_screen.dart';
-import '../theme/app_ambience.dart';
+import '../theme/app_icons.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/app_cover.dart';
 import 'playback_log_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -38,7 +37,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isAmoled = false;
   bool _hasSpDcCookie = false;
   bool _savesCanvas = true;
-  bool _keepsLockScreen = false;
 
   String? _userName;
   String? _userEmail;
@@ -51,7 +49,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _isHighQuality = StorageService.instance.isHighQuality;
     _isAmoled = StorageService.instance.isAmoledTheme;
     _savesCanvas = StorageService.instance.savesCanvasWithDownloads;
-    _keepsLockScreen = StorageService.instance.keepsLockScreenPlayer;
     _loadStorageSize();
     _loadUserInfo();
     // This screen lives for the whole session: the figure must follow the
@@ -66,8 +63,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _openSpotifyLogin() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<bool>(builder: (_) => const SpotifyWebLoginScreen()),
+    // Full screen, above the tabs: the page is a web login.
+    await Navigator.of(context, rootNavigator: true).push(
+      CupertinoPageRoute<bool>(builder: (_) => const SpotifyWebLoginScreen()),
     );
     _onSpotifyLoginChanged();
   }
@@ -104,27 +102,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Impostazioni',
-            style: AppText.screenTitle(Theme.of(context).colorScheme)),
+        titleSpacing: 0,
+        title: Text(
+          'Impostazioni',
+          style: AppText.screenTitle(Theme.of(context).colorScheme)
+              .copyWith(fontSize: 20),
+        ),
       ),
-      body: Stack(
-        children: [
-          // Ambient aurora: same language as the other tabs, kept very quiet
-          // behind the settings rows.
-          Positioned.fill(
-            child: StreamBuilder<MediaItem?>(
-              stream: widget.audioHandler.mediaItem,
-              builder: (context, snapshot) => AmbientBackdrop(
-                artworkUrl: snapshot.data?.artUri?.toString(),
-                intensity: 0.4,
-              ),
-            ),
-          ),
-          ListView(
+      body: ListView(
             padding: const EdgeInsets.only(left: 16, right: 16, top: 12, bottom: AppSpacing.bottomContentInset),
             children: [
               // ── Account Google ──────────────────────────────────────────────────
-              _buildSectionHeader('ACCOUNT'),
+              _buildSectionHeader('Account'),
               _buildCardContainer([
                 ListenableBuilder(
                   listenable: AuthService.instance,
@@ -133,7 +122,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     return isSignedIn
                         ? _buildAccountTile(primaryColor)
                         : ListTile(
-                            leading: Icon(CupertinoIcons.person_circle,
+                            leading: Icon(AppIcons.account,
                                 color: Theme.of(context).colorScheme.onSurfaceVariant, size: 44),
                             title: Text('Non connesso'),
                             subtitle: Text('Accedi per sbloccare la riproduzione completa',
@@ -157,7 +146,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 20),
 
               // ── Audio & Streaming ─────────────────────────────────────────────
-              _buildSectionHeader('AUDIO & STREAMING'),
+              _buildSectionHeader('Audio e riproduzione'),
               _buildCardContainer([
                 SwitchListTile.adaptive(
                   title: Text('Qualità audio alta'),
@@ -182,9 +171,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     final isCanvasEnabled =
                         CanvasService.instance.isCanvasEnabledNotifier.value;
                     return SwitchListTile.adaptive(
-                      title: Text('Canvas Spotify (Video in Loop)'),
+                      title: Text('Canvas'),
                       subtitle: Text(
-                          'Mostra elementi visivi e video brevi in loop durante l\'ascolto come su Spotify'),
+                          'Il breve video in loop del brano, al posto della copertina nel player'),
                       value: isCanvasEnabled,
                       activeTrackColor: primaryColor,
                       onChanged: (val) {
@@ -195,32 +184,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   },
                 ),
-                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
-                SwitchListTile.adaptive(
-                  title: Text('Tieni il player sulla schermata di blocco'),
-                  subtitle: Text(
-                      'Sperimentale. In pausa l\'app resta sveglia fino a un\'ora, '
-                      'così iOS non toglie il player. Consuma un po\' di batteria.'),
-                  value: _keepsLockScreen,
-                  activeTrackColor: primaryColor,
-                  onChanged: (val) {
-                    PlaybackLogService.instance
-                        .log('UI', 'settings: tieni il player sulla schermata di blocco = $val');
-                    setState(() => _keepsLockScreen = val);
-                    StorageService.instance.setKeepsLockScreenPlayer(val);
-                  },
-                ),
               ]),
 
               const SizedBox(height: 20),
 
               // ── Aspetto & Tema (Personalizzazione Colori) ─────────────────────
-              _buildSectionHeader('ASPETTO & TEMA'),
+              _buildSectionHeader('Aspetto'),
               _buildCardContainer([
                 SwitchListTile.adaptive(
-                  title: Text('Nero Assoluto (AMOLED)'),
+                  title: Text('Nero assoluto'),
                   subtitle: Text(
-                      'Ottimizzato per schermi OLED iPhone — risparmia batteria'),
+                      'Sfondo completamente nero, per gli schermi OLED'),
                   value: _isAmoled,
                   activeTrackColor: primaryColor,
                   onChanged: (val) {
@@ -236,10 +210,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Colore Accento dell\'App',
+                      Text('Colore dell\'app',
                           style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                       const SizedBox(height: 4),
-                      Text('Scegli il tuo colore preferito per l\'intera interfaccia',
+                      Text('Per i pulsanti e le selezioni. Il player prende invece i colori della copertina.',
                           style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
                       const SizedBox(height: 14),
                       ValueListenableBuilder<Color>(
@@ -285,7 +259,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     ),
                                     child: isSelected
                                         ? Icon(
-                                            CupertinoIcons.checkmark,
+                                            AppIcons.check,
                                             size: 18,
                                             color: AppTheme.inkOn(color),
                                           )
@@ -305,17 +279,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 20),
 
               // ── Spotify ───────────────────────────────────────────────────────
-              _buildSectionHeader('SPOTIFY'),
+              _buildSectionHeader('Spotify'),
               _buildCardContainer([
                 ListTile(
-                  leading: Icon(CupertinoIcons.music_note, color: primaryColor),
+                  leading: Icon(AppIcons.note, color: primaryColor),
                   title: Text(_hasSpDcCookie ? 'Connesso a Spotify' : 'Accedi a Spotify'),
                   subtitle: Text(
                     _hasSpDcCookie
                         ? 'I Canvas arrivano direttamente da Spotify. Tocca per scollegare.'
                         : 'Facoltativo: i Canvas vengono chiesti direttamente a Spotify',
                   ),
-                  trailing: Icon(CupertinoIcons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 18),
+                  trailing: Icon(AppIcons.chevronRight, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 18),
                   onTap: () {
                     if (_hasSpDcCookie) {
                       _confirmRemoveSpDc(context);
@@ -329,7 +303,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ListTile(
                     title: Text('Inserisci il cookie a mano'),
                     subtitle: Text('Per chi ha già il valore del cookie sp_dc'),
-                    trailing: Icon(CupertinoIcons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 18),
+                    trailing: Icon(AppIcons.chevronRight, color: Theme.of(context).colorScheme.onSurfaceVariant, size: 18),
                     onTap: () => _showSpDcInputDialog(context),
                   ),
                 ],
@@ -338,23 +312,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 20),
 
               // ── Diagnostica ───────────────────────────────────────────────────
-              _buildSectionHeader('DIAGNOSTICA'),
+              _buildSectionHeader('Diagnostica'),
               _buildCardContainer([
                 ListTile(
-                  leading: Icon(CupertinoIcons.doc_text,
+                  leading: Icon(AppIcons.log,
                       color: Theme.of(context).colorScheme.primary),
                   title: Text('Log'),
                   subtitle: Text(
                       'Eventi ed errori dell\'app, da copiare per la diagnosi'),
-                  trailing: Icon(CupertinoIcons.chevron_right,
+                  trailing: Icon(AppIcons.chevronRight,
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                       size: 18),
                   onTap: () {
                     PlaybackLogService.instance
                         .log('UI', 'settings: apri log riproduzione');
-                    Navigator.push(
-                      context,
-                      CupertinoPageRoute(
+                    Navigator.of(context, rootNavigator: true).push(
+                      CupertinoPageRoute<void>(
                         builder: (_) => const PlaybackLogScreen(),
                       ),
                     );
@@ -365,10 +338,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 20),
 
               // ── Archiviazione & Download ──────────────────────────────────────
-              _buildSectionHeader('ARCHIVIAZIONE & DOWNLOAD'),
+              _buildSectionHeader('Archiviazione e download'),
               _buildCardContainer([
                 ListTile(
-                  title: Text('Spazio Download Utilizzato'),
+                  title: Text('Spazio usato dai download'),
                   subtitle: Text('${_storageUsedMB.toStringAsFixed(1)} MB occupati'),
                   trailing: TextButton(
                     onPressed: () {
@@ -403,27 +376,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
                 ListTile(
-                  title: Text('Cancella Cronologia Ascolti'),
-                  trailing: Icon(CupertinoIcons.trash,
+                  title: Text('Cancella la cronologia degli ascolti'),
+                  trailing: Icon(AppIcons.trash,
                       color: Theme.of(context).colorScheme.onSurfaceVariant, size: 18),
                   onTap: () async {
                     final messenger = ScaffoldMessenger.of(context);
-                    final snackColor = Theme.of(context).colorScheme.surface;
                     await StorageService.instance.clearHistory();
                     messenger.showSnackBar(
-                      SnackBar(
-                        content: Text('Cronologia cancellata'),
-                        backgroundColor: snackColor,
-                        behavior: SnackBarBehavior.floating,
-                      ),
+                      const SnackBar(content: Text('Cronologia cancellata')),
                     );
                   },
                 ),
               ]),
             ],
           ),
-        ],
-      ),
     );
   }
 
@@ -433,34 +399,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final photo = _userPhoto ?? AuthService.instance.currentUser?.photoUrl;
 
     return ListTile(
-      leading: ClipOval(
-        child: photo != null && photo.isNotEmpty
-            ? CachedNetworkImage(
-                imageUrl: photo,
-                width: 44,
-                height: 44,
-                fit: BoxFit.cover,
-                placeholder: (context, url) => Container(
-                  width: 44,
-                  height: 44,
-                  color: primaryColor.withValues(alpha: 0.2),
-                  child: Icon(CupertinoIcons.person_fill, color: primaryColor),
-                ),
-                errorWidget: (context, url, error) => Container(
-                  width: 44,
-                  height: 44,
-                  color: primaryColor.withValues(alpha: 0.2),
-                  child: Icon(CupertinoIcons.person_fill, color: primaryColor),
-                ),
-              )
-            : Container(
-                width: 44,
-                height: 44,
-                color: primaryColor.withValues(alpha: 0.2),
-                child: Icon(CupertinoIcons.person_fill,
-                    color: primaryColor),
-              ),
-      ),
+      leading: AppCover(url: photo, size: 44, circle: true, icon: AppIcons.artist),
       title: Text(name, style: AppText.tileTitle(Theme.of(context).colorScheme)),
       subtitle: Text(email,
           style: AppText.caption(Theme.of(context).colorScheme)),
@@ -478,26 +417,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _buildSectionHeader(String title) {
     return Padding(
-      padding: const EdgeInsets.only(left: 6, bottom: 8),
+      padding: const EdgeInsets.only(left: 2, bottom: 10, top: 4),
       child: Text(
         title,
-        style: AppText.overline(Theme.of(context).colorScheme),
+        style: AppText.sectionTitle(Theme.of(context).colorScheme)
+            .copyWith(fontSize: 17),
       ),
     );
   }
 
   Widget _buildCardContainer(List<Widget> children) {
     final cs = Theme.of(context).colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: cs.onSurface.withValues(alpha: 0.06)),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        child: Column(children: children),
-      ),
+    // A Material, so the rows show their pressed state inside the card.
+    return Material(
+      color: cs.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      clipBehavior: Clip.antiAlias,
+      child: Column(children: children),
     );
   }
 

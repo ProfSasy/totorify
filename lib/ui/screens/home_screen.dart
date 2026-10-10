@@ -1,21 +1,28 @@
-import 'package:audio_service/audio_service.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import '../../models/artist.dart';
 import '../../models/playlist.dart';
 import '../../models/song.dart';
 import '../../services/audio_handler.dart';
 import '../../services/auth_service.dart';
 import '../../services/playback_log_service.dart';
+import '../../services/recommendation_service.dart';
 import '../../services/spotify_catalog_service.dart';
 import '../../services/storage_service.dart';
-import '../theme/app_ambience.dart';
+import '../theme/app_icons.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/app_cover.dart';
 import '../widgets/app_skeleton.dart';
+import '../widgets/bounce_button.dart';
+import '../widgets/cover_card.dart';
+import '../widgets/filter_pill.dart';
 import '../widgets/player_sheet.dart';
 import '../widgets/section_header.dart';
+import '../widgets/song_options_sheet.dart';
 import '../widgets/song_tile.dart';
+import '../widgets/top_bar.dart';
+import 'artist_screen.dart';
 import 'playlist_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -27,32 +34,40 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMixin {
-  @override
-  bool get wantKeepAlive => true;
-
+class _HomeScreenState extends State<HomeScreen> {
   // Each chip is a Spotify editorial playlist.
   static final List<String> _categories =
       SpotifyCatalogService.homeCategories.keys.toList();
   static const int _categorySongs = 30;
+  static const int _quickTiles = 8;
   String _selectedCategory = _categories.first;
 
   List<Song> _trendingSongs = [];
   bool _isLoading = true;
   int _trendingGeneration = 0;
-  bool _openingPlaylist = false;
+
+  /// What is being opened (a playlist or a mix): its card shows a spinner
+  /// and nothing else can be opened meanwhile.
+  String? _openingId;
+
+  // "Mix" cards: one per artist the user plays most.
+  List<Artist> _mixArtists = const [];
+  String _mixSignature = '';
 
   String? _savedUserName;
+  final ValueNotifier<bool> _barSolid = ValueNotifier<bool>(false);
 
   @override
   void initState() {
     super.initState();
     AuthService.instance.addListener(_onAuthChanged);
+    StorageService.instance.historyNotifier.addListener(_refreshMixes);
     AuthService.instance.getSavedUserName().then((name) {
       if (!mounted || name == null || name.isEmpty) return;
       setState(() => _savedUserName = name);
     });
     _fetchTrending();
+    _refreshMixes();
   }
 
   void _onAuthChanged() {
@@ -62,6 +77,8 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
   @override
   void dispose() {
     AuthService.instance.removeListener(_onAuthChanged);
+    StorageService.instance.historyNotifier.removeListener(_refreshMixes);
+    _barSolid.dispose();
     super.dispose();
   }
 
@@ -80,12 +97,23 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     });
   }
 
-  void _showPlaylistUnavailable() {
+  /// Looks the mixes up again only when the artists played most change.
+  void _refreshMixes() {
+    final history = StorageService.instance.getHistory();
+    final signature = RecommendationService.topArtistKeys(history).join('|');
+    if (signature == _mixSignature) return;
+    _mixSignature = signature;
+    RecommendationService.instance.mixArtists(history).then((artists) {
+      if (!mounted || _mixSignature != signature) return;
+      setState(() => _mixArtists = artists);
+    });
+  }
+
+  void _showUnavailable(String what) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Playlist non raggiungibile. Riprova tra poco.'),
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 2),
+      SnackBar(
+        content: Text('$what non raggiungibile. Riprova tra poco.'),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -107,257 +135,239 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     return raw.split(RegExp(r'\s+')).first;
   }
 
-  /// Header greeting: a soft salutation followed by the given name in full
-  /// emphasis. A FittedBox guarantees the whole line is always visible —
-  /// it scales down instead of truncating, at any name length or text size.
-  Widget _greetingTitle(ColorScheme cs, {double fontSize = 30}) {
-    final greeting = _greeting();
-    final name = _firstName();
-    final base = AppText.display(cs).copyWith(fontSize: fontSize);
-    final Widget line;
-    if (name.isEmpty) {
-      line = Text(greeting, maxLines: 1, style: base);
-    } else {
-      line = Text.rich(
-        TextSpan(
-          text: '$greeting, ',
-          style: base.copyWith(
-            fontWeight: FontWeight.w600,
-            color: cs.onSurface.withValues(alpha: 0.65),
-          ),
-          children: [TextSpan(text: name, style: base)],
+  void _play(Song song, List<Song> queue) {
+    widget.audioHandler.playSong(song, queue: queue);
+    PlayerSheet.show(context, widget.audioHandler);
+  }
+
+  void _openPlaylist(Playlist playlist) {
+    Navigator.push(
+      context,
+      CupertinoPageRoute<void>(
+        builder: (_) => PlaylistScreen(
+          playlist: playlist,
+          audioHandler: widget.audioHandler,
         ),
-        maxLines: 1,
-      );
-    }
-    return FittedBox(
-      fit: BoxFit.scaleDown,
-      alignment: Alignment.centerLeft,
-      child: line,
+      ),
     );
   }
 
-  Future<void> _openSpotifyPlaylist(SpotifyPlaylistBundle bundle) async {
-    if (_openingPlaylist) return;
-    _openingPlaylist = true;
-    PlaybackLogService.instance.log('UI', 'home: apri playlist "${bundle.title}"');
+  /// Loads what a card stands for, with a spinner on the card meanwhile.
+  Future<void> _open(
+    String id, {
+    required String what,
+    required Future<List<Song>> Function() load,
+    required void Function(List<Song> songs) then,
+  }) async {
+    if (_openingId != null) return;
+    setState(() => _openingId = id);
     try {
-      // Show instant feedback with cached songs or load dynamically
-      final songs =
-          await SpotifyCatalogService.instance.getPlaylistSongs(bundle.id);
+      final songs = await load();
       if (!mounted) return;
       if (songs.isEmpty) {
-        _showPlaylistUnavailable();
-        return;
+        _showUnavailable(what);
+      } else {
+        then(songs);
       }
+    } finally {
+      if (mounted) setState(() => _openingId = null);
+    }
+  }
 
-      final pl = Playlist(
+  Future<void> _openSpotifyPlaylist(SpotifyPlaylistBundle bundle) {
+    PlaybackLogService.instance.log('UI', 'home: apri playlist "${bundle.title}"');
+    return _open(
+      bundle.id,
+      what: 'Playlist',
+      load: () => SpotifyCatalogService.instance.getPlaylistSongs(bundle.id),
+      then: (songs) => _openPlaylist(Playlist(
         id: bundle.id,
         title: bundle.title,
         description: bundle.subtitle,
         thumbnailUrl: bundle.coverUrl,
         songs: songs,
         isSystem: true,
-      );
-
-      Navigator.push(
-        context,
-        CupertinoPageRoute(
-          builder: (_) => PlaylistScreen(
-            playlist: pl,
-            audioHandler: widget.audioHandler,
-          ),
-        ),
-      );
-    } finally {
-      _openingPlaylist = false;
-    }
+      )),
+    );
   }
 
-  Future<void> _playSpotifyPlaylist(SpotifyPlaylistBundle bundle) async {
-    if (_openingPlaylist) return;
-    _openingPlaylist = true;
-    PlaybackLogService.instance.log('UI', 'home: play playlist "${bundle.title}"');
-    try {
-      final songs =
-          await SpotifyCatalogService.instance.getPlaylistSongs(bundle.id);
-      if (!mounted) return;
-      if (songs.isEmpty) {
-        _showPlaylistUnavailable();
-        return;
-      }
+  Future<void> _openMix(Artist artist) {
+    PlaybackLogService.instance.log('UI', 'home: apri mix "${artist.name}"');
+    return _open(
+      'mix_${artist.id}',
+      what: 'Mix',
+      load: () => RecommendationService.instance.mixOf(artist),
+      then: (songs) => _openPlaylist(Playlist(
+        id: 'mix_${artist.id}',
+        title: 'Mix ${artist.name}',
+        description: '${artist.name} e artisti simili, scelti per te',
+        thumbnailUrl: artist.imageUrl,
+        songs: songs,
+        isSystem: true,
+      )),
+    );
+  }
 
-      widget.audioHandler.playSong(songs.first, queue: songs);
-      PlayerSheet.show(context, widget.audioHandler);
-    } finally {
-      _openingPlaylist = false;
+  void _openFavorites() {
+    final favorites = StorageService.instance.getFavorites();
+    PlaybackLogService.instance.log('UI', 'home: apri preferiti');
+    _openPlaylist(Playlist(
+      id: 'system_favorites',
+      title: 'Brani che ti piacciono',
+      songs: favorites,
+      isSystem: true,
+    ));
+  }
+
+  void _openHistory() {
+    final history = StorageService.instance.getHistory();
+    PlaybackLogService.instance.log('UI', 'home: apri cronologia');
+    if (history.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Qui troverai i brani che ascolti.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
     }
+    _openPlaylist(Playlist(
+      id: 'history',
+      title: 'Ascoltati di recente',
+      description: 'I tuoi ultimi brani riprodotti',
+      songs: history,
+      thumbnailUrl: history.first.thumbnailUrl,
+      isSystem: true,
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
-    super.build(context);
-    final primaryColor = Theme.of(context).colorScheme.primary;
     final cs = Theme.of(context).colorScheme;
+    final storage = StorageService.instance;
+    final topInset = TopBar.extent(context);
+    final backdrop = NowPlayingBackdrop(audioHandler: widget.audioHandler);
 
     return Scaffold(
       body: Stack(
         children: [
-          // Ambient aurora: echoes the track that is playing (or the accent
-          // when silent) behind the whole screen, so browsing stays
-          // connected to the music.
-          Positioned.fill(
-            child: StreamBuilder<MediaItem?>(
-              stream: widget.audioHandler.mediaItem,
-              builder: (context, snapshot) => AmbientBackdrop(
-                artworkUrl: snapshot.data?.artUri?.toString(),
-                intensity: 0.7,
-              ),
-            ),
-          ),
-          SafeArea(
-            top: false,
-            bottom: false,
+          Positioned.fill(child: backdrop),
+          NotificationListener<ScrollNotification>(
+            onNotification: TopBar.watch(_barSolid),
             child: RefreshIndicator(
+              edgeOffset: topInset,
               onRefresh: () {
                 PlaybackLogService.instance.log('UI', 'home: refresh');
                 return _fetchTrending(refresh: true);
               },
-              color: primaryColor,
+              color: cs.onPrimary,
+              backgroundColor: cs.primary,
               child: CustomScrollView(
-                physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+                physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics()),
                 slivers: [
-                  // ── 1. Top bar: greeting & utility icons ───────────────────
-                  SliverAppBar(
-                    backgroundColor: cs.surface.withValues(alpha: 0.85),
-                    pinned: true,
-                    elevation: 0,
-                    titleSpacing: 16,
-                    centerTitle: false,
-                    title: _greetingTitle(cs, fontSize: 24),
-                    actions: [
-                      IconButton(
-                        tooltip: 'Ascoltati di recente',
-                        icon: Icon(CupertinoIcons.time,
-                            size: 24, color: cs.onSurface),
-                        onPressed: () {
-                          final history = StorageService.instance.getHistory();
-                          if (history.isNotEmpty) {
-                            Navigator.push(
-                              context,
-                              CupertinoPageRoute(
-                                builder: (_) => PlaylistScreen(
-                                  playlist: Playlist(
-                                    id: 'history',
-                                    title: 'Ascoltati di recente',
-                                    description: 'I tuoi ultimi brani riprodotti',
-                                    songs: history,
-                                    thumbnailUrl: history.first.thumbnailUrl,
-                                    isSystem: true,
-                                  ),
-                                  audioHandler: widget.audioHandler,
-                                ),
-                              ),
-                            );
-                          }
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                    ],
+                  SliverToBoxAdapter(child: SizedBox(height: topInset + AppSpacing.sm)),
+
+                  // ── Quick access: favourites, recents, charts ───────────
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    sliver: ListenableBuilder(
+                      listenable: Listenable.merge([
+                        storage.historyNotifier,
+                        widget.audioHandler.playbackIndicator,
+                      ]),
+                      builder: (context, _) => _buildQuickGrid(cs),
+                    ),
                   ),
 
-                  // Two-column quick-access grid, reactive to the history list.
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    sliver: SliverToBoxAdapter(
-                      child: ValueListenableBuilder<List<Song>>(
-                        valueListenable: StorageService.instance.historyNotifier,
-                        builder: (context, recent, _) {
-                          final tiles = recent.isEmpty
-                              ? <Widget>[
-                                  _buildFavoritesQuickTile(),
-                                  ...SpotifyCatalogService.instance.featuredPlaylists
-                                      .take(5)
-                                      .map(_buildSpotifyQuickTile),
-                                ]
-                              : recent
-                                  .take(6)
-                                  .map((song) => _buildRecentQuickTile(song, recent))
-                                  .toList();
-                          return GridView.count(
-                            crossAxisCount: 2,
-                            mainAxisSpacing: 8,
-                            crossAxisSpacing: 8,
-                            childAspectRatio: 2.8,
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            children: tiles,
+                  // ── Mixes built on the listening history ────────────────
+                  if (_mixArtists.isNotEmpty) ...[
+                    const SliverToBoxAdapter(child: SectionHeader('Mix per te')),
+                    SliverToBoxAdapter(
+                      child: _CardRow(
+                        height: CoverCard.heightFor(150, subtitleLines: 2),
+                        itemCount: _mixArtists.length,
+                        itemBuilder: (context, index) {
+                          final artist = _mixArtists[index];
+                          return CoverCard(
+                            imageUrl: artist.imageUrl,
+                            title: 'Mix ${artist.name}',
+                            subtitle: '${artist.name} e artisti simili',
+                            subtitleLines: 2,
+                            size: 150,
+                            badge: 'MIX',
+                            icon: AppIcons.radio,
+                            busy: _openingId == 'mix_${artist.id}',
+                            onTap: () => _openMix(artist),
                           );
                         },
                       ),
                     ),
-                  ),
+                  ],
 
-                  const SliverToBoxAdapter(child: SizedBox(height: 24)),
-
-                  // ── 3. Horizontal Carousel: Classifiche Ufficiali Spotify ─────
-                  SliverToBoxAdapter(
-                    child: SectionHeader(
-                      'Classifiche in evidenza',
-                      padding: const EdgeInsets.fromLTRB(
-                          AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.xs),
-                      trailing: Text(
-                        'In evidenza',
-                        style: AppText.caption(Theme.of(context).colorScheme)
-                            .copyWith(color: primaryColor, letterSpacing: 0.4),
-                      ),
-                    ),
-                  ),
-                  SliverToBoxAdapter(
-                    child: SizedBox(
-                      height: 215,
-                      child: ListView.separated(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        scrollDirection: Axis.horizontal,
-                        itemCount: SpotifyCatalogService.instance.featuredPlaylists.length,
-                        separatorBuilder: (_, _) => const SizedBox(width: 14),
-                        itemBuilder: (context, index) {
-                          final bundle = SpotifyCatalogService.instance.featuredPlaylists[index];
-                          return _buildFeaturedPlaylistCard(bundle);
-                        },
-                      ),
-                    ),
-                  ),
-
-                  // ── 4. Horizontal Carousel: Ascoltati di Recente ─────────────
+                  // ── Recently played ─────────────────────────────────────
                   SliverToBoxAdapter(
                     child: ValueListenableBuilder<List<Song>>(
-                      valueListenable: StorageService.instance.historyNotifier,
+                      valueListenable: storage.historyNotifier,
                       builder: (context, history, _) {
                         if (history.isEmpty) return const SizedBox.shrink();
-
+                        final recent = history.take(12).toList();
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const SectionHeader(
+                            SectionHeader(
                               'Ascoltati di recente',
-                              padding: EdgeInsets.fromLTRB(
-                                  AppSpacing.lg,
-                                  AppSpacing.lg,
-                                  AppSpacing.lg,
-                                  AppSpacing.xs),
+                              trailing: _SeeAll(onTap: _openHistory),
                             ),
-                            SizedBox(
-                              height: 185,
-                              child: ListView.separated(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                scrollDirection: Axis.horizontal,
-                                itemCount: history.take(10).length,
-                                separatorBuilder: (_, _) => const SizedBox(width: 14),
-                                itemBuilder: (context, index) {
-                                  final song = history[index];
-                                  return _buildRecentSongCard(song, history);
-                                },
+                            _CardRow(
+                              height: CoverCard.heightFor(118),
+                              itemCount: recent.length,
+                              itemBuilder: (context, index) {
+                                final song = recent[index];
+                                return CoverCard(
+                                  imageUrl: song.thumbnailUrl,
+                                  title: song.title,
+                                  subtitle: song.artist,
+                                  size: 118,
+                                  onTap: () {
+                                    PlaybackLogService.instance
+                                        .log('UI', 'home: play "${song.title}"');
+                                    _play(song, history);
+                                  },
+                                );
+                              },
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+
+                  // ── Followed artists ────────────────────────────────────
+                  SliverToBoxAdapter(
+                    child: ValueListenableBuilder<List<Artist>>(
+                      valueListenable: storage.followedArtistsNotifier,
+                      builder: (context, artists, _) {
+                        if (artists.isEmpty) return const SizedBox.shrink();
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SectionHeader('I tuoi artisti'),
+                            _CardRow(
+                              height: CoverCard.heightFor(118),
+                              itemCount: artists.length,
+                              itemBuilder: (context, index) => CoverCard(
+                                imageUrl: artists[index].imageUrl,
+                                title: artists[index].name,
+                                subtitle: 'Artista',
+                                size: 118,
+                                circle: true,
+                                icon: AppIcons.artist,
+                                onTap: () => ArtistScreen.open(
+                                  context,
+                                  widget.audioHandler,
+                                  artist: artists[index],
+                                ),
                               ),
                             ),
                           ],
@@ -366,94 +376,107 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                     ),
                   ),
 
-                  const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                  // ── The user's playlists ────────────────────────────────
+                  SliverToBoxAdapter(
+                    child: ValueListenableBuilder<List<Playlist>>(
+                      valueListenable: storage.playlistsNotifier,
+                      builder: (context, playlists, _) {
+                        if (playlists.isEmpty) return const SizedBox.shrink();
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SectionHeader('Le tue playlist'),
+                            _CardRow(
+                              height: CoverCard.heightFor(140),
+                              itemCount: playlists.length,
+                              itemBuilder: (context, index) {
+                                final playlist = playlists[index];
+                                return CoverCard(
+                                  imageUrl: playlistCoverUrl(playlist),
+                                  title: playlist.title,
+                                  subtitle: '${playlist.songs.length} brani',
+                                  icon: AppIcons.playlist,
+                                  onTap: () {
+                                    PlaybackLogService.instance.log('UI',
+                                        'home: apri playlist "${playlist.title}"');
+                                    _openPlaylist(playlist);
+                                  },
+                                );
+                              },
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
 
-                  // ── 5. Category Filter Pills ──────────────────────────────────
+                  // ── Charts and new releases ─────────────────────────────
+                  const SliverToBoxAdapter(
+                      child: SectionHeader('Classifiche e novità')),
+                  SliverToBoxAdapter(
+                    child: _CardRow(
+                      height: CoverCard.heightFor(150, subtitleLines: 2),
+                      itemCount:
+                          SpotifyCatalogService.instance.featuredPlaylists.length,
+                      itemBuilder: (context, index) {
+                        final bundle =
+                            SpotifyCatalogService.instance.featuredPlaylists[index];
+                        return CoverCard(
+                          imageUrl: bundle.coverUrl,
+                          title: bundle.title,
+                          subtitle: bundle.subtitle,
+                          subtitleLines: 2,
+                          size: 150,
+                          icon: AppIcons.playlist,
+                          busy: _openingId == bundle.id,
+                          onTap: () => _openSpotifyPlaylist(bundle),
+                        );
+                      },
+                    ),
+                  ),
+
+                  // ── Songs by category ───────────────────────────────────
+                  const SliverToBoxAdapter(child: SectionHeader('Da ascoltare ora')),
                   SliverToBoxAdapter(
                     child: SizedBox(
-                      height: 40,
+                      height: 34,
                       child: ListView.separated(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
                         scrollDirection: Axis.horizontal,
                         itemCount: _categories.length,
-                        separatorBuilder: (_, _) => const SizedBox(width: 8),
+                        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
                         itemBuilder: (context, index) {
-                          final cat = _categories[index];
-                          final isSelected = cat == _selectedCategory;
-                          return ChoiceChip(
-                            showCheckmark: false,
-                            label: Text(cat),
-                            selected: isSelected,
-                            onSelected: (selected) {
-                              if (selected) {
-                                PlaybackLogService.instance
-                                    .log('UI', 'home: categoria $cat');
-                                setState(() => _selectedCategory = cat);
-                                _fetchTrending();
-                              }
+                          final category = _categories[index];
+                          return FilterPill(
+                            label: category,
+                            selected: category == _selectedCategory,
+                            onTap: () {
+                              if (category == _selectedCategory) return;
+                              PlaybackLogService.instance
+                                  .log('UI', 'home: categoria $category');
+                              setState(() => _selectedCategory = category);
+                              _fetchTrending();
                             },
-                            selectedColor: primaryColor,
-                            backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
-                            labelStyle: TextStyle(
-                              color: isSelected ? Theme.of(context).colorScheme.onPrimary : Theme.of(context).colorScheme.onSurfaceVariant,
-                              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                              fontSize: 13,
-                            ),
-                            shape: RoundedRectangleBorder(borderRadius: AppRadius.chip),
-                            side: isSelected
-                                ? BorderSide.none
-                                : BorderSide(
-                                    color: Theme.of(context).colorScheme.outlineVariant,
-                                  ),
                           );
                         },
                       ),
                     ),
                   ),
+                  const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.sm)),
 
-                  const SliverToBoxAdapter(child: SizedBox(height: 12)),
-
-                  // ── 6. Section Header: Hit del Momento ────────────────────────
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            _selectedCategory,
-                            style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
-                          ),
-                          if (_trendingSongs.isNotEmpty)
-                            TextButton.icon(
-                              icon: Icon(CupertinoIcons.play_circle_fill, color: primaryColor, size: 18),
-                              label: Text(
-                                'Riproduci Tutti',
-                                style: TextStyle(color: primaryColor, fontWeight: FontWeight.w600),
-                              ),
-                              onPressed: () {
-                                PlaybackLogService.instance.log(
-                                    'UI', 'home: riproduci tutti $_selectedCategory');
-                                widget.audioHandler.playSong(_trendingSongs.first, queue: _trendingSongs);
-                                PlayerSheet.show(context, widget.audioHandler);
-                              },
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // ── 7. Reactive Song List with Live Indicator ─────────────────
                   if (_isLoading)
-                    const SliverToBoxAdapter(
-                      child: SongListSkeleton(count: 6),
-                    )
+                    const SliverToBoxAdapter(child: SongListSkeleton(count: 6))
                   else if (_trendingSongs.isEmpty)
-                     SliverToBoxAdapter(
+                    SliverToBoxAdapter(
                       child: Padding(
-                        padding: EdgeInsets.only(top: 40),
+                        padding: const EdgeInsets.all(AppSpacing.xl),
                         child: Center(
-                          child: Text('Nessun brano trovato.', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                          child: Text(
+                            'Nessun brano trovato. Trascina in basso per riprovare.',
+                            textAlign: TextAlign.center,
+                            style: AppText.caption(cs),
+                          ),
                         ),
                       ),
                     )
@@ -462,30 +485,63 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                       valueListenable: widget.audioHandler.playbackIndicator,
                       builder: (context, indicator, _) {
                         final currentId = indicator.$2 ? indicator.$1 : null;
-
-                        return SliverPadding(
-                          padding: const EdgeInsets.only(bottom: AppSpacing.bottomContentInset),
-                          sliver: SliverList(
-                            delegate: SliverChildBuilderDelegate(
-                              (context, index) {
-                                final song = _trendingSongs[index];
-                                final isPlaying = currentId == song.id;
-
-                                return SongTile(
-                                  song: song,
-                                  isPlaying: isPlaying,
-                                  onTap: () {
-                                    widget.audioHandler.playSong(song, queue: _trendingSongs);
-                                    PlayerSheet.show(context, widget.audioHandler);
-                                  },
-                                );
-                              },
-                              childCount: _trendingSongs.length,
-                            ),
+                        return SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) {
+                              final song = _trendingSongs[index];
+                              return SongTile(
+                                song: song,
+                                isPlaying: currentId == song.id,
+                                onTap: () => _play(song, _trendingSongs),
+                              );
+                            },
+                            childCount: _trendingSongs.length,
                           ),
                         );
                       },
                     ),
+                  const SliverToBoxAdapter(
+                      child: SizedBox(height: AppSpacing.bottomContentInset)),
+                ],
+              ),
+            ),
+          ),
+
+          // ── Header: profile, greeting, history and settings ─────────────
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: TopBar(
+              solid: _barSolid,
+              backdrop: backdrop,
+              child: Row(
+                children: [
+                  const ProfileButton(),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _firstName().isEmpty
+                            ? _greeting()
+                            : '${_greeting()}, ${_firstName()}',
+                        maxLines: 1,
+                        style: AppText.screenTitle(cs).copyWith(fontSize: 22),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Ascoltati di recente',
+                    icon: const Icon(AppIcons.history, size: 26),
+                    onPressed: _openHistory,
+                  ),
+                  IconButton(
+                    tooltip: 'Impostazioni',
+                    icon: const Icon(AppIcons.settings, size: 25),
+                    onPressed: () => ProfileButton.openSettings(context),
+                  ),
                 ],
               ),
             ),
@@ -495,358 +551,180 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     );
   }
 
-  /// Quick tile that opens the favourites.
-  Widget _buildFavoritesQuickTile() {
-    return InkWell(
-      onTap: () {
-        final favorites = StorageService.instance.getFavorites();
-        if (favorites.isNotEmpty) {
-          Navigator.push(
-            context,
-            CupertinoPageRoute(
-              builder: (_) => PlaylistScreen(
-                playlist: Playlist(
-                  id: 'system_favorites',
-                  title: 'Brani che ti piacciono',
-                  description: 'Tutti i tuoi brani preferiti',
-                  songs: favorites,
-                  thumbnailUrl: favorites.first.thumbnailUrl,
-                  isSystem: true,
-                ),
-                audioHandler: widget.audioHandler,
-              ),
+  /// Two columns of shortcuts: the favourites first, then the songs played
+  /// last, and the charts where the history is still short.
+  Widget _buildQuickGrid(ColorScheme cs) {
+    final history = StorageService.instance.historyNotifier.value;
+    final indicator = widget.audioHandler.playbackIndicator.value;
+    final playingId = indicator.$2 ? indicator.$1 : null;
+
+    final seen = <String>{};
+    final recent = history
+        .where((song) => seen.add(song.id))
+        .take(_quickTiles - 1)
+        .toList();
+    final charts = SpotifyCatalogService.instance.featuredPlaylists
+        .take(_quickTiles - 1 - recent.length);
+
+    final tiles = <Widget>[
+      _QuickTile(
+        title: 'Brani che ti piacciono',
+        cover: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [cs.primary, AppTheme.lift(cs.primary, 0.45)],
             ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Nessun brano nei preferiti. Tocca il cuore per aggiungerne uno!'),
-              behavior: SnackBarBehavior.floating,
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      },
-      borderRadius: BorderRadius.circular(AppRadius.md),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
           ),
+          child: Icon(AppIcons.heartFilled, color: cs.onPrimary, size: 24),
         ),
-        clipBehavior: Clip.antiAlias,
-        child: Row(
-          children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                gradient: AppTheme.primaryGradient(Theme.of(context).colorScheme),
-              ),
-              child: Icon(
-                CupertinoIcons.heart_fill,
-                color: Theme.of(context).colorScheme.onPrimary,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 8),
-             Expanded(
-              child: Text(
-                'Brani che ti piacciono',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface),
-              ),
-            ),
-            const SizedBox(width: 6),
-          ],
-        ),
+        onTap: _openFavorites,
       ),
+      for (final song in recent)
+        _QuickTile(
+          title: song.title,
+          cover: AppCover(url: song.thumbnailUrl, size: _QuickTile.height, radius: 0),
+          playing: playingId == song.id,
+          onTap: () {
+            PlaybackLogService.instance.log('UI', 'home: play "${song.title}"');
+            _play(song, history);
+          },
+        ),
+      for (final bundle in charts)
+        _QuickTile(
+          title: bundle.title,
+          cover: AppCover(
+            url: bundle.coverUrl,
+            size: _QuickTile.height,
+            radius: 0,
+            icon: AppIcons.playlist,
+          ),
+          busy: _openingId == bundle.id,
+          onTap: () => _openSpotifyPlaylist(bundle),
+        ),
+    ];
+
+    return SliverGrid(
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisExtent: _QuickTile.height,
+        mainAxisSpacing: AppSpacing.sm,
+        crossAxisSpacing: AppSpacing.sm,
+      ),
+      delegate: SliverChildListDelegate(tiles),
     );
   }
+}
 
-  Widget _buildRecentQuickTile(Song song, List<Song> queue) {
-    return InkWell(
-      onTap: () {
-        widget.audioHandler.playSong(song, queue: queue);
-        PlayerSheet.show(context, widget.audioHandler);
-      },
-      borderRadius: BorderRadius.circular(AppRadius.md),
+/// A shortcut of the Home grid: small cover, two lines of title.
+class _QuickTile extends StatelessWidget {
+  const _QuickTile({
+    required this.title,
+    required this.cover,
+    required this.onTap,
+    this.playing = false,
+    this.busy = false,
+  });
+
+  static const double height = 56;
+
+  final String title;
+  final Widget cover;
+  final bool playing;
+  final bool busy;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return BounceButton(
+      onPressed: onTap,
       child: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
-          ),
-        ),
         clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.09),
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+        ),
         child: Row(
           children: [
-            CachedNetworkImage(
-              imageUrl: song.thumbnailUrl,
-              width: 56,
-              height: 56,
-              fit: BoxFit.cover,
-              placeholder: (_, _) => Container(
-                  color: Theme.of(context).colorScheme.surface),
-              errorWidget: (_, _, _) => Container(
-                  color: Theme.of(context).colorScheme.surface),
-            ),
-            const SizedBox(width: 8),
+            SizedBox.square(dimension: height, child: cover),
+            const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: Text(
-                song.title,
+                title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.onSurface,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  height: 1.2,
+                  color: cs.onSurface,
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: Semantics(
-                button: true,
-                label: 'Riproduci ${song.title}',
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    PlaybackLogService.instance
-                        .log('UI', 'home: play "${song.title}"');
-                    widget.audioHandler.playSong(song, queue: queue);
-                    PlayerSheet.show(context, widget.audioHandler);
-                  },
-                  child: SizedBox(
-                    width: 40,
-                    height: 40,
-                    child: Center(
-                      child: Container(
-                        width: 30,
-                        height: 30,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: AppTheme.primaryGradient(
-                              Theme.of(context).colorScheme),
-                        ),
-                        child: Icon(
-                          CupertinoIcons.play_fill,
-                          color: Theme.of(context).colorScheme.onPrimary,
-                          size: 14,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            if (busy)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                child: CupertinoActivityIndicator(radius: 8),
+              )
+            else if (playing)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                child: PlayingBars(color: cs.primary, height: 14),
+              )
+            else
+              const SizedBox(width: AppSpacing.sm),
           ],
         ),
       ),
     );
   }
+}
 
-  /// Quick-access tile of a playlist: cover on the left, play on the right.
-  Widget _buildSpotifyQuickTile(SpotifyPlaylistBundle bundle) {
-    return InkWell(
-      onTap: () => _openSpotifyPlaylist(bundle),
-      borderRadius: BorderRadius.circular(AppRadius.md),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
-          ),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Row(
-          children: [
-            CachedNetworkImage(
-              imageUrl: bundle.coverUrl,
-              width: 56,
-              height: 56,
-              fit: BoxFit.cover,
-              memCacheWidth: 120,
-              memCacheHeight: 120,
-              placeholder: (_, _) => Container(color: Theme.of(context).colorScheme.surface),
-              errorWidget: (_, _, _) => Container(color: Theme.of(context).colorScheme.surface),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                bundle.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: Semantics(
-                button: true,
-                label: 'Riproduci ${bundle.title}',
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => _playSpotifyPlaylist(bundle),
-                  child: SizedBox(
-                    width: 40,
-                    height: 40,
-                    child: Center(
-                      child: Container(
-                        width: 30,
-                        height: 30,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: AppTheme.primaryGradient(
-                              Theme.of(context).colorScheme),
-                        ),
-                        child: Icon(
-                          CupertinoIcons.play_fill,
-                          color: Theme.of(context).colorScheme.onPrimary,
-                          size: 14,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+/// A horizontal row of cards with the page margins.
+class _CardRow extends StatelessWidget {
+  const _CardRow({
+    required this.height,
+    required this.itemCount,
+    required this.itemBuilder,
+  });
+
+  final double height;
+  final int itemCount;
+  final IndexedWidgetBuilder itemBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: height,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+        scrollDirection: Axis.horizontal,
+        itemCount: itemCount,
+        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.lg),
+        itemBuilder: itemBuilder,
       ),
     );
   }
+}
 
-  /// Square cover card of the playlist carousel.
-  Widget _buildFeaturedPlaylistCard(SpotifyPlaylistBundle bundle) {
+class _SeeAll extends StatelessWidget {
+  const _SeeAll({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return GestureDetector(
-      onTap: () => _openSpotifyPlaylist(bundle),
-      child: SizedBox(
-        width: 145,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Stack(
-              children: [
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.3),
-                        blurRadius: 18,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: CachedNetworkImage(
-                      imageUrl: bundle.coverUrl,
-                      width: 145,
-                      height: 145,
-                      fit: BoxFit.cover,
-                      memCacheWidth: 290,
-                      memCacheHeight: 290,
-                      placeholder: (_, _) => Container(color: Theme.of(context).colorScheme.surface),
-                      errorWidget: (_, _, _) => Container(color: Theme.of(context).colorScheme.surface),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: 8,
-                  right: 8,
-                  child: GestureDetector(
-                    onTap: () => _playSpotifyPlaylist(bundle),
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: AppTheme.primaryGradient(
-                            Theme.of(context).colorScheme),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.45),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Icon(
-                        CupertinoIcons.play_fill,
-                        color: Theme.of(context).colorScheme.onPrimary,
-                        size: 16,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              bundle.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              bundle.subtitle,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Square cover card of a recently played song.
-  Widget _buildRecentSongCard(Song song, List<Song> queue) {
-    return GestureDetector(
-      onTap: () {
-        widget.audioHandler.playSong(song, queue: queue);
-        PlayerSheet.show(context, widget.audioHandler);
-      },
-      child: SizedBox(
-        width: 120,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: CachedNetworkImage(
-                imageUrl: song.thumbnailUrl,
-                width: 120,
-                height: 120,
-                fit: BoxFit.cover,
-                memCacheWidth: 240,
-                memCacheHeight: 240,
-                placeholder: (_, _) => Container(color: Theme.of(context).colorScheme.surface),
-                errorWidget: (_, _, _) => Container(color: Theme.of(context).colorScheme.surface),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              song.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.onSurface),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              song.artist,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
-            ),
-          ],
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.only(left: AppSpacing.md, top: 4, bottom: 4),
+        child: Text(
+          'Mostra tutto',
+          style: AppText.caption(cs).copyWith(fontWeight: FontWeight.w700),
         ),
       ),
     );

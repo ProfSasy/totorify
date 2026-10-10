@@ -7,6 +7,7 @@ import '../../models/song.dart';
 import '../../services/audio_handler.dart';
 import '../../services/storage_service.dart';
 import '../../services/track_matcher_service.dart';
+import '../theme/app_icons.dart';
 
 /// Modal bottom sheet allowing users to view, inspect, and choose alternative
 /// audio stream sources from YouTube/YouTube Music for a given song.
@@ -29,6 +30,8 @@ class AlternativeSourcesSheet extends StatefulWidget {
         .log('UI', 'fonti alternative: apri "${song.title}"');
     return showModalBottomSheet(
       context: context,
+      // Above the tabs and the player, wherever it is opened from.
+      useRootNavigator: true,
       isScrollControlled: true,
       backgroundColor: Theme.of(context).colorScheme.surface.withValues(alpha: 0),
       builder: (ctx) => AlternativeSourcesSheet(
@@ -121,16 +124,13 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
 
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
-    // Capture theme colors before popping: the context is disposed after.
-    final accent = Theme.of(context).colorScheme.primary;
-    final surface = Theme.of(context).colorScheme.surface;
     Navigator.of(context).pop();
 
     messenger.showSnackBar(
       SnackBar(
         content: Row(
           children: [
-            Icon(CupertinoIcons.checkmark_seal_fill, color: accent, size: 20),
+            const Icon(AppIcons.verified, color: Color(0xFF121212), size: 20),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -142,9 +142,6 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
             ),
           ],
         ),
-        backgroundColor: surface,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         duration: const Duration(seconds: 3),
       ),
     );
@@ -189,7 +186,7 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
-                    CupertinoIcons.tuningfork,
+                    AppIcons.sources,
                     size: 20,
                     color: primaryColor,
                   ),
@@ -221,7 +218,7 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
                   ),
                 ),
                 IconButton(
-                  icon: Icon(CupertinoIcons.xmark_circle_fill,
+                  icon: Icon(AppIcons.clear,
                       color: Theme.of(context).colorScheme.onSurfaceVariant, size: 24),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
@@ -245,7 +242,7 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
             ),
             child: Row(
               children: [
-                Icon(CupertinoIcons.clock,
+                Icon(AppIcons.time,
                     size: 16,
                     color: Theme.of(context).colorScheme.onSurfaceVariant),
                 const SizedBox(width: 8),
@@ -267,7 +264,7 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
                   padding: EdgeInsets.zero,
                   constraints:
                       const BoxConstraints(minWidth: 32, minHeight: 32),
-                  icon: Icon(CupertinoIcons.arrow_counterclockwise,
+                  icon: Icon(AppIcons.refresh,
                       size: 16,
                       color: Theme.of(context).colorScheme.onSurfaceVariant),
                   onPressed: () {
@@ -490,8 +487,7 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
                                                       const EdgeInsets.only(
                                                           right: 4),
                                                   child: Icon(
-                                                    CupertinoIcons
-                                                        .checkmark_seal_fill,
+                                                    AppIcons.verified,
                                                     size: 12,
                                                     color: primaryColor,
                                                   ),
@@ -558,8 +554,8 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
                                     // Selection Indicator
                                     Icon(
                                       isSelected
-                                          ? CupertinoIcons.checkmark_circle_fill
-                                          : CupertinoIcons.circle,
+                                          ? AppIcons.radioOn
+                                          : AppIcons.radioOff,
                                       color: isSelected
                                           ? primaryColor
                                           : Theme.of(context).colorScheme.onSurfaceVariant,
