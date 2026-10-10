@@ -132,9 +132,11 @@ Future<void> _startApp() async {
       }
       wasPlayingBeforeInterruption =
           audioHandler.playbackState.value.playing;
+      audioHandler.setInterrupted(true);
       unawaited(audioHandler.pause());
       return;
     }
+    if (event.type != AudioInterruptionType.duck) audioHandler.setInterrupted(false);
     switch (event.type) {
       case AudioInterruptionType.duck:
         unawaited(audioHandler.setVolume(1.0));

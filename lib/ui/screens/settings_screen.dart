@@ -38,6 +38,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isAmoled = false;
   bool _hasSpDcCookie = false;
   bool _savesCanvas = true;
+  bool _keepsLockScreen = false;
 
   String? _userName;
   String? _userEmail;
@@ -50,6 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _isHighQuality = StorageService.instance.isHighQuality;
     _isAmoled = StorageService.instance.isAmoledTheme;
     _savesCanvas = StorageService.instance.savesCanvasWithDownloads;
+    _keepsLockScreen = StorageService.instance.keepsLockScreenPlayer;
     _loadStorageSize();
     _loadUserInfo();
     // This screen lives for the whole session: the figure must follow the
@@ -191,6 +193,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         CanvasService.instance.setCanvasEnabled(val);
                       },
                     );
+                  },
+                ),
+                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                SwitchListTile.adaptive(
+                  title: Text('Tieni il player sulla schermata di blocco'),
+                  subtitle: Text(
+                      'Sperimentale. In pausa l\'app resta sveglia fino a un\'ora, '
+                      'così iOS non toglie il player. Consuma un po\' di batteria.'),
+                  value: _keepsLockScreen,
+                  activeTrackColor: primaryColor,
+                  onChanged: (val) {
+                    PlaybackLogService.instance
+                        .log('UI', 'settings: tieni il player sulla schermata di blocco = $val');
+                    setState(() => _keepsLockScreen = val);
+                    StorageService.instance.setKeepsLockScreenPlayer(val);
                   },
                 ),
               ]),

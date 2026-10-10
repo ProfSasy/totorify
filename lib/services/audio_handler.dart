@@ -108,6 +108,12 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   (AudioProcessingState, bool, int)? _lastPublished;
 
+  // Lock screen hold (experimental, see [_holdLockScreen]).
+  static const Duration _lockScreenHold = Duration(hours: 1);
+  VideoPlayerController? _silence;
+  Timer? _silenceLimit;
+  bool _interrupted = false;
+
   // Sleep timer state
   Timer? _sleepTimer;
   bool _sleepTimerEndOfTrack = false;
@@ -425,6 +431,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     if (song == null) return;
     _endGateOpen = true;
     _userPaused = false;
+    unawaited(_releaseLockScreen());
     _loading = true;
     _starting = false;
     _seeking = false;
@@ -801,6 +808,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       'play (daCapo=$_userStopped inCaricamento=$_loading)',
     );
     _userPaused = false;
+    unawaited(_releaseLockScreen());
     if (_userStopped && currentSong != null) {
       _userStopped = false;
       await _loadAndPlayCurrent();
@@ -834,12 +842,110 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       return;
     }
     await _player?.pause();
+    unawaited(_holdLockScreen());
+  }
+
+  // ── Lock screen hold (experimental) ───────────────────────────────────────
+  //
+  // iOS suspends an app that is paused in the background, and a few minutes
+  // later takes its player off the lock screen. An app that is still
+  // producing audio is not suspended: while paused, a silent loop is played
+  // (for an hour at most), so the player stays where it is. The price is
+  // that the app stays awake. Off unless turned on in Settings.
+
+  /// Told by the audio session when another app or a call takes the audio
+  /// (and when it gives it back). The silent loop must not hold on to the
+  /// audio then, nor start during the interruption.
+  void setInterrupted(bool interrupted) {
+    _interrupted = interrupted;
+    if (interrupted) unawaited(_releaseLockScreen());
+  }
+
+  Future<void> _holdLockScreen() async {
+    if (!StorageService.instance.keepsLockScreenPlayer ||
+        _interrupted ||
+        _silence != null ||
+        _player == null) {
+      return;
+    }
+    final log = PlaybackLogService.instance;
+    VideoPlayerController? controller;
+    try {
+      final file = File('${StorageService.instance.documentsPath}/silenzio.wav');
+      if (!await file.exists()) {
+        await file.writeAsBytes(_silentWav(seconds: 30), flush: true);
+      }
+      controller = VideoPlayerController.file(file, videoPlayerOptions: _audioOptions);
+      _silence = controller;
+      await controller.initialize().timeout(const Duration(seconds: 10));
+      // Playback resumed (or an interruption came) while it was starting.
+      if (!identical(_silence, controller) || !_userPaused || _interrupted) {
+        if (identical(_silence, controller)) _silence = null;
+        await _disposeQuietly(controller);
+        return;
+      }
+      await controller.setLooping(true);
+      await controller.play();
+      _silenceLimit?.cancel();
+      _silenceLimit = Timer(_lockScreenHold, () {
+        log.log('LOCK', 'in pausa da ${_lockScreenHold.inMinutes} minuti: lascio dormire l\'app');
+        unawaited(_releaseLockScreen());
+      });
+      log.log('LOCK', 'in pausa: tengo sveglia l\'app per il player della schermata di blocco');
+    } catch (e) {
+      log.error('LOCK', 'non riesco a tenere sveglia l\'app: $e');
+      if (identical(_silence, controller)) _silence = null;
+      await _disposeQuietly(controller);
+    }
+  }
+
+  Future<void> _releaseLockScreen() async {
+    _silenceLimit?.cancel();
+    _silenceLimit = null;
+    final controller = _silence;
+    _silence = null;
+    if (controller == null) return;
+    await _disposeQuietly(controller);
+    PlaybackLogService.instance.log('LOCK', 'app non più tenuta sveglia');
+  }
+
+  /// A WAV file of [seconds] of silence: 8-bit mono at 8 kHz, the smallest
+  /// thing the player accepts.
+  static Uint8List _silentWav({required int seconds}) {
+    const rate = 8000;
+    final samples = rate * seconds;
+    final data = ByteData(44 + samples);
+    void tag(int offset, String text) {
+      for (var i = 0; i < text.length; i++) {
+        data.setUint8(offset + i, text.codeUnitAt(i));
+      }
+    }
+
+    tag(0, 'RIFF');
+    data.setUint32(4, 36 + samples, Endian.little);
+    tag(8, 'WAVE');
+    tag(12, 'fmt ');
+    data.setUint32(16, 16, Endian.little); // size of the format block
+    data.setUint16(20, 1, Endian.little); // PCM
+    data.setUint16(22, 1, Endian.little); // mono
+    data.setUint32(24, rate, Endian.little);
+    data.setUint32(28, rate, Endian.little); // bytes per second
+    data.setUint16(32, 1, Endian.little); // bytes per sample
+    data.setUint16(34, 8, Endian.little); // bits per sample
+    tag(36, 'data');
+    data.setUint32(40, samples, Endian.little);
+    // 8-bit PCM is unsigned: silence is the middle value.
+    for (var i = 0; i < samples; i++) {
+      data.setUint8(44 + i, 0x80);
+    }
+    return data.buffer.asUint8List();
   }
 
   @override
   Future<void> stop() async {
     PlaybackLogService.instance.log('CMD', 'stop');
     _userStopped = true;
+    unawaited(_releaseLockScreen());
     _loading = false;
     _starting = false;
     _seeking = false;

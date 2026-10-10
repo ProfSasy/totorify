@@ -453,6 +453,8 @@ class StorageService {
 
   static const String _canvasSuffix = '.canvas.mp4';
 
+  String get documentsPath => _documentsPath;
+
   String get downloadsPath => '$_documentsPath/downloads';
 
   Future<String> getLocalAudioPath(String songId) async =>
@@ -625,6 +627,13 @@ class StorageService {
       _settingsBox.get('canvas_enabled', defaultValue: true) as bool? ?? true;
   Future<void> setCanvasEnabled(bool value) async =>
       _settingsBox.put('canvas_enabled', value);
+
+  /// Experimental: keep the app awake while paused, so that iOS does not
+  /// take the player off the lock screen after a few minutes.
+  bool get keepsLockScreenPlayer =>
+      _settingsBox.get('keep_lock_screen_player', defaultValue: false) as bool? ?? false;
+  Future<void> setKeepsLockScreenPlayer(bool value) async =>
+      _settingsBox.put('keep_lock_screen_player', value);
 
   /// Whether the Canvas video of a song is saved when the song is downloaded.
   bool get savesCanvasWithDownloads =>
