@@ -14,6 +14,7 @@ import '../../services/storage_service.dart';
 import '../../services/ytmusic_catalog_service.dart';
 import '../../services/spotify_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
+import '../app_navigation.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/app_cover.dart';
@@ -459,6 +460,7 @@ class _SearchScreenState extends State<SearchScreen> {
           final currentId = indicator.$2 ? indicator.$1 : null;
 
           return CustomScrollView(
+            controller: AppNavigation.rootScrollers[AppNavigation.searchTab],
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             physics: const BouncingScrollPhysics(
                 parent: AlwaysScrollableScrollPhysics()),
@@ -697,6 +699,7 @@ class _SearchScreenState extends State<SearchScreen> {
         );
 
     return CustomScrollView(
+      controller: AppNavigation.rootScrollers[AppNavigation.searchTab],
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       physics: const BouncingScrollPhysics(),
       slivers: [

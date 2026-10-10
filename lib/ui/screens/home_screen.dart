@@ -9,6 +9,7 @@ import '../../services/playback_log_service.dart';
 import '../../services/recommendation_service.dart';
 import '../../services/spotify_catalog_service.dart';
 import '../../services/storage_service.dart';
+import '../app_navigation.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
@@ -263,6 +264,7 @@ class _HomeScreenState extends State<HomeScreen> {
               color: cs.onPrimary,
               backgroundColor: cs.primary,
               child: CustomScrollView(
+                controller: AppNavigation.rootScrollers[AppNavigation.homeTab],
                 physics: const BouncingScrollPhysics(
                     parent: AlwaysScrollableScrollPhysics()),
                 slivers: [

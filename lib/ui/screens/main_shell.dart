@@ -11,7 +11,8 @@ import 'library_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
 
-/// The frame of the app: three tabs, each with its own stack of pages, and
+/// The frame of the app: three tabs, each with its own stack of pages (kept
+/// while the user is in another tab), and
 /// the tab bar and the mini player that stay on screen above all of them.
 class MainShell extends StatefulWidget {
   final AudioPlayerHandler audioHandler;
@@ -38,9 +39,6 @@ class _MainShellState extends State<MainShell> {
   void initState() {
     super.initState();
     AppNavigation.currentTab.value = 0;
-    for (final tab in AppNavigation.tabRoutes) {
-      tab.routes.clear();
-    }
     AppNavigation.settingsBuilder = (_) => SettingsScreen(
           audioHandler: widget.audioHandler,
           onThemeChanged: widget.onThemeChanged,
@@ -54,7 +52,6 @@ class _MainShellState extends State<MainShell> {
 
   Widget _tab(int index, Widget root) => Navigator(
         key: AppNavigation.tabKeys[index],
-        observers: [AppNavigation.tabRoutes[index]],
         onGenerateRoute: (settings) => CupertinoPageRoute<void>(
           settings: settings,
           builder: (_) => root,
@@ -63,18 +60,13 @@ class _MainShellState extends State<MainShell> {
 
   void _goToTab(int index) {
     if (index == _currentIndex) {
-      // Tapping the tab that is already open goes back to its first page.
-      AppNavigation.tabKeys[index].currentState?.popUntil((route) => route.isFirst);
+      AppNavigation.backToStart(index);
       return;
     }
     PlaybackLogService.instance.log('UI', 'tab ${_tabNames[index]}');
     FocusManager.instance.primaryFocus?.unfocus();
-    // The tab being left goes back to its first page: coming back to it
-    // must not show a page forgotten open there.
-    final left = _currentIndex;
     AppNavigation.currentTab.value = index;
     setState(() => _currentIndex = index);
-    AppNavigation.resetTab(left);
   }
 
   @override

@@ -7,6 +7,7 @@ import '../../services/audio_handler.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/playlist_importer_service.dart';
 import '../../services/storage_service.dart';
+import '../app_navigation.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/app_cover.dart';
@@ -150,6 +151,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 widget.audioHandler.playbackIndicator,
               ]),
               builder: (context, _) => CustomScrollView(
+                controller: AppNavigation.rootScrollers[AppNavigation.libraryTab],
                 physics: const BouncingScrollPhysics(
                     parent: AlwaysScrollableScrollPhysics()),
                 slivers: [
