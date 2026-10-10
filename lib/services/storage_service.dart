@@ -650,6 +650,25 @@ class StorageService {
   bool isFollowingArtist(String artistId) =>
       _cachedArtists.any((a) => a.id == artistId);
 
+  /// Replaces the followed artist [oldId] with [artist], keeping its place
+  /// in the list. Does nothing when [oldId] is not followed. Used when an
+  /// artist followed with an older version is found in the current catalog,
+  /// and to refresh the picture of one already followed.
+  Future<void> replaceFollowedArtist(String oldId, Artist artist) async {
+    final index = _cachedArtists.indexWhere((a) => a.id == oldId);
+    if (index == -1) return;
+    final stored = _artistsBox.get(oldId);
+    final followedAt = stored is Map ? stored['followedAt'] : null;
+    _cachedArtists[index] = artist;
+    _cachedArtists.removeWhere((a) => a.id == artist.id && !identical(a, artist));
+    followedArtistsNotifier.value = List.unmodifiable(_cachedArtists);
+    if (oldId != artist.id) await _artistsBox.delete(oldId);
+    await _artistsBox.put(artist.id, {
+      ...artist.toMap(),
+      'followedAt': followedAt ?? DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
   Future<void> toggleFollowArtist(Artist artist) async {
     if (isFollowingArtist(artist.id)) {
       _cachedArtists.removeWhere((a) => a.id == artist.id);

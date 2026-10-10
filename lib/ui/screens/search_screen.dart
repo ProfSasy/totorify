@@ -4,16 +4,16 @@ import 'package:audio_service/audio_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import '../../models/album.dart';
 import '../../models/artist.dart';
 import '../../models/playlist.dart';
 import '../../models/song.dart';
 import '../../services/audio_handler.dart';
 import '../../services/cover_art_service.dart';
-import '../../services/deezer_service.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/spotify_catalog_service.dart';
 import '../../services/storage_service.dart';
-import '../../services/ytmusic_service.dart';
+import '../../services/ytmusic_catalog_service.dart';
 import '../../services/spotify_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
 import '../theme/app_ambience.dart';
@@ -23,6 +23,7 @@ import '../widgets/app_skeleton.dart';
 import '../widgets/player_sheet.dart';
 import '../widgets/section_header.dart';
 import '../widgets/song_tile.dart';
+import 'album_screen.dart';
 import 'artist_screen.dart';
 import 'playlist_screen.dart';
 
@@ -47,6 +48,7 @@ class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   List<Song> _results = [];
   List<Artist> _artistResults = [];
+  List<Album> _albumResults = [];
   bool _isSearching = false;
   bool _hasSearched = false;
   Timer? _debounce;
@@ -81,6 +83,7 @@ class _SearchScreenState extends State<SearchScreen> {
       setState(() {
         _results = [];
         _artistResults = [];
+        _albumResults = [];
         _isSearching = false;
         _hasSearched = false;
       });
@@ -113,16 +116,14 @@ class _SearchScreenState extends State<SearchScreen> {
       _hasSearched = true;
     });
 
-    // Artists load alongside the songs; a failure only hides the row.
-    final artistsFuture = DeezerService.instance.searchArtists(clean, limit: 6);
-
-    List<Song> songs = [];
+    var found = const CatalogSearch();
     try {
-      songs = await YTMusicService.instance.search(clean);
+      found = await YTMusicCatalogService.instance.search(clean);
     } catch (e) {
-      debugPrint('SearchScreen YouTube error: $e');
+      debugPrint('SearchScreen catalog error: $e');
     }
-    
+    var songs = _rankTracks(clean, found);
+
     if (songs.isEmpty && SpotifyInternalAuthService.instance.hasSpDcCookie) {
       try {
         songs = await SpotifyService.instance.searchTracks(clean);
@@ -131,15 +132,47 @@ class _SearchScreenState extends State<SearchScreen> {
       }
     }
 
-    final artists = await artistsFuture;
-
     if (!mounted || generation != _searchGeneration) return;
+    PlaybackLogService.instance.log(
+      'UI',
+      'search: "$clean" -> ${songs.length} brani, ${found.artists.length} artisti, '
+      '${found.albums.length} album',
+    );
     setState(() {
       _results = songs;
-      _artistResults = artists;
+      _artistResults = found.artists.take(8).toList();
+      _albumResults = found.albums.take(10).toList();
       _isSearching = false;
     });
     unawaited(_upgradeCovers(songs, generation));
+  }
+
+  /// One list of tracks out of what the catalog found: its best match, the
+  /// songs, then the music videos (a song released only as a video is found
+  /// nowhere else). Tracks that carry every word of the query come first:
+  /// when the catalog has no such song it fills the list with loose matches.
+  List<Song> _rankTracks(String query, CatalogSearch found) {
+    final seen = <String>{};
+    final tracks = <Song>[
+      ?found.topSong,
+      ...found.songs,
+      ...found.videos
+          .where((video) => !YTMusicCatalogService.isAlteredVersion(video.title))
+          .take(8),
+    ].where((song) => seen.add(song.id)).toList();
+
+    final words = YTMusicCatalogService.normalize(query).split(' ');
+    bool matches(Song song) {
+      final text = ' ${YTMusicCatalogService.normalize(
+        '${song.title} ${song.artist} ${song.album ?? ''}',
+      )} ';
+      return words.every((word) => text.contains(' $word'));
+    }
+
+    return [
+      ...tracks.where(matches),
+      ...tracks.where((song) => !matches(song)),
+    ];
   }
 
   /// Video results come with a YouTube frame as artwork: swap in the
@@ -358,7 +391,7 @@ class _SearchScreenState extends State<SearchScreen> {
       );
     }
 
-    if (_results.isNotEmpty) {
+    if (_results.isNotEmpty || _artistResults.isNotEmpty || _albumResults.isNotEmpty) {
       final query = _searchController.text.trim().toLowerCase();
       final userPlaylists = query.isEmpty
           ? const <Playlist>[]
@@ -414,13 +447,14 @@ class _SearchScreenState extends State<SearchScreen> {
                   ),
                 ),
               ],
-              const SliverToBoxAdapter(
-                child: SectionHeader(
-                  'Brani',
-                  padding: EdgeInsets.fromLTRB(
-                      AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
+              if (_results.isNotEmpty)
+                const SliverToBoxAdapter(
+                  child: SectionHeader(
+                    'Brani',
+                    padding: EdgeInsets.fromLTRB(
+                        AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
+                  ),
                 ),
-              ),
               SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
@@ -439,6 +473,36 @@ class _SearchScreenState extends State<SearchScreen> {
                   childCount: _results.length,
                 ),
               ),
+              if (_albumResults.isNotEmpty) ...[
+                const SliverToBoxAdapter(
+                  child: SectionHeader(
+                    'Album, singoli ed EP',
+                    padding: EdgeInsets.fromLTRB(
+                        AppSpacing.lg, AppSpacing.xl, AppSpacing.lg, AppSpacing.md),
+                  ),
+                ),
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: 206,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                      itemCount: _albumResults.length,
+                      separatorBuilder: (_, _) =>
+                          const SizedBox(width: AppSpacing.md),
+                      itemBuilder: (context, index) => AlbumCard(
+                        album: _albumResults[index],
+                        onTap: () => AlbumScreen.open(
+                          context,
+                          widget.audioHandler,
+                          _albumResults[index],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
               if (playlistMatches > 0) ...[
                 const SliverToBoxAdapter(
                   child: SectionHeader(

@@ -32,6 +32,26 @@ class CanvasVideoPool {
       LinkedHashMap<String, VideoPlayerController>();
   final Map<String, Future<void>> _warming = {};
 
+  /// Disposes every warm video. Called when the app leaves the foreground:
+  /// several decoded videos are what makes iOS pick a paused app to close
+  /// first, and they are warmed again in a moment when it comes back.
+  void releaseAll() {
+    final controllers = _controllers.values.toList();
+    _controllers.clear();
+    _warming.clear();
+    for (final controller in controllers) {
+      try {
+        controller.dispose();
+      } catch (_) {
+        // Already disposed.
+      }
+    }
+    if (controllers.isNotEmpty) {
+      PlaybackLogService.instance
+          .log('CANVAS', 'app in background: liberati ${controllers.length} video caldi');
+    }
+  }
+
   /// Pre-initializes [url] in the background. While paused the controller
   /// only holds the metadata and first frame: no audio, no visible UI.
   Future<void> warm(String url) {

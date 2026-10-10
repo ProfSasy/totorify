@@ -192,7 +192,7 @@ class PlaylistScreen extends StatelessWidget {
                   slivers: [
                     // ── Spotify-Style Sliver App Bar with Dynamic Gradient ────────
                     SliverAppBar(
-                      expandedHeight: 330,
+                      expandedHeight: (current.description ?? '').isEmpty ? 330 : 352,
                       pinned: true,
                       elevation: 0,
                       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -287,6 +287,17 @@ class PlaylistScreen extends StatelessWidget {
                                       ),
                                     ),
                                     const SizedBox(height: 4),
+                                    if ((current.description ?? '').isNotEmpty) ...[
+                                      Text(
+                                        current.description!,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        textAlign: TextAlign.center,
+                                        style: AppText.tileSubtitle(
+                                            Theme.of(context).colorScheme),
+                                      ),
+                                      const SizedBox(height: 2),
+                                    ],
 
                                     // Metadati Spotify-like
                                     Text(

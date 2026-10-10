@@ -94,7 +94,9 @@ class CanvasService {
   static const Duration _storedMissTtl = Duration(days: 3);
   // Bump when the rules that pick a Canvas change: stored answers made by
   // the old rules are then ignored.
-  static const int _rulesVersion = 2;
+  static const int _rulesVersion = 3;
+  // How many candidates are checked for a Canvas that still exists.
+  static const int _maxAliveChecks = 6;
 
   // How many of an artist's canvases are compared. Each one costs a request
   // for its track details, once per session.
@@ -161,6 +163,8 @@ class CanvasService {
   final Map<String, Future<_AlbumCanvases?>> _albumCanvasInFlight = {};
   final Map<String, String> _albumOfTrack = {};
   DateTime? _searchBlockedUntil;
+  // Canvas files checked this session: true when the file is still there.
+  final Map<String, bool> _aliveUrls = {};
   Future<void> _musicBrainzQueue = Future.value();
   final ValueNotifier<bool> isCanvasEnabledNotifier = ValueNotifier<bool>(true);
 
@@ -234,6 +238,13 @@ class CanvasService {
         }
       }());
     }
+  }
+
+  /// The Canvas of [songId] could not be played, twice: no Canvas for a
+  /// while, so the player shows the cover instead of trying again.
+  void giveUp(String songId) {
+    _canvasCache[songId] = (null, DateTime.now().add(_failureTtl));
+    unawaited(StorageService.instance.removeCanvasAnswer(songId));
   }
 
   /// Forgets every answer. Logging in or out of Spotify changes what can be
@@ -331,7 +342,7 @@ class CanvasService {
     // tracks (single, album version) and only some carry the Canvas.
     for (final trackId in track.ids) {
       final own = await _fetchCanvas(trackId);
-      if (own.value != null) {
+      if (own.value != null && await _isAlive(own.value!)) {
         log.log('CANVAS', '"${song.title}": canvas proprio del brano (Spotify $trackId)');
         return own;
       }
@@ -677,8 +688,10 @@ class CanvasService {
       if (candInfo == null || songTitle.isEmpty) continue;
       if (DeezerService.normalize(candInfo.title) == songTitle &&
           candInfo.artists.contains(mainKey)) {
+        final url = await _currentUrlOf(candidate);
+        if (url == null) continue;
         log.log('CANVAS', '"${song.title}": canvas proprio del brano, trovato tra quelli di $mainArtist');
-        return (value: candidate.url, failed: false);
+        return (value: url, failed: false);
       }
     }
 
@@ -701,11 +714,14 @@ class CanvasService {
           position: place < 0 ? null : place,
           collaboration: songArtists.length >= 2,
         );
-        log.log(
-          'CANVAS',
-          '"${song.title}": canvas di "${chosen.info?.title}" (stesso album, "${album.title}")',
-        );
-        return (value: chosen.url, failed: false);
+        final url = await _currentUrlOf(chosen);
+        if (url != null) {
+          log.log(
+            'CANVAS',
+            '"${song.title}": canvas di "${chosen.info?.title}" (stesso album, "${album.title}")',
+          );
+          return (value: url, failed: false);
+        }
       }
     }
 
@@ -721,13 +737,19 @@ class CanvasService {
             c.info!.artists.contains(mainKey) &&
             date.difference(released).inHours.abs() < 24;
       }).toList();
-      if (sameRelease.isNotEmpty) {
-        var chosen = sameRelease.first;
-        for (final candidate in sameRelease) {
-          if (affinity(candidate) > affinity(chosen)) chosen = candidate;
-        }
-        log.log('CANVAS', '"${song.title}": canvas di "${chosen.info?.title}" (stessa uscita)');
-        return (value: chosen.url, failed: false);
+      // Most artists in common first; the sort keeps the provider's order
+      // among equals.
+      final ordered = [
+        for (final (i, c) in sameRelease.indexed) (i, c),
+      ]..sort((a, b) {
+          final byAffinity = affinity(b.$2).compareTo(affinity(a.$2));
+          return byAffinity != 0 ? byAffinity : a.$1.compareTo(b.$1);
+        });
+      final found = await _firstAlive([for (final entry in ordered) entry.$2]);
+      if (found != null) {
+        log.log('CANVAS',
+            '"${song.title}": canvas di "${found.canvas.info?.title}" (stessa uscita)');
+        return (value: found.url, failed: false);
       }
     }
 
@@ -753,31 +775,32 @@ class CanvasService {
           .toList();
       final top = related.fold<int>(0, (best, c) => affinity(c) > best ? affinity(c) : best);
       final shared = related.where((c) => affinity(c) == top).toList();
-      if (shared.isNotEmpty) {
-        final chosen = shared[_pickClosestRelease(
-          released,
-          [for (final c in shared) c.info?.released],
-        )];
+      final found = await _firstAlive(_byClosestRelease(released, shared));
+      if (found != null) {
+        final chosen = found.canvas;
         log.log(
           'CANVAS',
           '"${song.title}": canvas di "${chosen.info?.title}" '
           '(stessi artisti: ${chosen.info!.artists.intersection(songArtists).join(', ')})',
         );
-        return (value: chosen.url, failed: false);
+        return (value: found.url, failed: false);
       }
     }
 
     // Otherwise the main artist's Canvas released closest in time. When the
     // main artist has none at all (a producer, a newcomer), the other
     // artists credited on the track are its authors too.
-    final ofMainArtist = candidates.isNotEmpty;
-    final fallback = ofMainArtist ? candidates : fromOthers.values.toList();
-    if (fallback.isEmpty) return (value: null, failed: false);
+    var ofMainArtist = true;
+    var found = await _firstAlive(_byClosestRelease(released, candidates));
+    if (found == null) {
+      ofMainArtist = false;
+      found = await _firstAlive(
+        _byClosestRelease(released, fromOthers.values.toList()),
+      );
+    }
+    if (found == null) return (value: null, failed: false);
 
-    final chosen = fallback[_pickClosestRelease(
-      released,
-      [for (final c in fallback) c.info?.released],
-    )];
+    final chosen = found.canvas;
     final chosenDate = chosen.info?.released;
     final gap = (released != null && chosenDate != null)
         ? '${chosenDate.difference(released).inDays.abs()} giorni di distanza'
@@ -787,7 +810,77 @@ class CanvasService {
       '"${song.title}": canvas di "${chosen.info?.title ?? chosen.trackId}" '
       '(${ofMainArtist ? 'stesso artista' : 'di un altro artista del brano'}, $gap)',
     );
-    return (value: chosen.url, failed: false);
+    return (value: found.url, failed: false);
+  }
+
+  // ── Canvas files that are no longer there ─────────────────────────────────
+  //
+  // When an artist replaces or removes a Canvas, Spotify deletes the old
+  // file, but the public archive keeps listing it for a long time. A Canvas
+  // picked from a list is therefore checked before it is shown.
+
+  /// False when the file at [url] is gone. A check that cannot be made (no
+  /// network) counts as alive: the player will find out.
+  Future<bool> _isAlive(String url) async {
+    final known = _aliveUrls[url];
+    if (known != null) return known;
+    try {
+      final response = await http
+          .head(Uri.parse(url), headers: _browserHeaders)
+          .timeout(const Duration(seconds: 5));
+      final gone = response.statusCode == 404 ||
+          response.statusCode == 403 ||
+          response.statusCode == 410;
+      if (gone || response.statusCode == 200) {
+        if (_aliveUrls.length >= _maxTrackInfoCached) _aliveUrls.remove(_aliveUrls.keys.first);
+        _aliveUrls[url] = !gone;
+      }
+      return !gone;
+    } catch (e) {
+      debugPrint('CanvasService._isAlive: $e');
+      return true;
+    }
+  }
+
+  /// The Canvas of [candidate] as it is today: the listed file when it is
+  /// still there, otherwise the one its track has now. Null when the track
+  /// no longer has a Canvas.
+  Future<String?> _currentUrlOf(_ArtistCanvas candidate) async {
+    if (await _isAlive(candidate.url)) return candidate.url;
+    final fresh = (await _fetchCanvas(candidate.trackId)).value;
+    if (fresh != null && fresh != candidate.url && await _isAlive(fresh)) return fresh;
+    PlaybackLogService.instance.log(
+      'CANVAS',
+      'canvas di "${candidate.info?.title ?? candidate.trackId}" rimosso da Spotify, lo salto',
+    );
+    return null;
+  }
+
+  /// First of [ordered] whose Canvas still exists.
+  Future<({_ArtistCanvas canvas, String url})?> _firstAlive(List<_ArtistCanvas> ordered) async {
+    for (final candidate in ordered.take(_maxAliveChecks)) {
+      final url = await _currentUrlOf(candidate);
+      if (url != null) return (canvas: candidate, url: url);
+    }
+    return null;
+  }
+
+  /// [candidates] from the one released closest to [target] to the farthest.
+  /// Unknown dates go last; with no [target] the order is kept (the provider
+  /// lists the most looked-up canvases first).
+  static List<_ArtistCanvas> _byClosestRelease(DateTime? target, List<_ArtistCanvas> candidates) {
+    if (target == null) return candidates;
+    Duration gapOf(_ArtistCanvas c) {
+      final date = c.info?.released;
+      return date == null ? const Duration(days: 365000) : date.difference(target).abs();
+    }
+
+    final ordered = [for (final (i, c) in candidates.indexed) (i, c)]
+      ..sort((a, b) {
+        final byGap = gapOf(a.$2).compareTo(gapOf(b.$2));
+        return byGap != 0 ? byGap : a.$1.compareTo(b.$1);
+      });
+    return [for (final entry in ordered) entry.$2];
   }
 
   /// The Canvas of an album that suits a track best: for a collaboration one
@@ -965,24 +1058,6 @@ class CanvasService {
     };
   }
 
-  /// Index of the release date in [candidates] closest to [target]. Unknown
-  /// dates rank last; with no [target], or nothing dated, the first
-  /// candidate wins (the provider lists the most looked-up canvases first).
-  static int _pickClosestRelease(DateTime? target, List<DateTime?> candidates) {
-    if (target == null) return 0;
-    var best = 0;
-    Duration? bestGap;
-    for (var i = 0; i < candidates.length; i++) {
-      final date = candidates[i];
-      if (date == null) continue;
-      final gap = date.difference(target).abs();
-      if (bestGap == null || gap < bestGap) {
-        bestGap = gap;
-        best = i;
-      }
-    }
-    return best;
-  }
 
   Future<DateTime?> _releaseDateFromDeezer(Song song) async {
     final deezerId = await _deezerTrackId(song);

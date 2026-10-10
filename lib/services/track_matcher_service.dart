@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../models/song.dart';
 import 'storage_service.dart';
+import 'ytmusic_catalog_service.dart';
 import 'ytmusic_service.dart';
 import 'playback_log_service.dart';
 
@@ -325,13 +326,15 @@ class TrackMatcherService {
         fromMusicCatalog: true,
       );
 
-      // Nothing, or nothing convincing: widen to plain YouTube.
+      // Nothing, or nothing convincing: the song may have been released
+      // only as a video. Music videos first, then plain YouTube.
       if (best == null || best.$2 < _weakScore) {
-        final wider = _bestOf(
-          await YTMusicService.instance.explodeSearch('${song.title} ${song.artist} audio'),
-          song,
-        );
-        if (wider != null && (best == null || wider.$2 > best.$2)) best = wider;
+        final wider = await Future.wait([
+          YTMusicCatalogService.instance.searchVideos('$cleanTitle $cleanArtist'),
+          YTMusicService.instance.explodeSearch('${song.title} ${song.artist} audio'),
+        ]);
+        final video = _bestOf([...wider[0], ...wider[1]], song);
+        if (video != null && (best == null || video.$2 > best.$2)) best = video;
       }
 
       if (best == null) {
@@ -393,7 +396,10 @@ class TrackMatcherService {
         final query = '$cleanTitle $cleanArtist';
 
         final results = await YTMusicService.instance.search(query);
-        final explode = await YTMusicService.instance.explodeSearch('$query audio');
+        final explode = [
+          ...await YTMusicCatalogService.instance.searchVideos(query),
+          ...await YTMusicService.instance.explodeSearch('$query audio'),
+        ];
 
         // The catalog entry wins when a video is in both lists.
         final catalogIds = {for (final r in results) r.id};

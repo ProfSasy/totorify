@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'services/audio_handler.dart';
 import 'services/auth_service.dart';
 import 'services/canvas_service.dart';
+import 'services/canvas_video_pool.dart';
 import 'services/download_service.dart';
 import 'services/playback_log_service.dart';
 import 'services/storage_service.dart';
@@ -210,6 +211,7 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     PlaybackLogService.instance.log('APP', 'lifecycle=${state.name}');
+    if (state == AppLifecycleState.paused) CanvasVideoPool.instance.releaseAll();
   }
 
   void _refreshTheme() {

@@ -12,7 +12,8 @@ Nata come client ispirato a [Kreate](https://github.com/knighthat/Kreate) (fork 
 - **Copertine originali**: le miniature video di YouTube vengono sostituite con la copertina ufficiale dell'album.
 - **Canvas**: il video in loop di Spotify dietro al player. Se il brano non ne ha uno, viene usato quello di un altro brano dello stesso album, poi (per i feat) di un brano con almeno due degli stessi artisti, infine quello dello stesso artista con la data di uscita più vicina.
 - **Testi sincronizzati**: da LRCLIB, con ripiego su altre fonti.
-- **Artisti**: pagina artista con brani popolari e artisti simili; gli artisti seguiti compaiono in Libreria.
+- **Ricerca**: brani, video musicali, artisti, album, singoli ed EP dal catalogo di YouTube Music.
+- **Artisti e album**: pagina artista con brani popolari, album, singoli ed EP, collaborazioni, artisti simili e biografia; ogni uscita ha la sua pagina con l'elenco dei brani. Gli artisti seguiti compaiono in Libreria.
 - **Consigli**: basati sul brano in ascolto e sulla cronologia; alimentano Smart Shuffle, la sezione "Consigliati" della coda e la riproduzione automatica a fine coda.
 - **Libreria**: preferiti, cronologia, playlist e import di playlist Spotify o YouTube da link.
 - **Timer di spegnimento**: a tempo o a fine brano.
@@ -37,8 +38,9 @@ lib/
                               file locale per l'offline)
     playback_queue.dart       regole della coda: ordine, shuffle, repeat
     track_matcher_service.dart  da brano di catalogo a video YouTube
-    ytmusic_service.dart      ricerca e stream YouTube Music
-    deezer_service.dart       catalogo pubblico: copertine, artisti, radio
+    ytmusic_service.dart      stream audio e ricerca delle sorgenti su YouTube
+    ytmusic_catalog_service.dart  catalogo: ricerca, pagine artista, album
+    deezer_service.dart       metadati pubblici: copertine, date di uscita, radio
     recommendation_service.dart  consigli
     canvas_service.dart       Canvas di Spotify
     lyrics_service.dart       testi

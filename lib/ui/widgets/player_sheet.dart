@@ -1110,7 +1110,17 @@ class _PlayerSheetState extends State<PlayerSheet>
       keepWarmWhenDisposed: () => _currentCanvasUrl == url,
       onFailed: () {
         final song = widget.audioHandler.currentSong;
-        if (song == null || _canvasRetriedFor == song.id || !mounted) {
+        if (song == null || !mounted) return;
+        if (_canvasRetriedFor == song.id) {
+          // The replacement failed as well: the normal cover comes back,
+          // instead of the enlarged one that stands in for a video.
+          PlaybackLogService.instance
+              .log('CANVAS', 'nessun video riproducibile per "${song.title}", mostro la copertina');
+          CanvasService.instance.giveUp(song.id);
+          setState(() {
+            _currentCanvasUrl = null;
+            _isLoadingCanvas = false;
+          });
           return;
         }
         _canvasRetriedFor = song.id;

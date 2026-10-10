@@ -21,8 +21,9 @@ class DeezerTrackMatch {
   });
 }
 
-/// Public Deezer API (no key, no account). Used as the metadata catalog:
-/// official album covers, artist pages and artist radio. Audio never comes
+/// Public Deezer API (no key, no account). Used for metadata: official
+/// album covers, release dates and artist radio. Artist pages come from
+/// [YTMusicCatalogService], which also knows the smaller artists. Audio never comes
 /// from Deezer: songs built here carry a `deezer_` id that the track matcher
 /// resolves to a YouTube stream like `spotify_` and `itunes_` ids.
 class DeezerService {
@@ -112,7 +113,6 @@ class DeezerService {
       id: raw['id'].toString(),
       name: raw['name'] as String? ?? '',
       imageUrl: (raw['picture_xl'] ?? raw['picture_big'] ?? raw['picture_medium'] ?? '') as String,
-      fans: (raw['nb_fan'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -254,27 +254,26 @@ class DeezerService {
 
   // ── Artists ───────────────────────────────────────────────────────────────
 
-  Future<List<Artist>> searchArtists(String query, {int limit = 8}) async {
-    final clean = query.trim();
-    if (clean.isEmpty) return [];
-    final data = await _get('/search/artist?q=${Uri.encodeQueryComponent(clean)}&limit=$limit');
-    return [
-      for (final raw in _list(data)) ?_artistFrom(raw),
-    ];
-  }
-
-  /// Best artist for a display name taken from a song ("Annalisa", "Daft Punk - Topic").
+  /// Deezer artist for a display name taken from a song ("Annalisa", "Daft
+  /// Punk - Topic"). Null when nobody has exactly that name: a namesake's
+  /// radio would be worse than none.
   Future<Artist?> findArtist(String name) async {
     final wanted = normalize(primaryArtist(name));
     if (wanted.isEmpty) return null;
-    final results = await searchArtists(primaryArtist(name), limit: 10);
+    final query = Uri.encodeQueryComponent(primaryArtist(name));
+    final results = _list(await _get('/search/artist?q=$query&limit=10'));
     // Several artists can share a name: the one meant is the most followed.
-    Artist? best;
-    for (final artist in results) {
-      if (normalize(artist.name) != wanted) continue;
-      if (best == null || artist.fans > best.fans) best = artist;
+    Map<String, dynamic>? best;
+    var bestFans = -1;
+    for (final raw in results) {
+      if (normalize(raw['name'] as String? ?? '') != wanted) continue;
+      final fans = (raw['nb_fan'] as num?)?.toInt() ?? 0;
+      if (fans > bestFans) {
+        best = raw;
+        bestFans = fans;
+      }
     }
-    return best ?? (results.isNotEmpty ? results.first : null);
+    return _artistFrom(best);
   }
 
   /// Artist of [song]: taken from the matched track when possible, which is
@@ -284,17 +283,6 @@ class DeezerService {
     if (match != null) return match.artist;
     return findArtist(song.artist);
   }
-
-  Future<Artist?> getArtist(String artistId) async =>
-      _artistFrom(await _get('/artist/$artistId'));
-
-  Future<List<Song>> artistTopSongs(String artistId, {int limit = 30}) async =>
-      _songsFrom(await _get('/artist/$artistId/top?limit=$limit'));
-
-  Future<List<Artist>> relatedArtists(String artistId, {int limit = 12}) async => [
-        for (final raw in _list(await _get('/artist/$artistId/related?limit=$limit')))
-          ?_artistFrom(raw),
-      ];
 
   /// A mix of the artist and similar artists: the base for recommendations.
   Future<List<Song>> artistRadio(String artistId, {int limit = 40}) async =>
