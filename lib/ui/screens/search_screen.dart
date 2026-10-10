@@ -338,20 +338,25 @@ class _SearchScreenState extends State<SearchScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
+      // The field sits between two slots whose content changes as soon as
+      // something is typed (the lens becomes a back arrow, a clear button
+      // appears). The slots keep their place and the field its key: were
+      // the field rebuilt from scratch, it would lose the focus and the
+      // keyboard would close under the user's fingers.
       child: Row(
         children: [
-          if (_searching)
-            IconButton(
-              tooltip: 'Chiudi la ricerca',
-              icon: const Icon(AppIcons.back, color: ink, size: 19),
-              onPressed: _leaveSearch,
-            )
-          else
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
-              child: Icon(AppIcons.search, color: ink, size: 24),
-            ),
+          SizedBox(
+            width: 48,
+            child: _searching
+                ? IconButton(
+                    tooltip: 'Chiudi la ricerca',
+                    icon: const Icon(AppIcons.back, color: ink, size: 19),
+                    onPressed: _leaveSearch,
+                  )
+                : const Icon(AppIcons.search, color: ink, size: 24),
+          ),
           Expanded(
+            key: const ValueKey('search_field'),
             child: TextField(
               controller: _searchController,
               focusNode: _searchFocus,
@@ -377,23 +382,22 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
             ),
           ),
-          if (_isSearching)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 14),
-              child: CupertinoActivityIndicator(color: ink, radius: 9),
-            )
-          else if (_searchController.text.isNotEmpty)
-            IconButton(
-              tooltip: 'Cancella',
-              icon: const Icon(AppIcons.clear, color: hint, size: 20),
-              onPressed: () {
-                _searchController.clear();
-                _onQueryChanged('');
-                _searchFocus.requestFocus();
-              },
-            )
-          else
-            const SizedBox(width: AppSpacing.md),
+          SizedBox(
+            width: 48,
+            child: _isSearching
+                ? const CupertinoActivityIndicator(color: ink, radius: 9)
+                : _searchController.text.isNotEmpty
+                    ? IconButton(
+                        tooltip: 'Cancella',
+                        icon: const Icon(AppIcons.clear, color: hint, size: 20),
+                        onPressed: () {
+                          _searchController.clear();
+                          _onQueryChanged('');
+                          _searchFocus.requestFocus();
+                        },
+                      )
+                    : null,
+          ),
         ],
       ),
     );

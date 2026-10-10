@@ -240,15 +240,34 @@ class DeezerService {
     );
   }
 
+  final Map<String, Future<({String? isrc, DateTime? released, String? album})?>> _details = {};
+
   /// Details of a Deezer track: its ISRC (the code that identifies one
-  /// recording in every catalog) and release date. Null on failure.
-  Future<({String? isrc, DateTime? released})?> trackDetails(String trackId) async {
+  /// recording in every catalog), its release date and the title of its
+  /// album. Null on failure. Asked once per track: the answer is shared by
+  /// everyone who needs a part of it.
+  Future<({String? isrc, DateTime? released, String? album})?> trackDetails(String trackId) {
+    final known = _details[trackId];
+    if (known != null) return known;
+    if (_details.length >= 300) _details.remove(_details.keys.first);
+    final future = _trackDetails(trackId);
+    _details[trackId] = future;
+    // A failure is asked again the next time.
+    future.then((details) {
+      if (details == null) _details.remove(trackId);
+    });
+    return future;
+  }
+
+  Future<({String? isrc, DateTime? released, String? album})?> _trackDetails(String trackId) async {
     final data = await _get('/track/$trackId');
     if (data is! Map) return null;
     final isrc = data['isrc'] as String?;
+    final album = data['album'] is Map ? data['album']['title'] as String? : null;
     return (
       isrc: (isrc == null || isrc.isEmpty) ? null : isrc,
       released: DateTime.tryParse(data['release_date'] as String? ?? ''),
+      album: (album == null || album.isEmpty) ? null : album,
     );
   }
 

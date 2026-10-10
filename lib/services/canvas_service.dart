@@ -36,6 +36,17 @@ class _TrackInfo {
   });
 }
 
+/// What Spotify's public page of an artist lists: the releases (albums,
+/// singles, appearances) and the most played tracks.
+class _Discography {
+  final List<({String id, String name, int? year})> releases;
+
+  /// Normalized title → track id.
+  final Map<String, String> topTracks;
+
+  const _Discography(this.releases, this.topTracks);
+}
+
 /// A Canvas an artist uploaded for one of their tracks.
 class _ArtistCanvas {
   final String trackId;
@@ -70,9 +81,11 @@ class _AlbumCanvases {
 ///    when its artist has none at all.
 ///
 /// Finding the track's own Canvas needs its Spotify id. A logged-in account
-/// gets it from Spotify by ISRC. Without a login it comes from MusicBrainz
-/// (by ISRC), from the artist's public top tracks, or from the list of the
-/// artist's known canvases.
+/// asks Spotify by ISRC (a search Spotify often refuses). Otherwise it is
+/// read from the artist's public page: the release the song is on, then the
+/// track with its title. Failing that, from MusicBrainz (by ISRC), from the
+/// artist's public top tracks, or from the list of the artist's known
+/// canvases.
 ///
 /// Sources: Spotify's own canvas endpoint when logged in, and
 /// canvasdownloader.com (same per-track data, plus every Canvas of an
@@ -95,7 +108,7 @@ class CanvasService {
   static const Duration _storedMissTtl = Duration(days: 3);
   // Bump when the rules that pick a Canvas change: stored answers made by
   // the old rules are then ignored.
-  static const int _rulesVersion = 3;
+  static const int _rulesVersion = 4;
   // How many candidates are checked for a Canvas that still exists.
   static const int _maxAliveChecks = 6;
 
@@ -109,6 +122,8 @@ class CanvasService {
   // Other artists of a collaboration whose canvases are looked at as well.
   static const int _maxCollaborators = 2;
   static const int _maxAlbumTracks = 40;
+  // Releases of an artist opened to find the one a song is on.
+  static const int _maxReleasesOpened = 4;
   static const int _maxAlbumsCached = 40;
   // Spotify answers 429 to searches for long stretches: not worth asking
   // again at every song.
@@ -140,6 +155,9 @@ class CanvasService {
     r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
     dotAll: true,
   );
+  // The state Spotify's web page of an artist carries, as base64 JSON.
+  static final RegExp _pageState =
+      RegExp(r'<script id="initialState"[^>]*>([^<]+)</script>');
   static final RegExp _spotifyTrackUrl =
       RegExp(r'open\.spotify\.com/track/([A-Za-z0-9]+)');
   // The album of a track, in the metadata of its public page.
@@ -163,6 +181,7 @@ class CanvasService {
   final Map<String, _AlbumCanvases> _albumCanvasCache = {};
   final Map<String, Future<_AlbumCanvases?>> _albumCanvasInFlight = {};
   final Map<String, String> _albumOfTrack = {};
+  final Map<String, _Discography> _discographyCache = {};
   DateTime? _searchBlockedUntil;
   // Canvas files checked this session: true when the file is still there.
   final Map<String, bool> _aliveUrls = {};
@@ -440,6 +459,15 @@ class CanvasService {
       }
     }
 
+    // No login needed: the artist's public page lists the releases; the one
+    // the song is on has the track.
+    final listed = await _fromArtistDiscography(song);
+    failed = failed || listed.failed;
+    if (listed.value != null) {
+      await StorageService.instance.cacheSpotifyId(song.id, listed.value!);
+      return (ids: [listed.value!], failed: false);
+    }
+
     // No login needed: MusicBrainz links recordings to Spotify by ISRC.
     if (isrc != null) {
       final linked = await _spotifyIdFromMusicBrainz(isrc);
@@ -509,6 +537,146 @@ class CanvasService {
     });
     _musicBrainzQueue = result.then((_) => Future<void>.delayed(_musicBrainzInterval));
     return result;
+  }
+
+  /// Finds the song among its artist's releases, as Spotify's public page
+  /// lists them: the release with the name of the song's album (or of the
+  /// song itself, for a single), opened to read the id of the track with
+  /// the song's title.
+  Future<_Lookup> _fromArtistDiscography(Song song) async {
+    final wanted = DeezerService.normalize(song.title);
+    if (wanted.isEmpty) return (value: null, failed: false);
+
+    final artist = await _providerArtist(DeezerService.primaryArtist(song.artist), null);
+    if (artist.failed) return (value: null, failed: true);
+    final artistId = artist.artistId;
+    if (artistId == null) return (value: null, failed: false);
+
+    final discography = await _discography(artistId);
+    if (discography == null) return (value: null, failed: true);
+
+    final popular = discography.topTracks[wanted];
+    if (popular != null) return (value: popular, failed: false);
+
+    // What is known about the release: the album the catalog names, and
+    // what Deezer says of the matched track.
+    final deezerId = await _deezerTrackId(song);
+    final details = deezerId == null ? null : await DeezerService.instance.trackDetails(deezerId);
+    final albums = {
+      for (final name in [song.album, details?.album])
+        if (DeezerService.normalize(name ?? '').isNotEmpty) DeezerService.normalize(name!),
+    };
+    final year = details?.released?.year;
+
+    // Most likely first: the album by name, a single named like the song,
+    // then whatever came out the same year.
+    int rank(({String id, String name, int? year}) release) {
+      final name = DeezerService.normalize(release.name);
+      if (albums.contains(name)) return 0;
+      if (name == wanted) return 1;
+      if (year != null && release.year == year) return 2;
+      return 3;
+    }
+
+    final likely = [
+      for (final (i, release) in discography.releases.indexed)
+        if (rank(release) < 3) (rank(release), i, release),
+    ]..sort((a, b) => a.$1 != b.$1 ? a.$1.compareTo(b.$1) : a.$2.compareTo(b.$2));
+
+    var failed = false;
+    for (final (_, _, release) in likely.take(_maxReleasesOpened)) {
+      final entity = await _embedEntity('album', release.id);
+      if (entity == null) {
+        failed = true;
+        continue;
+      }
+      for (final track in entity['trackList'] as List<dynamic>? ?? const []) {
+        final uri = track['uri'] as String? ?? '';
+        if (DeezerService.normalize(track['title'] as String? ?? '') != wanted ||
+            !uri.startsWith('spotify:track:')) {
+          continue;
+        }
+        final trackId = uri.split(':').last;
+        // Its album is known already: no need to ask for it again.
+        _albumOfTrack[trackId] = release.id;
+        PlaybackLogService.instance.log(
+          'CANVAS',
+          '"${song.title}": è il brano Spotify $trackId (da "${release.name}")',
+        );
+        return (value: trackId, failed: false);
+      }
+    }
+    return (value: null, failed: failed);
+  }
+
+  /// Releases and top tracks of an artist, from the state Spotify embeds in
+  /// the artist's public web page (no login). Null on failure.
+  Future<_Discography?> _discography(String artistId) async {
+    final cached = _discographyCache[artistId];
+    if (cached != null) return cached;
+    try {
+      final response = await appHttp
+          .get(Uri.parse('https://open.spotify.com/artist/$artistId'), headers: _browserHeaders)
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        debugPrint('CanvasService._discography $artistId: HTTP ${response.statusCode}');
+        return null;
+      }
+      final encoded = _pageState.firstMatch(response.body)?.group(1)?.trim();
+      if (encoded == null) {
+        debugPrint('CanvasService._discography $artistId: pagina senza dati');
+        return null;
+      }
+      final state = json.decode(utf8.decode(base64.decode(base64.normalize(encoded))));
+      final artist = state['entities']?['items']?['spotify:artist:$artistId'];
+      if (artist is! Map) return null;
+
+      final releases = <String, ({String id, String name, int? year})>{};
+      void add(dynamic section) {
+        for (final item in section?['items'] as List<dynamic>? ?? const []) {
+          // A section lists releases directly, or groups of them.
+          final entries = item is Map && item['releases'] is Map
+              ? item['releases']['items'] as List<dynamic>? ?? const []
+              : [item];
+          for (final entry in entries) {
+            if (entry is! Map) continue;
+            final uri = entry['uri'] as String? ?? '';
+            final name = entry['name'] as String? ?? '';
+            if (!uri.startsWith('spotify:album:') || name.isEmpty) continue;
+            final id = uri.split(':').last;
+            releases.putIfAbsent(
+              id,
+              () => (id: id, name: name, year: (entry['date']?['year'] as num?)?.toInt()),
+            );
+          }
+        }
+      }
+
+      final discography = artist['discography'];
+      for (final section in const ['albums', 'singles', 'compilations', 'popularReleasesAlbums']) {
+        add(discography?[section]);
+      }
+      add(artist['relatedContent']?['appearsOn']);
+
+      final topTracks = <String, String>{};
+      for (final item in discography?['topTracks']?['items'] as List<dynamic>? ?? const []) {
+        final track = item is Map ? item['track'] : null;
+        final uri = track is Map ? track['uri'] as String? ?? '' : '';
+        final title = DeezerService.normalize(track is Map ? track['name'] as String? ?? '' : '');
+        if (title.isNotEmpty && uri.startsWith('spotify:track:')) {
+          topTracks.putIfAbsent(title, () => uri.split(':').last);
+        }
+      }
+
+      final result = _Discography(releases.values.toList(), topTracks);
+      if (_discographyCache.length >= _maxArtistsCached) {
+        _discographyCache.remove(_discographyCache.keys.first);
+      }
+      return _discographyCache[artistId] = result;
+    } catch (e) {
+      debugPrint('CanvasService._discography $artistId: $e');
+      return null;
+    }
   }
 
   /// Looks for the song among the ten tracks Spotify shows publicly for its
