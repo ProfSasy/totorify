@@ -46,6 +46,10 @@ class ConnectController {
   Map<String, String>? _libraryThere;
   Timer? _libraryDebounce;
 
+  // Changes the device made to its copy, received before it was known that
+  // the copy is of this device's library.
+  dynamic _earlyLibraryOps;
+
   /// Name of the owner of the library the device that is playing keeps,
   /// when it is not this device: its library is not replaced unless the
   /// user asks to (see [sendLibrary]).
@@ -308,6 +312,8 @@ class ConnectController {
   /// After connecting: sends what the device lacks of this device's library,
   /// when it keeps one and it is this device's (or nobody's yet).
   void _syncLibrary(_Session session, Map<String, dynamic> welcome, {bool force = false}) {
+    final early = _earlyLibraryOps;
+    _earlyLibraryOps = null;
     _forgetLibraryThere();
     final there = LibrarySync.describedBy(welcome);
     if (there == null) return;
@@ -321,6 +327,32 @@ class ConnectController {
       ownerId: mine,
       ownerName: _name,
       theirs: there.ownerId == mine ? there.revisions : const {},
+    );
+    if (early != null && there.ownerId == mine) unawaited(_applyLibraryOps(session, early));
+  }
+
+  /// The device changed its copy of this device's library (a heart given
+  /// from the TV): the same is done here, where the library lives, and the
+  /// device is told. What changes here then goes back to it as usual.
+  Future<void> _applyLibraryOps(_Session session, dynamic raw) async {
+    var upTo = 0;
+    var applied = 0;
+    for (final item in raw is List ? raw : const <dynamic>[]) {
+      if (item is! Map) continue;
+      final op = Map<String, dynamic>.from(item);
+      try {
+        await StorageService.instance.applyLibraryOp(op);
+        applied++;
+      } catch (e) {
+        debugPrint('ConnectController._applyLibraryOps: $e');
+      }
+      final n = op['n'];
+      if (n is int && n > upTo) upTo = n;
+    }
+    session.send(ConnectProtocol.libraryOpsDone, {'upTo': upTo});
+    PlaybackLogService.instance.log(
+      'CONNECT',
+      'da "${session.name}": $applied modifiche alla libreria',
     );
   }
 
@@ -430,6 +462,15 @@ class ConnectController {
         final songs = ConnectProtocol.decodeSongs(message['songs']);
         if (songs.isNotEmpty) {
           handler.applyRemoteQueue(songs, currentId: message['currentId'] as String?);
+        }
+      case ConnectProtocol.libraryOps:
+        final session = _session;
+        if (session != null && _libraryThere != null) {
+          unawaited(_applyLibraryOps(session, message['ops']));
+        } else {
+          // Right after connecting, before the device said whose library
+          // it keeps.
+          _earlyLibraryOps = message['ops'];
         }
     }
   }

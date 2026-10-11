@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -297,6 +298,10 @@ class StorageService {
         _favoritedAtKey: DateTime.now().millisecondsSinceEpoch,
       });
     }
+    _recordLibraryOp(opFavorite, song.id, {
+      'on': _favoriteIds.contains(song.id),
+      'song': song.toMap(),
+    });
   }
 
   // --- HISTORY ---
@@ -310,6 +315,7 @@ class StorageService {
     }
     historyNotifier.value = List.unmodifiable(_cachedHistory);
     await _historyBox.put('recent_songs', _cachedHistory.map((s) => s.toMap()).toList());
+    _recordLibraryOp(opPlayed, song.id, {'song': song.toMap()});
   }
 
   Future<void> clearHistory() async {
@@ -733,6 +739,10 @@ class StorageService {
         'followedAt': DateTime.now().millisecondsSinceEpoch,
       });
     }
+    _recordLibraryOp(opFollow, artist.id, {
+      'on': isFollowingArtist(artist.id),
+      'artist': artist.toMap(),
+    });
   }
 
   // --- LIBRARY COPY ---
@@ -885,10 +895,99 @@ class StorageService {
       if (previous?.id == owner.id) ...libraryRevisions,
       section: revision,
     });
+    // Nor are the changes made here to the previous owner's library.
+    if (previous != null && previous.id != owner.id) unawaited(_settingsBox.delete('library_ops'));
     await ownerSaved;
     await revisionsSaved;
     _loadInitialData();
     libraryOwnerNotifier.value = libraryOwner;
+
+    // What was changed here and the owner has not taken yet is put back on
+    // top of what it sent.
+    _replayingOps++;
+    try {
+      for (final op in pendingLibraryOps) {
+        if (_sectionOfOp[op['op']] == section) await applyLibraryOp(op);
+      }
+    } finally {
+      _replayingOps--;
+    }
+  }
+
+  // --- CHANGES MADE ON A COPY ---
+  // What is changed on a device that keeps another one's library (a heart
+  // given from the TV) belongs to the library only once its owner has it:
+  // each change is kept as an operation, sent to the owner when it is
+  // connected and dropped when the owner says it applied it.
+  static const String opFavorite = 'favorite';
+  static const String opFollow = 'follow';
+  static const String opPlayed = 'played';
+  static const Map<String, String> _sectionOfOp = {
+    opFavorite: sectionFavorites,
+    opFollow: sectionArtists,
+    opPlayed: sectionHistory,
+  };
+  static const int _maxLibraryOps = 300;
+
+  /// Number of the last change recorded: it moves when there is one to send.
+  final ValueNotifier<int> libraryOpsNotifier = ValueNotifier<int>(0);
+  int _replayingOps = 0;
+
+  /// The changes made here that the owner of the library has not taken yet,
+  /// oldest first.
+  List<Map<String, dynamic>> get pendingLibraryOps {
+    final raw = _settingsBox.get('library_ops');
+    return [
+      for (final item in raw is List ? raw : const <dynamic>[])
+        if (item is Map) Map<String, dynamic>.from(item),
+    ];
+  }
+
+  /// Keeps a change to [subject] (a song, an artist) for the owner of the
+  /// library. Nothing is kept where the library is this device's own. A
+  /// later change of the same kind to the same subject replaces the earlier.
+  void _recordLibraryOp(String kind, String subject, Map<String, dynamic> data) {
+    if (_replayingOps > 0 || libraryOwner == null) return;
+    final ops = pendingLibraryOps
+      ..removeWhere((op) => op['op'] == kind && op['subject'] == subject);
+    final n = (_settingsBox.get('library_op_count') as int? ?? 0) + 1;
+    ops.add({'n': n, 'op': kind, 'subject': subject, ...data});
+    if (ops.length > _maxLibraryOps) ops.removeRange(0, ops.length - _maxLibraryOps);
+    unawaited(_settingsBox.put('library_op_count', n));
+    unawaited(_settingsBox.put('library_ops', ops));
+    libraryOpsNotifier.value = n;
+  }
+
+  /// The owner applied the changes numbered up to [upTo].
+  Future<void> forgetLibraryOps(int upTo) async {
+    final ops = pendingLibraryOps..removeWhere((op) => (op['n'] as int? ?? 0) <= upTo);
+    await _settingsBox.put('library_ops', ops);
+  }
+
+  /// Makes a change another device recorded ([pendingLibraryOps] there).
+  /// Applying one twice changes nothing.
+  Future<void> applyLibraryOp(Map<String, dynamic> op) async {
+    Map<String, dynamic>? map(String key) =>
+        op[key] is Map ? Map<String, dynamic>.from(op[key] as Map) : null;
+
+    switch (op['op']) {
+      case opFavorite:
+        final song = map('song');
+        if (song == null || song['id'] is! String) return;
+        if (isFavorite(song['id'] as String) != (op['on'] == true)) {
+          await toggleFavorite(Song.fromMap(song));
+        }
+      case opFollow:
+        final artist = map('artist');
+        if (artist == null || artist['id'] == null) return;
+        if (isFollowingArtist(artist['id'].toString()) != (op['on'] == true)) {
+          await toggleFollowArtist(Artist.fromMap(artist));
+        }
+      case opPlayed:
+        final song = map('song');
+        if (song == null || song['id'] is! String) return;
+        await addToHistory(Song.fromMap(song));
+    }
   }
 
   // --- RECENT SEARCHES ---

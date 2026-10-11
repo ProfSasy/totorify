@@ -49,6 +49,9 @@ class ConnectReceiver {
 
   HttpServer? _server;
   final Set<WebSocket> _controllers = {};
+
+  // Who each controller said it is.
+  final Map<WebSocket, String> _controllerIds = {};
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   Timer? _ticker;
 
@@ -81,6 +84,8 @@ class ConnectReceiver {
       if (_controllers.isNotEmpty && handler.playbackState.value.playing) _broadcastState();
     });
 
+    if (keepsLibrary) StorageService.instance.libraryOpsNotifier.addListener(_sendLibraryOps);
+
     // A TV is as loud as it was left.
     if (kind == ConnectDevice.kindTv) {
       await handler.setOutputVolume(StorageService.instance.outputVolume);
@@ -101,6 +106,7 @@ class ConnectReceiver {
 
   Future<void> stop() async {
     if (announce) await ConnectDiscovery.instance.stopAnnouncing();
+    StorageService.instance.libraryOpsNotifier.removeListener(_sendLibraryOps);
     _ticker?.cancel();
     _ticker = null;
     for (final subscription in _subscriptions) {
@@ -111,6 +117,7 @@ class ConnectReceiver {
       await socket.close();
     }
     _controllers.clear();
+    _controllerIds.clear();
     controllers.value = 0;
     await _server?.close(force: true);
     _server = null;
@@ -190,6 +197,7 @@ class ConnectReceiver {
 
   void _drop(WebSocket socket) {
     if (!_controllers.remove(socket)) return;
+    _controllerIds.remove(socket);
     controllers.value = _controllers.length;
     PlaybackLogService.instance.log('CONNECT', 'un dispositivo si è scollegato');
   }
@@ -221,6 +229,21 @@ class ConnectReceiver {
     }
   }
 
+  /// The changes made here to the library this device keeps a copy of go to
+  /// its owner, when it is among the controllers.
+  void _sendLibraryOps() {
+    if (!keepsLibrary || _controllers.isEmpty) return;
+    final owner = StorageService.instance.libraryOwner;
+    if (owner == null) return;
+    final ops = StorageService.instance.pendingLibraryOps;
+    if (ops.isEmpty) return;
+    for (final socket in _controllers) {
+      if (_controllerIds[socket] == owner.id) {
+        _send(socket, ConnectProtocol.libraryOps, {'ops': ops});
+      }
+    }
+  }
+
   Future<void> _onMessage(WebSocket socket, dynamic raw) async {
     final Map<String, dynamic> message;
     try {
@@ -236,12 +259,15 @@ class ConnectReceiver {
         case ConnectProtocol.hello:
           final who = message['name'];
           if (who is String && who.isNotEmpty) log.log('CONNECT', 'è "$who"');
+          final whoId = message['id'];
+          if (whoId is String) _controllerIds[socket] = whoId;
           _send(socket, ConnectProtocol.welcome, {
             'device': _info,
             'state': handler.connectState.toMap(),
             if (keepsLibrary) 'library': LibrarySync.describe(),
             ..._queuePayload,
           });
+          _sendLibraryOps();
         case ConnectProtocol.load:
           final songs = ConnectProtocol.decodeSongs(message['songs']);
           if (songs.isEmpty) return;
@@ -280,6 +306,11 @@ class ConnectReceiver {
           _broadcastState();
         case ConnectProtocol.library:
           if (keepsLibrary) await LibrarySync.receive(message);
+        case ConnectProtocol.libraryOpsDone:
+          final upTo = message['upTo'];
+          if (upTo is int && _controllerIds[socket] == StorageService.instance.libraryOwner?.id) {
+            await StorageService.instance.forgetLibraryOps(upTo);
+          }
         case ConnectProtocol.release:
           // The controller takes the playback back: stop here, and tell it
           // where the track was.

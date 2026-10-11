@@ -50,6 +50,12 @@ class ConnectProtocol {
   static const String state = 'state';
   static const String released = 'released';
 
+  /// What was changed on the player's copy of the controller's library (a
+  /// heart given from the TV), for the controller to make its own; and the
+  /// controller's answer, `upTo` the number of the last change it made.
+  static const String libraryOps = 'libraryOps';
+  static const String libraryOpsDone = 'libraryOpsDone';
+
   // Both ways: the queue as the sender has it.
   static const String queue = 'queue';
 
