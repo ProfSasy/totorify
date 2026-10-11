@@ -340,6 +340,7 @@ class StorageService {
     playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
     await _playlistsBox.put(id, playlist.toMap());
     PlaybackLogService.instance.log('PLAYLIST', 'creata "$title"');
+    _recordPlaylistOp(playlist);
     return playlist;
   }
 
@@ -356,6 +357,20 @@ class StorageService {
       'PLAYLIST',
       'salvata "${playlist.title}" (${playlist.songs.length} brani)',
     );
+    _recordPlaylistOp(playlist, withSongs: true);
+  }
+
+  /// Gives a playlist another name; its songs are not touched.
+  Future<void> renamePlaylist(String playlistId, String title) async {
+    final idx = _cachedPlaylists.indexWhere((p) => p.id == playlistId);
+    if (idx == -1) return;
+    final previous = _cachedPlaylists[idx];
+    final renamed = previous.copyWith(title: title);
+    _cachedPlaylists[idx] = renamed;
+    playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
+    await _playlistsBox.put(playlistId, renamed.toMap());
+    PlaybackLogService.instance.log('PLAYLIST', '"${previous.title}" ora si chiama "$title"');
+    _recordPlaylistOp(renamed);
   }
 
   Future<void> deletePlaylist(String playlistId) async {
@@ -367,6 +382,7 @@ class StorageService {
       'PLAYLIST',
       'eliminata "${removed?.title ?? playlistId}"',
     );
+    if (removed != null) _recordLibraryOp(opPlaylist, playlistId, {'on': false});
   }
 
   /// Adds [song] to a playlist. Returns false when it was already there (or
@@ -386,6 +402,11 @@ class StorageService {
       'PLAYLIST',
       '"${song.title}" aggiunto a "${playlist.title}" (${updatedSongs.length} brani)',
     );
+    _recordLibraryOp(opPlaylistSong, '$playlistId/${song.id}', {
+      'on': true,
+      'playlist': playlistId,
+      'song': song.toMap(),
+    });
     return true;
   }
 
@@ -417,6 +438,11 @@ class StorageService {
         'PLAYLIST',
         'brano $songId rimosso da "${playlist.title}" (${updatedSongs.length} brani)',
       );
+      _recordLibraryOp(opPlaylistSong, '$playlistId/$songId', {
+        'on': false,
+        'playlist': playlistId,
+        'song': {'id': songId},
+      });
     }
   }
 
@@ -802,6 +828,23 @@ class StorageService {
     return (id: raw['id'] as String, name: raw['name'] as String? ?? 'Telefono');
   }
 
+  /// Whether something was put in the library on this device: a library
+  /// that is nobody's copy and has this is not replaced by another device's
+  /// unless its user asks.
+  bool get hasOwnLibrary =>
+      _cachedFavorites.isNotEmpty || _cachedPlaylists.isNotEmpty || _cachedArtists.isNotEmpty;
+
+  /// The library kept here stops being a copy of another device's: what is
+  /// in it stays, as this device's own, and what was waiting to be sent to
+  /// its owner is not sent.
+  Future<void> keepLibraryAsOwn() async {
+    final owner = libraryOwner;
+    if (owner == null) return;
+    await _settingsBox.deleteAll(['library_owner', 'library_revisions', 'library_ops']);
+    libraryOwnerNotifier.value = null;
+    PlaybackLogService.instance.log('LIBRARY', 'non è più la copia di quella di "${owner.name}"');
+  }
+
   /// Which version of each section is copied here, as its owner named it.
   Map<String, String> get libraryRevisions {
     final raw = _settingsBox.get('library_revisions');
@@ -951,11 +994,25 @@ class StorageService {
   static const String opFavorite = 'favorite';
   static const String opFollow = 'follow';
   static const String opPlayed = 'played';
+  // A playlist made, renamed or (`on` false) removed; with its songs when it
+  // was saved whole (an album kept as a playlist).
+  static const String opPlaylist = 'playlist';
+  // A song put in a playlist or taken out of it.
+  static const String opPlaylistSong = 'playlistSong';
   static const Map<String, String> _sectionOfOp = {
     opFavorite: sectionFavorites,
     opFollow: sectionArtists,
     opPlayed: sectionHistory,
+    opPlaylist: sectionPlaylists,
+    opPlaylistSong: sectionPlaylists,
   };
+
+  /// The changes this version can make for another device. A device says
+  /// which ones it knows, and is sent only those.
+  static List<String> get libraryOpKinds => _sectionOfOp.keys.toList(growable: false);
+
+  /// What every version that takes changes knows, said or not.
+  static const Set<String> firstLibraryOpKinds = {opFavorite, opFollow, opPlayed};
   static const int _maxLibraryOps = 300;
 
   /// Number of the last change recorded: it moves when there is one to send.
@@ -979,17 +1036,62 @@ class StorageService {
     if (_replayingOps > 0 || libraryOwner == null) return;
     final ops = pendingLibraryOps
       ..removeWhere((op) => op['op'] == kind && op['subject'] == subject);
-    final n = (_settingsBox.get('library_op_count') as int? ?? 0) + 1;
+    final n = _nextLibraryOpNumber();
     ops.add({'n': n, 'op': kind, 'subject': subject, ...data});
     if (ops.length > _maxLibraryOps) ops.removeRange(0, ops.length - _maxLibraryOps);
-    unawaited(_settingsBox.put('library_op_count', n));
     unawaited(_settingsBox.put('library_ops', ops));
     libraryOpsNotifier.value = n;
   }
 
-  /// The owner applied the changes numbered up to [upTo].
-  Future<void> forgetLibraryOps(int upTo) async {
-    final ops = pendingLibraryOps..removeWhere((op) => (op['n'] as int? ?? 0) <= upTo);
+  int _nextLibraryOpNumber() {
+    final n = (_settingsBox.get('library_op_count') as int? ?? 0) + 1;
+    unawaited(_settingsBox.put('library_op_count', n));
+    return n;
+  }
+
+  /// A playlist was made or renamed here. With [withSongs] the change
+  /// carries its songs, for an owner that does not have the playlist.
+  void _recordPlaylistOp(Playlist playlist, {bool withSongs = false}) {
+    if (_replayingOps > 0 || libraryOwner == null) return;
+    final ops = pendingLibraryOps;
+    final at = ops.indexWhere(
+      (op) => op['op'] == opPlaylist && op['subject'] == playlist.id && op['on'] == true,
+    );
+    final data = <String, dynamic>{
+      'on': true,
+      'playlist': {
+        'title': playlist.title,
+        'description': playlist.description,
+        'thumbnailUrl': playlist.thumbnailUrl,
+      },
+      if (withSongs)
+        'songs': [for (final song in playlist.songs) song.toMap()]
+      // The change the owner has not taken yet may be the one with the songs.
+      else if (at != -1 && ops[at]['songs'] != null)
+        'songs': ops[at]['songs'],
+    };
+    if (at == -1) {
+      _recordLibraryOp(opPlaylist, playlist.id, data);
+      return;
+    }
+    // Its making is still waiting for the owner, and the songs put in it
+    // since come after that: the change stays where the making was, or the
+    // owner would be given songs for a playlist it does not have yet. It
+    // takes a new number, so that an owner that already had the old one
+    // does not make this one forgotten with it.
+    final n = _nextLibraryOpNumber();
+    ops[at] = {'n': n, 'op': opPlaylist, 'subject': playlist.id, ...data};
+    unawaited(_settingsBox.put('library_ops', ops));
+    libraryOpsNotifier.value = n;
+  }
+
+  /// The owner applied the changes numbered up to [upTo], of the [kinds] it
+  /// knows (all of them when null).
+  Future<void> forgetLibraryOps(int upTo, {Set<String>? kinds}) async {
+    final ops = pendingLibraryOps
+      ..removeWhere(
+        (op) => (op['n'] as int? ?? 0) <= upTo && (kinds == null || kinds.contains(op['op'])),
+      );
     await _settingsBox.put('library_ops', ops);
   }
 
@@ -1016,6 +1118,46 @@ class StorageService {
         final song = map('song');
         if (song == null || song['id'] is! String) return;
         await addToHistory(Song.fromMap(song));
+      case opPlaylist:
+        final id = op['subject'];
+        if (id is! String || id.isEmpty) return;
+        final existing = _cachedPlaylists.where((p) => p.id == id).firstOrNull;
+        if (op['on'] != true) {
+          if (existing != null) await deletePlaylist(id);
+          return;
+        }
+        final about = map('playlist') ?? const <String, dynamic>{};
+        final title = about['title'] as String? ?? existing?.title ?? 'Playlist';
+        if (existing != null) {
+          // Its songs are whatever they are here: only its name follows.
+          if (existing.title != title) await renamePlaylist(id, title);
+          return;
+        }
+        final songs = op['songs'];
+        await savePlaylist(
+          Playlist(
+            id: id,
+            title: title,
+            description: about['description'] as String?,
+            thumbnailUrl: about['thumbnailUrl'] as String?,
+            songs: [
+              for (final item in songs is List ? songs : const <dynamic>[])
+                if (item is Map && item['id'] is String)
+                  Song.fromMap(Map<String, dynamic>.from(item)),
+            ],
+          ),
+        );
+      case opPlaylistSong:
+        final id = op['playlist'];
+        final song = map('song');
+        if (id is! String || song == null || song['id'] is! String) return;
+        if (op['on'] == true) {
+          await addSongToPlaylist(id, Song.fromMap(song));
+        } else if (_cachedPlaylists.any(
+          (p) => p.id == id && p.songs.any((s) => s.id == song['id']),
+        )) {
+          await removeSongFromPlaylist(id, song['id'] as String);
+        }
     }
   }
 

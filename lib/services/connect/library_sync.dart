@@ -6,15 +6,16 @@ import '../playback_log_service.dart';
 import '../storage_service.dart';
 import 'connect_protocol.dart';
 
-/// Keeps on a TV a copy of the library of the phone it belongs to:
-/// favourites, playlists, followed artists, what was played, and what was
-/// learnt about the songs.
+/// Keeps on a TV a copy of the library of a phone: favourites, playlists,
+/// followed artists, what was played, and what was learnt about the songs.
 ///
-/// The phone is where the library lives. Each time it connects to the TV it
-/// sends the sections the TV does not have in their current version; the TV
-/// replaces its own with them. The TV belongs to the first phone that sends
-/// its library; another one controls it without replacing it, unless its
-/// user asks to.
+/// A TV has a library of its own, made on it. One that has nothing in it yet
+/// takes the library of the first phone that connects, and from then on is a
+/// copy of it: each time that phone connects it sends the sections the TV
+/// does not have in their current version, the TV replaces its own with
+/// them, and what is changed on the TV goes back to the phone. Any other
+/// phone controls the TV without touching its library, unless its user asks
+/// to replace it; and the TV can stop being a copy and keep what it has.
 class LibrarySync {
   LibrarySync._();
 
@@ -47,13 +48,29 @@ class LibrarySync {
     );
   }
 
-  /// For a player: what it tells its controllers about its copy.
-  static Map<String, dynamic> describe() {
-    final owner = StorageService.instance.libraryOwner;
+  /// For a player: what it tells its controllers about the library it
+  /// keeps. One made on the player itself ([selfId], [selfName]) is said to
+  /// be its own, so that no controller takes it for one to fill.
+  static Map<String, dynamic> describe({required String selfId, required String selfName}) {
+    final storage = StorageService.instance;
+    final owner = storage.libraryOwner ??
+        (storage.hasOwnLibrary ? (id: selfId, name: selfName) : null);
     return {
       'owner': owner == null ? null : {'id': owner.id, 'name': owner.name},
-      'revisions': StorageService.instance.libraryRevisions,
+      'revisions': storage.libraryRevisions,
     };
+  }
+
+  /// For a player: whether a section a controller sent is taken. It is when
+  /// the library here is a copy of that controller's, when there is nothing
+  /// here yet, and when the controller's user asked to replace what is here.
+  static bool accepts(Map<String, dynamic> message) {
+    final storage = StorageService.instance;
+    if (message['replace'] == true) return true;
+    final sender = message['owner'];
+    final owner = storage.libraryOwner;
+    if (owner != null) return sender is Map && sender['id'] == owner.id;
+    return !storage.hasOwnLibrary;
   }
 
   /// Sends over [remote] the sections whose version differs from [theirs],
@@ -63,6 +80,7 @@ class LibrarySync {
     required String ownerId,
     required String ownerName,
     required Map<String, String> theirs,
+    bool replace = false,
   }) {
     final current = snapshot();
     final sent = <String>[];
@@ -73,6 +91,8 @@ class LibrarySync {
         'section': section,
         'revision': versioned.revision,
         'data': versioned.data,
+        // The user asked for this library in place of the one there.
+        if (replace) 'replace': true,
       });
       sent.add(section);
     }

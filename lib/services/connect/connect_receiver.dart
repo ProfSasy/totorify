@@ -40,8 +40,8 @@ class ConnectReceiver {
   /// What this device is: `tv` or `phone`.
   final String kind;
 
-  /// Whether this device keeps a copy of the library of the phone that
-  /// controls it, having none of its own (a TV).
+  /// Whether the library of this device can be a copy of a phone's, kept
+  /// up to date by it (a TV; see [LibrarySync]).
   final bool keepsLibrary;
 
   /// Whether the device announces itself on the network, besides answering
@@ -65,6 +65,8 @@ class ConnectReceiver {
 
   // Who each controller said it is.
   final Map<WebSocket, String> _controllerIds = {};
+  // The changes to the library each controller said it can take.
+  final Map<WebSocket, Set<String>> _controllerOps = {};
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   Timer? _ticker;
 
@@ -254,6 +256,7 @@ class ConnectReceiver {
     _unadmitted.remove(socket);
     if (!_controllers.remove(socket)) return;
     _controllerIds.remove(socket);
+    _controllerOps.remove(socket);
     controllers.value = _controllers.length;
     PlaybackLogService.instance.log('CONNECT', 'un dispositivo si è scollegato');
   }
@@ -294,11 +297,20 @@ class ConnectReceiver {
     final ops = StorageService.instance.pendingLibraryOps;
     if (ops.isEmpty) return;
     for (final socket in _controllers) {
-      if (_controllerIds[socket] == owner.id) {
-        _send(socket, ConnectProtocol.libraryOps, {'ops': ops});
-      }
+      if (_controllerIds[socket] != owner.id) continue;
+      // An older version of the app is sent what it knows how to make; the
+      // rest waits here for a newer one.
+      final known = _opsKnownBy(socket);
+      final theirs = [
+        for (final op in ops)
+          if (known.contains(op['op'])) op,
+      ];
+      if (theirs.isNotEmpty) _send(socket, ConnectProtocol.libraryOps, {'ops': theirs});
     }
   }
+
+  Set<String> _opsKnownBy(WebSocket socket) =>
+      _controllerOps[socket] ?? StorageService.firstLibraryOpKinds;
 
   Future<void> _onMessage(WebSocket socket, dynamic raw) async {
     final Map<String, dynamic> message;
@@ -322,10 +334,12 @@ class ConnectReceiver {
           if (who is String && who.isNotEmpty) log.log('CONNECT', 'è "$who"');
           final whoId = message['id'];
           if (whoId is String) _controllerIds[socket] = whoId;
+          final knows = message['libraryOps'];
+          if (knows is List) _controllerOps[socket] = knows.whereType<String>().toSet();
           _send(socket, ConnectProtocol.welcome, {
             'device': _info,
             'state': handler.connectState.toMap(),
-            if (keepsLibrary) 'library': LibrarySync.describe(),
+            if (keepsLibrary) 'library': LibrarySync.describe(selfId: id, selfName: name),
             ..._queuePayload,
           });
           _sendLibraryOps();
@@ -366,11 +380,16 @@ class ConnectReceiver {
           if (kind == ConnectDevice.kindTv) unawaited(StorageService.instance.setOutputVolume(value));
           _broadcastState();
         case ConnectProtocol.library:
-          if (keepsLibrary) await LibrarySync.receive(message);
+          if (!keepsLibrary) return;
+          if (LibrarySync.accepts(message)) {
+            await LibrarySync.receive(message);
+          } else {
+            log.log('CONNECT', 'libreria non presa: quella che c\'è qui non è di chi la manda');
+          }
         case ConnectProtocol.libraryOpsDone:
           final upTo = message['upTo'];
           if (upTo is int && _controllerIds[socket] == StorageService.instance.libraryOwner?.id) {
-            await StorageService.instance.forgetLibraryOps(upTo);
+            await StorageService.instance.forgetLibraryOps(upTo, kinds: _opsKnownBy(socket));
           }
         case ConnectProtocol.release:
           // The controller takes the playback back: stop here, and tell it

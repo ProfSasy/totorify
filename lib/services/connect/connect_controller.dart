@@ -57,6 +57,10 @@ class ConnectController {
   /// user asks to (see [sendLibrary]).
   final ValueNotifier<String?> libraryOwnedBy = ValueNotifier<String?>(null);
 
+  /// Whether that library is the device's own, made on it, and not another
+  /// phone's.
+  bool libraryThereIsItsOwn = false;
+
   /// The device that is playing instead of this one, or null.
   final ValueNotifier<ConnectDevice?> activeDevice = ValueNotifier<ConnectDevice?>(null);
 
@@ -324,6 +328,7 @@ class ConnectController {
   void _forgetLibraryThere() {
     _libraryDebounce?.cancel();
     _libraryThere = null;
+    libraryThereIsItsOwn = false;
     libraryOwnedBy.value = null;
   }
 
@@ -337,6 +342,7 @@ class ConnectController {
     if (there == null) return;
     final mine = StorageService.instance.connectId;
     if (!force && there.ownerId != null && there.ownerId != mine) {
+      libraryThereIsItsOwn = there.ownerId == session.device.id;
       libraryOwnedBy.value = there.ownerName ?? 'un altro dispositivo';
       return;
     }
@@ -379,12 +385,14 @@ class ConnectController {
   void sendLibrary() {
     final session = _session;
     if (session == null || libraryOwnedBy.value == null) return;
+    libraryThereIsItsOwn = false;
     libraryOwnedBy.value = null;
     _libraryThere = LibrarySync.send(
       session,
       ownerId: StorageService.instance.connectId,
       ownerName: _name,
       theirs: const {},
+      replace: true,
     );
   }
 
@@ -460,6 +468,8 @@ class ConnectController {
       session.send(ConnectProtocol.hello, {
         'id': StorageService.instance.connectId,
         'name': _name,
+        // The changes to this device's library it can take back.
+        'libraryOps': StorageService.libraryOpKinds,
       });
       var answer = await Future.any([welcome, asking, refusal]).timeout(_connectTimeout);
       if (answer['type'] == ConnectProtocol.asking) {
