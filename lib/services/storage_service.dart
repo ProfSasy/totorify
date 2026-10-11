@@ -22,6 +22,7 @@ class StorageService {
   static const String _artistsBoxName = 'kreate_artists';
   static const String _canvasBoxName = 'kreate_canvas';
   static const String _lyricsBoxName = 'kreate_lyrics';
+  static const String _guestBoxName = 'kreate_guest_library';
 
   late Box _favoritesBox;
   late Box _playlistsBox;
@@ -33,6 +34,7 @@ class StorageService {
   late Box _artistsBox;
   late Box _canvasBox;
   late Box _lyricsBox;
+  late Box _guestBox;
 
   // The Documents folder moves when iOS reinstalls the app: paths are built
   // from it at every start and never stored.
@@ -52,6 +54,13 @@ class StorageService {
   final Set<String> _downloadedIds = {};
   final Map<String, String> _cachedYtMappings = {};
   final List<Artist> _cachedArtists = [];
+
+  // The library of a phone, shown beside this device's own (see
+  // "A PHONE'S LIBRARY BESIDE THIS DEVICE'S OWN" below). Empty on a phone.
+  final List<Song> _guestFavorites = [];
+  final List<Playlist> _guestPlaylists = [];
+  final List<Song> _guestHistory = [];
+  final List<Artist> _guestArtists = [];
 
   final ValueNotifier<List<Song>> favoritesNotifier = ValueNotifier<List<Song>>([]);
   final ValueNotifier<List<Playlist>> playlistsNotifier = ValueNotifier<List<Playlist>>([]);
@@ -77,10 +86,12 @@ class StorageService {
     _artistsBox = await _openBoxSafe(_artistsBoxName);
     _canvasBox = await _openBoxSafe(_canvasBoxName);
     _lyricsBox = await _openBoxSafe(_lyricsBoxName);
+    _guestBox = await _openBoxSafe(_guestBoxName);
 
     await _forgetSourceChoicesOnce();
     _removeLockScreenExperiment();
     _loadInitialData();
+    await _separateGuestLibraryOnce();
     libraryOwnerNotifier.value = libraryOwner;
     _findSavedCanvases();
   }
@@ -264,69 +275,133 @@ class StorageService {
     followed.sort((a, b) => b.$1.compareTo(a.$1));
     _cachedArtists.addAll(followed.map((entry) => entry.$2));
 
+    _loadGuestLibrary();
     _syncNotifiers();
   }
 
   void _syncNotifiers() {
-    favoritesNotifier.value = List.unmodifiable(_cachedFavorites);
-    playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
-    historyNotifier.value = List.unmodifiable(_cachedHistory);
+    _publishFavorites();
+    _publishPlaylists();
+    _publishHistory();
     downloadsNotifier.value = List.unmodifiable(_cachedDownloads);
-    followedArtistsNotifier.value = List.unmodifiable(_cachedArtists);
+    _publishArtists();
     accentColorNotifier.value = accentColor;
   }
+
+  // What the screens see: the library of the phone shown here, when there is
+  // one, then this device's own. What is in both is shown once.
+  static List<T> _both<T>(List<T> guest, List<T> own, String Function(T) id) {
+    if (guest.isEmpty) return List.unmodifiable(own);
+    final seen = {for (final item in guest) id(item)};
+    return List.unmodifiable([...guest, ...own.where((item) => !seen.contains(id(item)))]);
+  }
+
+  void _publishFavorites() =>
+      favoritesNotifier.value = _both(_guestFavorites, _cachedFavorites, (s) => s.id);
+  void _publishPlaylists() =>
+      playlistsNotifier.value = _both(_guestPlaylists, _cachedPlaylists, (p) => p.id);
+  void _publishHistory() =>
+      historyNotifier.value = _both(_guestHistory, _cachedHistory, (s) => s.id);
+  void _publishArtists() =>
+      followedArtistsNotifier.value = _both(_guestArtists, _cachedArtists, (a) => a.id);
 
   // --- FAVORITES ---
   static const String _favoritedAtKey = 'favoritedAt';
 
-  List<Song> getFavorites() => List.unmodifiable(_cachedFavorites);
+  List<Song> getFavorites() => favoritesNotifier.value;
 
-  bool isFavorite(String songId) => _favoriteIds.contains(songId);
+  bool isFavorite(String songId) =>
+      _favoriteIds.contains(songId) || _guestFavorites.any((s) => s.id == songId);
 
   Future<void> toggleFavorite(Song song) async {
-    if (_favoriteIds.contains(song.id)) {
+    final own = _favoriteIds.contains(song.id);
+    final guest = _guestFavorites.any((s) => s.id == song.id);
+    // Where a phone's library is shown beside this device's own, a heart is
+    // given to that phone, and goes back to it.
+    final toGuest = !own && !guest && libraryOwner != null;
+    if (guest) _guestFavorites.removeWhere((s) => s.id == song.id);
+    if (toGuest) _guestFavorites.insert(0, song);
+    if (own) {
       _favoriteIds.remove(song.id);
       _cachedFavorites.removeWhere((s) => s.id == song.id);
-      favoritesNotifier.value = List.unmodifiable(_cachedFavorites);
-      await _favoritesBox.delete(song.id);
-    } else {
+    } else if (!guest && !toGuest) {
       _favoriteIds.add(song.id);
       _cachedFavorites.insert(0, song);
-      favoritesNotifier.value = List.unmodifiable(_cachedFavorites);
+    }
+    _publishFavorites();
+
+    if (own) {
+      await _favoritesBox.delete(song.id);
+    } else if (!guest && !toGuest) {
       await _favoritesBox.put(song.id, {
         ...song.toMap(),
         _favoritedAtKey: DateTime.now().millisecondsSinceEpoch,
       });
     }
-    _recordLibraryOp(opFavorite, song.id, {
-      'on': _favoriteIds.contains(song.id),
-      'song': song.toMap(),
-    });
+    if (guest || toGuest) {
+      await _saveGuest(sectionFavorites);
+      _recordLibraryOp(opFavorite, song.id, {'on': toGuest, 'song': song.toMap()});
+    }
   }
 
   // --- HISTORY ---
-  List<Song> getHistory() => List.unmodifiable(_cachedHistory);
+  static const int _maxHistory = 100;
+
+  List<Song> getHistory() => historyNotifier.value;
+
+  static void _played(List<Song> history, Song song) {
+    history
+      ..removeWhere((s) => s.id == song.id)
+      ..insert(0, song);
+    if (history.length > _maxHistory) history.removeRange(_maxHistory, history.length);
+  }
 
   Future<void> addToHistory(Song song) async {
-    _cachedHistory.removeWhere((s) => s.id == song.id);
-    _cachedHistory.insert(0, song);
-    if (_cachedHistory.length > 100) {
-      _cachedHistory.removeRange(100, _cachedHistory.length);
+    final guest = libraryOwner != null;
+    // Played on this device: it is in its own history, and in that of the
+    // phone whose library is shown here, which is told. A play that phone
+    // already knows, put back after it sent its history, is only its own.
+    final here = _replayingOps == 0;
+    if (here) _played(_cachedHistory, song);
+    if (guest) _played(_guestHistory, song);
+    _publishHistory();
+    if (here) {
+      await _historyBox.put('recent_songs', _cachedHistory.map((s) => s.toMap()).toList());
     }
-    historyNotifier.value = List.unmodifiable(_cachedHistory);
-    await _historyBox.put('recent_songs', _cachedHistory.map((s) => s.toMap()).toList());
-    _recordLibraryOp(opPlayed, song.id, {'song': song.toMap()});
+    if (guest) {
+      await _saveGuest(sectionHistory);
+      _recordLibraryOp(opPlayed, song.id, {'song': song.toMap()});
+    }
   }
 
   Future<void> clearHistory() async {
     _cachedHistory.clear();
-    historyNotifier.value = [];
+    _guestHistory.clear();
+    _publishHistory();
     await _historyBox.delete('recent_songs');
+    await _saveGuest(sectionHistory);
   }
 
   // --- PLAYLISTS ---
-  List<Playlist> getPlaylists() => List.unmodifiable(_cachedPlaylists);
+  List<Playlist> getPlaylists() => playlistsNotifier.value;
 
+  /// Whether the playlist is of the phone whose library is shown beside
+  /// this device's own, and not one made here.
+  bool isGuestPlaylist(String playlistId) => _guestPlaylists.any((p) => p.id == playlistId);
+
+  // Where a playlist is kept: among the phone's, or among this device's.
+  ({List<Playlist> list, int index, bool guest})? _placeOf(String playlistId) {
+    var index = _guestPlaylists.indexWhere((p) => p.id == playlistId);
+    if (index != -1) return (list: _guestPlaylists, index: index, guest: true);
+    index = _cachedPlaylists.indexWhere((p) => p.id == playlistId);
+    return index == -1 ? null : (list: _cachedPlaylists, index: index, guest: false);
+  }
+
+  Future<void> _storePlaylist(Playlist playlist, {required bool guest}) =>
+      guest ? _saveGuest(sectionPlaylists) : _playlistsBox.put(playlist.id, playlist.toMap());
+
+  /// Makes a playlist of this device: where a phone's library is shown too,
+  /// it stays here for whoever uses the device.
   Future<Playlist> createPlaylist(String title, {String? description, String? thumbnailUrl}) async {
     final id = 'playlist_${DateTime.now().millisecondsSinceEpoch}';
     final playlist = Playlist(
@@ -337,107 +412,112 @@ class StorageService {
       songs: [],
     );
     _cachedPlaylists.add(playlist);
-    playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
+    _publishPlaylists();
     await _playlistsBox.put(id, playlist.toMap());
     PlaybackLogService.instance.log('PLAYLIST', 'creata "$title"');
-    _recordPlaylistOp(playlist);
     return playlist;
   }
 
   Future<void> savePlaylist(Playlist playlist) async {
-    final idx = _cachedPlaylists.indexWhere((p) => p.id == playlist.id);
-    if (idx != -1) {
-      _cachedPlaylists[idx] = playlist;
+    final place = _placeOf(playlist.id);
+    if (place != null) {
+      place.list[place.index] = playlist;
     } else {
       _cachedPlaylists.add(playlist);
     }
-    playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
-    await _playlistsBox.put(playlist.id, playlist.toMap());
+    final guest = place?.guest ?? false;
+    _publishPlaylists();
+    await _storePlaylist(playlist, guest: guest);
     PlaybackLogService.instance.log(
       'PLAYLIST',
       'salvata "${playlist.title}" (${playlist.songs.length} brani)',
     );
-    _recordPlaylistOp(playlist, withSongs: true);
+    if (guest) _recordPlaylistOp(playlist, withSongs: true);
   }
 
   /// Gives a playlist another name; its songs are not touched.
   Future<void> renamePlaylist(String playlistId, String title) async {
-    final idx = _cachedPlaylists.indexWhere((p) => p.id == playlistId);
-    if (idx == -1) return;
-    final previous = _cachedPlaylists[idx];
+    final place = _placeOf(playlistId);
+    if (place == null) return;
+    final previous = place.list[place.index];
     final renamed = previous.copyWith(title: title);
-    _cachedPlaylists[idx] = renamed;
-    playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
-    await _playlistsBox.put(playlistId, renamed.toMap());
+    place.list[place.index] = renamed;
+    _publishPlaylists();
+    await _storePlaylist(renamed, guest: place.guest);
     PlaybackLogService.instance.log('PLAYLIST', '"${previous.title}" ora si chiama "$title"');
-    _recordPlaylistOp(renamed);
+    if (place.guest) _recordPlaylistOp(renamed);
   }
 
   Future<void> deletePlaylist(String playlistId) async {
-    final removed = _cachedPlaylists.where((p) => p.id == playlistId).firstOrNull;
+    final guest = _guestPlaylists.where((p) => p.id == playlistId).firstOrNull;
+    final own = _cachedPlaylists.where((p) => p.id == playlistId).firstOrNull;
+    _guestPlaylists.removeWhere((p) => p.id == playlistId);
     _cachedPlaylists.removeWhere((p) => p.id == playlistId);
-    playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
-    await _playlistsBox.delete(playlistId);
+    _publishPlaylists();
+    if (own != null) await _playlistsBox.delete(playlistId);
+    if (guest != null) await _saveGuest(sectionPlaylists);
     PlaybackLogService.instance.log(
       'PLAYLIST',
-      'eliminata "${removed?.title ?? playlistId}"',
+      'eliminata "${(guest ?? own)?.title ?? playlistId}"',
     );
-    if (removed != null) _recordLibraryOp(opPlaylist, playlistId, {'on': false});
+    if (guest != null) _recordLibraryOp(opPlaylist, playlistId, {'on': false});
   }
 
   /// Adds [song] to a playlist. Returns false when it was already there (or
   /// the playlist no longer exists) and nothing changed.
   Future<bool> addSongToPlaylist(String playlistId, Song song) async {
-    final idx = _cachedPlaylists.indexWhere((p) => p.id == playlistId);
-    if (idx == -1) return false;
-    final playlist = _cachedPlaylists[idx];
+    final place = _placeOf(playlistId);
+    if (place == null) return false;
+    final playlist = place.list[place.index];
     if (playlist.songs.any((s) => s.id == song.id)) return false;
 
     final updatedSongs = List<Song>.from(playlist.songs)..add(song);
     final updated = playlist.copyWith(songs: updatedSongs);
-    _cachedPlaylists[idx] = updated;
-    playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
-    await _playlistsBox.put(playlistId, updated.toMap());
+    place.list[place.index] = updated;
+    _publishPlaylists();
+    await _storePlaylist(updated, guest: place.guest);
     PlaybackLogService.instance.log(
       'PLAYLIST',
       '"${song.title}" aggiunto a "${playlist.title}" (${updatedSongs.length} brani)',
     );
-    _recordLibraryOp(opPlaylistSong, '$playlistId/${song.id}', {
-      'on': true,
-      'playlist': playlistId,
-      'song': song.toMap(),
-    });
+    if (place.guest) {
+      _recordLibraryOp(opPlaylistSong, '$playlistId/${song.id}', {
+        'on': true,
+        'playlist': playlistId,
+        'song': song.toMap(),
+      });
+    }
     return true;
   }
 
   /// Batch update for playlist songs to prevent race conditions during parallel processing.
   Future<void> batchUpdateSongsInPlaylist(String playlistId, Map<String, Song> songUpdates) async {
-    final idx = _cachedPlaylists.indexWhere((p) => p.id == playlistId);
-    if (idx != -1) {
-      final playlist = _cachedPlaylists[idx];
-      final updatedSongs = playlist.songs.map((s) {
-        return songUpdates[s.id] ?? s;
-      }).toList();
-      final updated = playlist.copyWith(songs: updatedSongs);
-      _cachedPlaylists[idx] = updated;
-      playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
-      await _playlistsBox.put(playlistId, updated.toMap());
-    }
+    final place = _placeOf(playlistId);
+    if (place == null) return;
+    final playlist = place.list[place.index];
+    final updatedSongs = playlist.songs.map((s) {
+      return songUpdates[s.id] ?? s;
+    }).toList();
+    final updated = playlist.copyWith(songs: updatedSongs);
+    place.list[place.index] = updated;
+    _publishPlaylists();
+    await _storePlaylist(updated, guest: place.guest);
   }
 
   Future<void> removeSongFromPlaylist(String playlistId, String songId) async {
-    final idx = _cachedPlaylists.indexWhere((p) => p.id == playlistId);
-    if (idx != -1) {
-      final playlist = _cachedPlaylists[idx];
-      final updatedSongs = List<Song>.from(playlist.songs)..removeWhere((s) => s.id == songId);
-      final updated = playlist.copyWith(songs: updatedSongs);
-      _cachedPlaylists[idx] = updated;
-      playlistsNotifier.value = List.unmodifiable(_cachedPlaylists);
-      await _playlistsBox.put(playlistId, updated.toMap());
-      PlaybackLogService.instance.log(
-        'PLAYLIST',
-        'brano $songId rimosso da "${playlist.title}" (${updatedSongs.length} brani)',
-      );
+    final place = _placeOf(playlistId);
+    if (place == null) return;
+    final playlist = place.list[place.index];
+    final updatedSongs = List<Song>.from(playlist.songs)..removeWhere((s) => s.id == songId);
+    final updated = playlist.copyWith(songs: updatedSongs);
+    place.list[place.index] = updated;
+    _publishPlaylists();
+    await _storePlaylist(updated, guest: place.guest);
+    PlaybackLogService.instance.log(
+      'PLAYLIST',
+      'brano $songId rimosso da "${playlist.title}" (${updatedSongs.length} brani)',
+    );
+    if (place.guest) {
       _recordLibraryOp(opPlaylistSong, '$playlistId/$songId', {
         'on': false,
         'playlist': playlistId,
@@ -759,20 +839,27 @@ class StorageService {
   }
 
   bool isFollowingArtist(String artistId) =>
-      _cachedArtists.any((a) => a.id == artistId);
+      _cachedArtists.any((a) => a.id == artistId) || _guestArtists.any((a) => a.id == artistId);
 
   /// Replaces the followed artist [oldId] with [artist], keeping its place
   /// in the list. Does nothing when [oldId] is not followed. Used when an
   /// artist followed with an older version is found in the current catalog,
   /// and to refresh the picture of one already followed.
   Future<void> replaceFollowedArtist(String oldId, Artist artist) async {
+    final guestIndex = _guestArtists.indexWhere((a) => a.id == oldId);
+    if (guestIndex != -1) {
+      _guestArtists[guestIndex] = artist;
+      _guestArtists.removeWhere((a) => a.id == artist.id && !identical(a, artist));
+      _publishArtists();
+      await _saveGuest(sectionArtists);
+    }
     final index = _cachedArtists.indexWhere((a) => a.id == oldId);
     if (index == -1) return;
     final stored = _artistsBox.get(oldId);
     final followedAt = stored is Map ? stored['followedAt'] : null;
     _cachedArtists[index] = artist;
     _cachedArtists.removeWhere((a) => a.id == artist.id && !identical(a, artist));
-    followedArtistsNotifier.value = List.unmodifiable(_cachedArtists);
+    _publishArtists();
     if (oldId != artist.id) await _artistsBox.delete(oldId);
     await _artistsBox.put(artist.id, {
       ...artist.toMap(),
@@ -781,29 +868,41 @@ class StorageService {
   }
 
   Future<void> toggleFollowArtist(Artist artist) async {
-    if (isFollowingArtist(artist.id)) {
+    final own = _cachedArtists.any((a) => a.id == artist.id);
+    final guest = _guestArtists.any((a) => a.id == artist.id);
+    // Like a heart: where a phone's library is shown, it is that phone's.
+    final toGuest = !own && !guest && libraryOwner != null;
+    if (guest) _guestArtists.removeWhere((a) => a.id == artist.id);
+    // Newest first, like favourites.
+    if (toGuest) _guestArtists.insert(0, artist);
+    if (own) {
       _cachedArtists.removeWhere((a) => a.id == artist.id);
-      followedArtistsNotifier.value = List.unmodifiable(_cachedArtists);
-      await _artistsBox.delete(artist.id);
-    } else {
-      // Newest first, like favourites.
+    } else if (!guest && !toGuest) {
       _cachedArtists.insert(0, artist);
-      followedArtistsNotifier.value = List.unmodifiable(_cachedArtists);
+    }
+    _publishArtists();
+
+    if (own) {
+      await _artistsBox.delete(artist.id);
+    } else if (!guest && !toGuest) {
       await _artistsBox.put(artist.id, {
         ...artist.toMap(),
         'followedAt': DateTime.now().millisecondsSinceEpoch,
       });
     }
-    _recordLibraryOp(opFollow, artist.id, {
-      'on': isFollowingArtist(artist.id),
-      'artist': artist.toMap(),
-    });
+    if (guest || toGuest) {
+      await _saveGuest(sectionArtists);
+      _recordLibraryOp(opFollow, artist.id, {'on': toGuest, 'artist': artist.toMap()});
+    }
   }
 
-  // --- LIBRARY COPY ---
-  // A TV keeps a copy of the library of the phone it belongs to (see
-  // `LibrarySync`). The library travels in sections, so that a change to
-  // one does not send the others again.
+  // --- A PHONE'S LIBRARY BESIDE THIS DEVICE'S OWN ---
+  // A TV has a library of its own, made on it, which stays there for
+  // whoever uses it. Beside it, it shows the library of the phone that
+  // connected last (see `LibrarySync`): that one is kept apart, is replaced
+  // when another phone connects, and never touches the TV's own. The
+  // library travels in sections, so that a change to one does not send the
+  // others again.
   static const String sectionFavorites = 'favorites';
   static const String sectionPlaylists = 'playlists';
   static const String sectionArtists = 'artists';
@@ -817,8 +916,8 @@ class StorageService {
     sectionExtras,
   ];
 
-  /// Name and id of the device whose library is copied here, or null when
-  /// the library is this device's own.
+  /// Name and id of the phone whose library is shown here beside this
+  /// device's own, or null when there is none.
   final ValueNotifier<({String id, String name})?> libraryOwnerNotifier =
       ValueNotifier<({String id, String name})?>(null);
 
@@ -828,29 +927,117 @@ class StorageService {
     return (id: raw['id'] as String, name: raw['name'] as String? ?? 'Telefono');
   }
 
-  /// Whether something was put in the library on this device: a library
-  /// that is nobody's copy and has this is not replaced by another device's
-  /// unless its user asks.
-  bool get hasOwnLibrary =>
-      _cachedFavorites.isNotEmpty || _cachedPlaylists.isNotEmpty || _cachedArtists.isNotEmpty;
-
-  /// The library kept here stops being a copy of another device's: what is
-  /// in it stays, as this device's own, and what was waiting to be sent to
-  /// its owner is not sent.
-  Future<void> keepLibraryAsOwn() async {
-    final owner = libraryOwner;
-    if (owner == null) return;
-    await _settingsBox.deleteAll(['library_owner', 'library_revisions', 'library_ops']);
-    libraryOwnerNotifier.value = null;
-    PlaybackLogService.instance.log('LIBRARY', 'non è più la copia di quella di "${owner.name}"');
-  }
-
-  /// Which version of each section is copied here, as its owner named it.
+  /// Which version of each section is kept here, as its owner named it.
   Map<String, String> get libraryRevisions {
     final raw = _settingsBox.get('library_revisions');
     return raw is Map
         ? {for (final entry in raw.entries) entry.key.toString(): entry.value.toString()}
         : {};
+  }
+
+  void _loadGuestLibrary() {
+    List<T> read<T>(String section, T Function(Map<String, dynamic> map) make) {
+      final raw = _guestBox.get(section);
+      final made = <T>[];
+      for (final item in raw is List ? raw : const <dynamic>[]) {
+        try {
+          made.add(make(Map<String, dynamic>.from(item as Map)));
+        } catch (e) {
+          debugPrint('StorageService._loadGuestLibrary $section: $e');
+        }
+      }
+      return made;
+    }
+
+    _guestFavorites
+      ..clear()
+      ..addAll(read(sectionFavorites, Song.fromMap));
+    _guestPlaylists
+      ..clear()
+      ..addAll(read(sectionPlaylists, Playlist.fromMap));
+    _guestArtists
+      ..clear()
+      ..addAll(read(sectionArtists, Artist.fromMap));
+    _guestHistory
+      ..clear()
+      ..addAll(read(sectionHistory, Song.fromMap));
+  }
+
+  Future<void> _saveGuest(String section) async {
+    final List<Map<String, dynamic>> data;
+    switch (section) {
+      case sectionFavorites:
+        data = [for (final song in _guestFavorites) song.toMap()];
+      case sectionPlaylists:
+        data = [for (final playlist in _guestPlaylists) playlist.toMap()];
+      case sectionArtists:
+        data = [for (final artist in _guestArtists) artist.toMap()];
+      case sectionHistory:
+        data = [for (final song in _guestHistory) song.toMap()];
+      default:
+        return;
+    }
+    if (data.isEmpty && !_guestBox.containsKey(section)) return;
+    await _guestBox.put(section, data);
+  }
+
+  /// The phone's library is not shown here any more; this device's own is
+  /// untouched. What was changed in it and that phone has not taken yet is
+  /// kept for when it connects again.
+  Future<void> forgetGuestLibrary() async {
+    final owner = libraryOwner;
+    if (owner == null) return;
+    _guestFavorites.clear();
+    _guestPlaylists.clear();
+    _guestArtists.clear();
+    _guestHistory.clear();
+    final cleared = _guestBox.clear();
+    final forgotten = _settingsBox.deleteAll(['library_owner', 'library_revisions']);
+    libraryOwnerNotifier.value = null;
+    _syncNotifiers();
+    await cleared;
+    await forgotten;
+    PlaybackLogService.instance.log('LIBRARY', 'tolta la libreria di "${owner.name}"');
+  }
+
+  /// Up to this version a TV kept the phone's library in the place of its
+  /// own. Once, what it has is moved where the phone's library is now kept,
+  /// and the device's own starts empty.
+  Future<void> _separateGuestLibraryOnce() async {
+    const flag = 'guest_library_v1';
+    if (_settingsBox.get(flag) == true) return;
+    try {
+      final owner = libraryOwner;
+      if (owner != null) {
+        _guestFavorites.addAll(_cachedFavorites);
+        _guestPlaylists.addAll(_cachedPlaylists);
+        _guestArtists.addAll(_cachedArtists);
+        _guestHistory.addAll(_cachedHistory);
+        for (final section in [sectionFavorites, sectionPlaylists, sectionArtists, sectionHistory]) {
+          await _saveGuest(section);
+        }
+        _cachedFavorites.clear();
+        _favoriteIds.clear();
+        _cachedPlaylists.clear();
+        _cachedArtists.clear();
+        _cachedHistory.clear();
+        await _favoritesBox.clear();
+        await _playlistsBox.clear();
+        await _artistsBox.clear();
+        await _historyBox.delete('recent_songs');
+        final waiting = _settingsBox.get('library_ops');
+        if (waiting is List) await _settingsBox.put('library_ops_${owner.id}', waiting);
+        await _settingsBox.delete('library_ops');
+        _syncNotifiers();
+        PlaybackLogService.instance.log(
+          'LIBRARY',
+          'la libreria di "${owner.name}" ora sta accanto a quella di questo dispositivo',
+        );
+      }
+      await _settingsBox.put(flag, true);
+    } catch (e) {
+      debugPrint('StorageService._separateGuestLibraryOnce: $e');
+    }
   }
 
   /// One section of this device's library, as plain data.
@@ -893,86 +1080,88 @@ class StorageService {
     return const <dynamic>[];
   }
 
-  /// Replaces one section of the library kept here with [data], the section
-  /// as [owner] has it at [revision]. What was learnt about the songs is
-  /// added to what is known here, not replaced.
+  /// Takes one section of the library of [owner], as it has it at
+  /// [revision], to show it beside this device's own, in the place of what
+  /// was shown of it (or of another phone) before. What was learnt about
+  /// the songs is added to what is known here.
   Future<void> importLibrarySection(
     String section,
     dynamic data, {
     required ({String id, String name}) owner,
     required String revision,
   }) async {
-    Iterable<Map<String, dynamic>> maps(dynamic raw) => [
-          for (final item in raw is List ? raw : const <dynamic>[])
-            if (item is Map) Map<String, dynamic>.from(item),
-        ];
+    List<T> made<T>(dynamic raw, T Function(Map<String, dynamic> map) make) {
+      final list = <T>[];
+      for (final item in raw is List ? raw : const <dynamic>[]) {
+        if (item is! Map || item['id'] == null) continue;
+        try {
+          list.add(make(Map<String, dynamic>.from(item)));
+        } catch (e) {
+          debugPrint('StorageService.importLibrarySection $section: $e');
+        }
+      }
+      return list;
+    }
+
+    // All of this before waiting for anything: sections arrive one right
+    // after the other, and each must find what the previous one recorded.
+    final previous = libraryOwner;
+    final writes = <Future<void>>[];
+    if (previous?.id != owner.id) {
+      // Another phone: nothing of the previous one's is shown any more.
+      _guestFavorites.clear();
+      _guestPlaylists.clear();
+      _guestArtists.clear();
+      _guestHistory.clear();
+      writes
+        ..add(_guestBox.clear())
+        ..add(_settingsBox.delete('library_revisions'));
+    }
+    writes
+      ..add(_settingsBox.put('library_owner', {'id': owner.id, 'name': owner.name}))
+      ..add(_settingsBox.put('library_revisions', {...libraryRevisions, section: revision}));
 
     switch (section) {
       case sectionFavorites:
-        final songs = maps(data).toList();
-        await _favoritesBox.clear();
-        // The first of the list is the most recent one.
-        final now = DateTime.now().millisecondsSinceEpoch;
-        await _favoritesBox.putAll({
-          for (var i = 0; i < songs.length; i++)
-            if (songs[i]['id'] is String) songs[i]['id']: {...songs[i], _favoritedAtKey: now - i},
-        });
+        _guestFavorites
+          ..clear()
+          ..addAll(made(data, Song.fromMap));
       case sectionPlaylists:
-        await _playlistsBox.clear();
-        await _playlistsBox.putAll({
-          for (final playlist in maps(data))
-            if (playlist['id'] is String) playlist['id']: playlist,
-        });
+        _guestPlaylists
+          ..clear()
+          ..addAll(made(data, Playlist.fromMap));
       case sectionArtists:
-        await _artistsBox.clear();
-        await _artistsBox.putAll({
-          for (final artist in maps(data))
-            if (artist['id'] != null) artist['id'].toString(): artist,
-        });
+        _guestArtists
+          ..clear()
+          ..addAll(made(data, Artist.fromMap));
       case sectionHistory:
-        await _historyBox.put('recent_songs', maps(data).toList());
+        _guestHistory
+          ..clear()
+          ..addAll(made(data, Song.fromMap));
       case sectionExtras:
-        if (data is! Map) return;
-        final mappings = data['mappings'];
-        if (mappings is Map) {
-          await _ytMappingBox.putAll({
-            for (final entry in mappings.entries)
-              if (entry.key is String && entry.value != null) entry.key: entry.value,
-          });
+        // The color and the searches a phone also sends are its own: this
+        // device has its settings.
+        if (data is Map) {
+          final mappings = data['mappings'];
+          if (mappings is Map) {
+            writes.add(_ytMappingBox.putAll({
+              for (final entry in mappings.entries)
+                if (entry.key is String && entry.value != null) entry.key: entry.value,
+            }));
+          }
+          final covers = data['covers'];
+          if (covers is Map) {
+            writes.add(_coversBox.putAll({
+              for (final entry in covers.entries)
+                if (entry.key is String && entry.value is String) entry.key: entry.value,
+            }));
+          }
         }
-        final covers = data['covers'];
-        if (covers is Map) {
-          await _coversBox.putAll({
-            for (final entry in covers.entries)
-              if (entry.key is String && entry.value is String) entry.key: entry.value,
-          });
-        }
-        if (data['accent'] is int) await _settingsBox.put('accent_color', data['accent']);
-        if (data['recentSearches'] is List) {
-          await _settingsBox.put(
-            'recent_searches',
-            (data['recentSearches'] as List).whereType<String>().toList(),
-          );
-        }
-      default:
-        return;
     }
-
-    // Both written before waiting for either: sections arrive one right
-    // after the other, and each must see what the previous one recorded.
-    final previous = libraryOwner;
-    final ownerSaved = _settingsBox.put('library_owner', {'id': owner.id, 'name': owner.name});
-    final revisionsSaved = _settingsBox.put('library_revisions', {
-      // Another owner: nothing of what the previous one sent is current.
-      if (previous?.id == owner.id) ...libraryRevisions,
-      section: revision,
-    });
-    // Nor are the changes made here to the previous owner's library.
-    if (previous != null && previous.id != owner.id) unawaited(_settingsBox.delete('library_ops'));
-    await ownerSaved;
-    await revisionsSaved;
-    _loadInitialData();
+    writes.add(_saveGuest(section));
+    _syncNotifiers();
     libraryOwnerNotifier.value = libraryOwner;
+    await Future.wait(writes);
 
     // What was changed here and the owner has not taken yet is put back on
     // top of what it sent.
@@ -986,16 +1175,17 @@ class StorageService {
     }
   }
 
-  // --- CHANGES MADE ON A COPY ---
-  // What is changed on a device that keeps another one's library (a heart
-  // given from the TV) belongs to the library only once its owner has it:
-  // each change is kept as an operation, sent to the owner when it is
-  // connected and dropped when the owner says it applied it.
+  // --- CHANGES MADE TO A PHONE'S LIBRARY ---
+  // What is changed here in the library of a phone (a heart given from the
+  // TV, a song taken out of one of its playlists) belongs to that library
+  // only once the phone has it: each change is kept as an operation for that
+  // phone, sent when it is connected and dropped when it says it applied
+  // it. What is changed in this device's own library is nobody else's.
   static const String opFavorite = 'favorite';
   static const String opFollow = 'follow';
   static const String opPlayed = 'played';
-  // A playlist made, renamed or (`on` false) removed; with its songs when it
-  // was saved whole (an album kept as a playlist).
+  // A playlist renamed or (`on` false) removed; with its songs when it is
+  // one the phone does not have.
   static const String opPlaylist = 'playlist';
   // A song put in a playlist or taken out of it.
   static const String opPlaylistSong = 'playlistSong';
@@ -1019,27 +1209,36 @@ class StorageService {
   final ValueNotifier<int> libraryOpsNotifier = ValueNotifier<int>(0);
   int _replayingOps = 0;
 
-  /// The changes made here that the owner of the library has not taken yet,
-  /// oldest first.
+  // Each phone has its own: what was changed in the library of one waits
+  // for it while another one's is shown.
+  String? get _libraryOpsKey {
+    final owner = libraryOwner;
+    return owner == null ? null : 'library_ops_${owner.id}';
+  }
+
+  /// The changes made here that the phone whose library is shown has not
+  /// taken yet, oldest first.
   List<Map<String, dynamic>> get pendingLibraryOps {
-    final raw = _settingsBox.get('library_ops');
+    final key = _libraryOpsKey;
+    final raw = key == null ? null : _settingsBox.get(key);
     return [
       for (final item in raw is List ? raw : const <dynamic>[])
         if (item is Map) Map<String, dynamic>.from(item),
     ];
   }
 
-  /// Keeps a change to [subject] (a song, an artist) for the owner of the
-  /// library. Nothing is kept where the library is this device's own. A
-  /// later change of the same kind to the same subject replaces the earlier.
+  /// Keeps a change to [subject] (a song, an artist) for the phone whose
+  /// library it was made in. A later change of the same kind to the same
+  /// subject replaces the earlier.
   void _recordLibraryOp(String kind, String subject, Map<String, dynamic> data) {
-    if (_replayingOps > 0 || libraryOwner == null) return;
+    final key = _libraryOpsKey;
+    if (_replayingOps > 0 || key == null) return;
     final ops = pendingLibraryOps
       ..removeWhere((op) => op['op'] == kind && op['subject'] == subject);
     final n = _nextLibraryOpNumber();
     ops.add({'n': n, 'op': kind, 'subject': subject, ...data});
     if (ops.length > _maxLibraryOps) ops.removeRange(0, ops.length - _maxLibraryOps);
-    unawaited(_settingsBox.put('library_ops', ops));
+    unawaited(_settingsBox.put(key, ops));
     libraryOpsNotifier.value = n;
   }
 
@@ -1049,10 +1248,11 @@ class StorageService {
     return n;
   }
 
-  /// A playlist was made or renamed here. With [withSongs] the change
-  /// carries its songs, for an owner that does not have the playlist.
+  /// A playlist of the phone was renamed here, or saved whole: with
+  /// [withSongs] the change carries its songs.
   void _recordPlaylistOp(Playlist playlist, {bool withSongs = false}) {
-    if (_replayingOps > 0 || libraryOwner == null) return;
+    final key = _libraryOpsKey;
+    if (_replayingOps > 0 || key == null) return;
     final ops = pendingLibraryOps;
     final at = ops.indexWhere(
       (op) => op['op'] == opPlaylist && op['subject'] == playlist.id && op['on'] == true,
@@ -1066,7 +1266,7 @@ class StorageService {
       },
       if (withSongs)
         'songs': [for (final song in playlist.songs) song.toMap()]
-      // The change the owner has not taken yet may be the one with the songs.
+      // The change the phone has not taken yet may be the one with the songs.
       else if (at != -1 && ops[at]['songs'] != null)
         'songs': ops[at]['songs'],
     };
@@ -1074,25 +1274,26 @@ class StorageService {
       _recordLibraryOp(opPlaylist, playlist.id, data);
       return;
     }
-    // Its making is still waiting for the owner, and the songs put in it
-    // since come after that: the change stays where the making was, or the
-    // owner would be given songs for a playlist it does not have yet. It
-    // takes a new number, so that an owner that already had the old one
-    // does not make this one forgotten with it.
+    // An earlier change to it is still waiting, and the songs put in it
+    // since come after that one: this takes its place, not the last. It
+    // takes a new number, so that a phone that already had the old one does
+    // not make this one forgotten with it.
     final n = _nextLibraryOpNumber();
     ops[at] = {'n': n, 'op': opPlaylist, 'subject': playlist.id, ...data};
-    unawaited(_settingsBox.put('library_ops', ops));
+    unawaited(_settingsBox.put(key, ops));
     libraryOpsNotifier.value = n;
   }
 
-  /// The owner applied the changes numbered up to [upTo], of the [kinds] it
+  /// The phone applied the changes numbered up to [upTo], of the [kinds] it
   /// knows (all of them when null).
   Future<void> forgetLibraryOps(int upTo, {Set<String>? kinds}) async {
+    final key = _libraryOpsKey;
+    if (key == null) return;
     final ops = pendingLibraryOps
       ..removeWhere(
         (op) => (op['n'] as int? ?? 0) <= upTo && (kinds == null || kinds.contains(op['op'])),
       );
-    await _settingsBox.put('library_ops', ops);
+    await _settingsBox.put(key, ops);
   }
 
   /// Makes a change another device recorded ([pendingLibraryOps] there).
@@ -1121,27 +1322,32 @@ class StorageService {
       case opPlaylist:
         final id = op['subject'];
         if (id is! String || id.isEmpty) return;
-        final existing = _cachedPlaylists.where((p) => p.id == id).firstOrNull;
+        final place = _placeOf(id);
         if (op['on'] != true) {
-          if (existing != null) await deletePlaylist(id);
+          if (place != null) await deletePlaylist(id);
           return;
         }
         final about = map('playlist') ?? const <String, dynamic>{};
-        final title = about['title'] as String? ?? existing?.title ?? 'Playlist';
-        if (existing != null) {
+        if (place != null) {
           // Its songs are whatever they are here: only its name follows.
-          if (existing.title != title) await renamePlaylist(id, title);
+          final title = about['title'] as String?;
+          if (title != null && place.list[place.index].title != title) {
+            await renamePlaylist(id, title);
+          }
           return;
         }
+        // One that is not here is made only from a change that carries its
+        // songs: a new name for a playlist removed meanwhile makes nothing.
         final songs = op['songs'];
+        if (_replayingOps > 0 || songs is! List) return;
         await savePlaylist(
           Playlist(
             id: id,
-            title: title,
+            title: about['title'] as String? ?? 'Playlist',
             description: about['description'] as String?,
             thumbnailUrl: about['thumbnailUrl'] as String?,
             songs: [
-              for (final item in songs is List ? songs : const <dynamic>[])
+              for (final item in songs)
                 if (item is Map && item['id'] is String)
                   Song.fromMap(Map<String, dynamic>.from(item)),
             ],
@@ -1151,11 +1357,12 @@ class StorageService {
         final id = op['playlist'];
         final song = map('song');
         if (id is! String || song == null || song['id'] is! String) return;
+        final place = _placeOf(id);
+        if (place == null) return;
+        final has = place.list[place.index].songs.any((s) => s.id == song['id']);
         if (op['on'] == true) {
-          await addSongToPlaylist(id, Song.fromMap(song));
-        } else if (_cachedPlaylists.any(
-          (p) => p.id == id && p.songs.any((s) => s.id == song['id']),
-        )) {
+          if (!has) await addSongToPlaylist(id, Song.fromMap(song));
+        } else if (has) {
           await removeSongFromPlaylist(id, song['id'] as String);
         }
     }

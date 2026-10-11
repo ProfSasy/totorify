@@ -40,8 +40,8 @@ class ConnectReceiver {
   /// What this device is: `tv` or `phone`.
   final String kind;
 
-  /// Whether the library of this device can be a copy of a phone's, kept
-  /// up to date by it (a TV; see [LibrarySync]).
+  /// Whether this device shows, beside its own library, the one of the
+  /// phone that is using it (a TV; see [LibrarySync]).
   final bool keepsLibrary;
 
   /// Whether the device announces itself on the network, besides answering
@@ -67,6 +67,9 @@ class ConnectReceiver {
   final Map<WebSocket, String> _controllerIds = {};
   // The changes to the library each controller said it can take.
   final Map<WebSocket, Set<String>> _controllerOps = {};
+  // The controllers that have just connected and not sent their library yet:
+  // the one that does is the phone whose library is shown from then on.
+  final Set<WebSocket> _newcomers = {};
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   Timer? _ticker;
 
@@ -257,6 +260,7 @@ class ConnectReceiver {
     if (!_controllers.remove(socket)) return;
     _controllerIds.remove(socket);
     _controllerOps.remove(socket);
+    _newcomers.remove(socket);
     controllers.value = _controllers.length;
     PlaybackLogService.instance.log('CONNECT', 'un dispositivo si è scollegato');
   }
@@ -336,10 +340,12 @@ class ConnectReceiver {
           if (whoId is String) _controllerIds[socket] = whoId;
           final knows = message['libraryOps'];
           if (knows is List) _controllerOps[socket] = knows.whereType<String>().toSet();
+          _newcomers.add(socket);
           _send(socket, ConnectProtocol.welcome, {
             'device': _info,
             'state': handler.connectState.toMap(),
-            if (keepsLibrary) 'library': LibrarySync.describe(selfId: id, selfName: name),
+            if (keepsLibrary)
+              'library': LibrarySync.describe(asker: whoId is String ? whoId : null),
             ..._queuePayload,
           });
           _sendLibraryOps();
@@ -381,10 +387,16 @@ class ConnectReceiver {
           _broadcastState();
         case ConnectProtocol.library:
           if (!keepsLibrary) return;
-          if (LibrarySync.accepts(message)) {
+          // The library shown is of the phone that connected last. One that
+          // was here before and only now sends what changed in its own does
+          // not take its place back with that piece alone.
+          final shown = StorageService.instance.libraryOwner?.id;
+          final newcomer = _newcomers.remove(socket);
+          if (LibrarySync.ownerOf(message) == shown || newcomer) {
             await LibrarySync.receive(message);
+            _sendLibraryOps();
           } else {
-            log.log('CONNECT', 'libreria non presa: quella che c\'è qui non è di chi la manda');
+            log.log('CONNECT', 'libreria non presa: ora è mostrata quella di un altro telefono');
           }
         case ConnectProtocol.libraryOpsDone:
           final upTo = message['upTo'];

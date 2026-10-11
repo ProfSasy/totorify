@@ -135,8 +135,16 @@ Future<void> _startApp() async {
   session.interruptionEventStream.listen((event) {
     PlaybackLogService.instance.log(
       'SESSION',
-      'interruzione audio ${event.begin ? 'inizio' : 'fine'} tipo=${event.type.name}',
+      'interruzione audio ${event.begin ? 'inizio' : 'fine'} tipo=${event.type.name}'
+      '${audioHandler.isRemote ? ' (suona un altro dispositivo: niente da fare)' : ''}',
     );
+    // The music is on another device: what takes this phone's audio (another
+    // app playing, a call) has nothing to interrupt there. Pausing here
+    // would stop the TV each time a video is opened on the phone.
+    if (audioHandler.isRemote) {
+      wasPlayingBeforeInterruption = false;
+      return;
+    }
     if (event.begin) {
       if (event.type == AudioInterruptionType.duck) {
         unawaited(audioHandler.setVolume(0.25));
@@ -162,6 +170,8 @@ Future<void> _startApp() async {
     }
   });
   session.becomingNoisyEventStream.listen((_) {
+    // Headphones pulled out of the phone say nothing about a TV's speakers.
+    if (audioHandler.isRemote) return;
     PlaybackLogService.instance.log('SESSION', 'uscita audio scollegata: pausa');
     unawaited(audioHandler.pause());
   });

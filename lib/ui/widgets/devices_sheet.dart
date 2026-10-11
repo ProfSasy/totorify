@@ -64,34 +64,6 @@ class _DevicesSheetState extends State<_DevicesSheet> {
     setState(() => _draggedVolume = null);
   }
 
-  /// The library the device has is somebody's: replacing it is asked twice.
-  Future<void> _replaceLibrary(ConnectDevice device) async {
-    final sure = await showCupertinoDialog<bool>(
-      context: context,
-      builder: (context) => CupertinoAlertDialog(
-        title: Text('Sostituire la libreria di ${device.name}?'),
-        content: const Text(
-          'Playlist, preferiti e artisti che ci sono ora lì verranno sostituiti '
-          'con i tuoi. Da quel momento quello che cambi lì torna su questo telefono.',
-        ),
-        actions: [
-          CupertinoDialogAction(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Annulla'),
-          ),
-          CupertinoDialogAction(
-            isDestructiveAction: true,
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Sostituisci'),
-          ),
-        ],
-      ),
-    );
-    if (sure != true) return;
-    PlaybackLogService.instance.log('UI', 'dispositivi: la mia libreria su "${device.name}"');
-    _connect.sendLibrary();
-  }
-
   Future<void> _choose(ConnectDevice device) async {
     if (_connecting != null) return;
     if (_connect.activeDevice.value == device) {
@@ -230,10 +202,8 @@ class _DevicesSheetState extends State<_DevicesSheet> {
                   SheetAction(
                     icon: AppIcons.playlist,
                     label: 'Usa la mia libreria su ${device.name}',
-                    subtitle: _connect.libraryThereIsItsOwn
-                        ? 'Ora ha la sua'
-                        : 'Ora ha quella di $libraryOwner',
-                    onTap: () => _replaceLibrary(device),
+                    subtitle: 'Ora ha quella di $libraryOwner',
+                    onTap: _connect.sendLibrary,
                   ),
               ],
             ],
