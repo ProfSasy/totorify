@@ -6,6 +6,7 @@ import '../../services/audio_handler.dart';
 import '../../services/auth_service.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/canvas_service.dart';
+import '../../services/connect/connect_host.dart';
 import '../../services/download_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
@@ -37,6 +38,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isAmoled = false;
   bool _hasSpDcCookie = false;
   bool _savesCanvas = true;
+  bool _receivesPlayback = false;
 
   String? _userName;
   String? _userEmail;
@@ -49,6 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _isHighQuality = StorageService.instance.isHighQuality;
     _isAmoled = StorageService.instance.isAmoledTheme;
     _savesCanvas = StorageService.instance.savesCanvasWithDownloads;
+    _receivesPlayback = StorageService.instance.receivesPlayback;
     _loadStorageSize();
     _loadUserInfo();
     // This screen lives for the whole session: the figure must follow the
@@ -189,6 +192,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   },
                 ),
+              ]),
+
+              const SizedBox(height: 20),
+
+              // ── Dispositivi ───────────────────────────────────────────────────
+              _buildSectionHeader('Dispositivi'),
+              _buildCardContainer([
+                SwitchListTile.adaptive(
+                  title: Text('Ricevi musica da altri dispositivi'),
+                  subtitle: Text(
+                      'Chi usa Totorify sulla stessa rete Wi-Fi può scegliere questo '
+                      'dispositivo per ascoltare. Ti viene chiesto prima di accettare.'),
+                  value: _receivesPlayback,
+                  activeTrackColor: primaryColor,
+                  onChanged: (val) async {
+                    PlaybackLogService.instance
+                        .log('UI', 'settings: ricevi da altri dispositivi = $val');
+                    setState(() => _receivesPlayback = val);
+                    await StorageService.instance.setReceivesPlayback(val);
+                    await ConnectHost.instance.apply();
+                  },
+                ),
+                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                ListTile(
+                  title: Text('Nome di questo dispositivo'),
+                  subtitle: Text(ConnectHost.deviceName),
+                  trailing: Icon(AppIcons.chevronRight,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      size: 18),
+                  onTap: _renameDevice,
+                ),
+                if (StorageService.instance.connectTrusted.isNotEmpty) ...[
+                  const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                  ListTile(
+                    title: Text('Dimentica i dispositivi autorizzati'),
+                    subtitle: Text(
+                      StorageService.instance.connectTrusted.values.join(', '),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () async {
+                      PlaybackLogService.instance
+                          .log('UI', 'settings: dimentica i dispositivi autorizzati');
+                      await ConnectHost.instance.forgetTrusted();
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                ],
               ]),
 
               const SizedBox(height: 20),
@@ -398,6 +449,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Future<void> _renameDevice() async {
+    final name = await showCupertinoDialog<String>(
+      context: context,
+      builder: (_) => _DeviceNameDialog(initial: ConnectHost.deviceName),
+    );
+    final clean = name?.trim() ?? '';
+    if (clean.isEmpty || clean == ConnectHost.deviceName) return;
+    PlaybackLogService.instance.log('UI', 'settings: nome del dispositivo "$clean"');
+    await ConnectHost.instance.rename(clean);
+    if (mounted) setState(() {});
+  }
+
   Widget _buildAccountTile(Color primaryColor) {
     final name = _userName ?? AuthService.instance.currentUser?.displayName ?? 'Utente';
     final email = _userEmail ?? AuthService.instance.currentUser?.email ?? '';
@@ -569,4 +632,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+}
+
+/// Asks what the other devices should call this one.
+class _DeviceNameDialog extends StatefulWidget {
+  const _DeviceNameDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_DeviceNameDialog> createState() => _DeviceNameDialogState();
+}
+
+class _DeviceNameDialogState extends State<_DeviceNameDialog> {
+  late final TextEditingController _controller = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoAlertDialog(
+      title: const Text('Nome di questo dispositivo'),
+      content: Padding(
+        padding: const EdgeInsets.only(top: AppSpacing.md),
+        child: CupertinoTextField(
+          controller: _controller,
+          placeholder: 'iPhone di Salvatore',
+          autofocus: true,
+          maxLength: 40,
+          textCapitalization: TextCapitalization.words,
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+      ),
+      actions: [
+        CupertinoDialogAction(
+          child: const Text('Annulla'),
+          onPressed: () => Navigator.pop(context),
+        ),
+        CupertinoDialogAction(
+          isDefaultAction: true,
+          child: const Text('Salva'),
+          onPressed: () => Navigator.pop(context, _controller.text),
+        ),
+      ],
+    );
+  }
 }

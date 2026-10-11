@@ -125,7 +125,7 @@ class _SearchScreenState extends State<SearchScreen> {
     } catch (e) {
       debugPrint('SearchScreen catalog error: $e');
     }
-    var songs = _rankTracks(clean, found);
+    var songs = TrackMatcherService.instance.rankSearch(clean, found);
 
     if (songs.isEmpty && SpotifyInternalAuthService.instance.hasSpDcCookie) {
       try {
@@ -148,53 +148,6 @@ class _SearchScreenState extends State<SearchScreen> {
       _isSearching = false;
     });
     unawaited(_upgradeCovers(songs, generation));
-  }
-
-  /// One list of tracks out of what the catalog found: its best match, the
-  /// songs, then the music videos (a song released only as a video is found
-  /// nowhere else). Tracks that carry every word of the query come first:
-  /// when the catalog has no such song it fills the list with loose matches.
-  List<Song> _rankTracks(String query, CatalogSearch found) {
-    // The catalog's best match can be the video of a song that is also in
-    // the list: the song goes in its place, and a video that is the same
-    // length as its song (the same audio, with pictures) is left out.
-    final matcher = TrackMatcherService.instance;
-    final songIds = {for (final song in found.songs) song.id};
-    Song? songOf(Song video) => songIds.contains(video.id)
-        ? null
-        : found.songs.where((song) => matcher.isVideoOf(video, song)).firstOrNull;
-    bool sameAudio(Song video, Song song) =>
-        video.duration > Duration.zero &&
-        song.duration > Duration.zero &&
-        (video.duration - song.duration).abs() <= const Duration(seconds: 10);
-
-    final top = found.topSong;
-    final topSong = top == null ? null : songOf(top);
-    final seen = <String>{};
-    final tracks = <Song>[
-      ?(topSong ?? top),
-      ...found.songs,
-      ...[?top, ...found.videos]
-          .where((video) => !YTMusicCatalogService.isAlteredVersion(video.title))
-          .where((video) {
-            final song = songOf(video);
-            return song == null || !sameAudio(video, song);
-          })
-          .take(8),
-    ].where((song) => seen.add(song.id)).toList();
-
-    final words = YTMusicCatalogService.normalize(query).split(' ');
-    bool matches(Song song) {
-      final text = ' ${YTMusicCatalogService.normalize(
-        '${song.title} ${song.artist} ${song.album ?? ''}',
-      )} ';
-      return words.every((word) => text.contains(' $word'));
-    }
-
-    return [
-      ...tracks.where(matches),
-      ...tracks.where((song) => !matches(song)),
-    ];
   }
 
   /// Video results come with a YouTube frame as artwork: swap in the

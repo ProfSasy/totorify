@@ -10,12 +10,14 @@ import 'services/canvas_file_cache.dart';
 import 'services/canvas_service.dart';
 import 'services/canvas_video_pool.dart';
 import 'services/connect/connect_controller.dart';
+import 'services/connect/connect_host.dart';
 import 'services/download_service.dart';
 import 'services/playback_log_service.dart';
 import 'services/storage_service.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/main_shell.dart';
 import 'ui/theme/app_theme.dart';
+import 'ui/widgets/connect_request_prompt.dart';
 import 'ui/widgets/player_sheet.dart';
 
 late AudioPlayerHandler audioHandler;
@@ -114,10 +116,10 @@ Future<void> _startApp() async {
   );
 
   // Other devices running Totorify can play instead of this one.
-  ConnectController.instance.attach(
-    audioHandler,
-    name: defaultTargetPlatform == TargetPlatform.iOS ? 'iPhone' : 'Telefono',
-  );
+  ConnectController.instance.attach(audioHandler, name: ConnectHost.deviceName);
+  // And this one can play for them, when the user turned that on.
+  ConnectHost.instance.attach(audioHandler);
+  unawaited(ConnectHost.instance.apply());
 
   // Configure the shared audio session after all audio plugins are loaded.
   // The session is NOT activated here: activating it at launch would stop
@@ -222,7 +224,10 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     PlaybackLogService.instance.log('APP', 'lifecycle=${state.name}');
     if (state == AppLifecycleState.paused) CanvasVideoPool.instance.suspend();
-    if (state == AppLifecycleState.resumed) CanvasVideoPool.instance.resume();
+    if (state == AppLifecycleState.resumed) {
+      CanvasVideoPool.instance.resume();
+      unawaited(ConnectHost.instance.resumed());
+    }
   }
 
   void _refreshTheme() {
@@ -319,9 +324,12 @@ class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
 
   @override
   Widget build(BuildContext context) {
-    return MainShell(
-      audioHandler: widget.audioHandler,
-      onThemeChanged: widget.onThemeChanged,
+    // A device that asks to play here is answered from any screen.
+    return ConnectRequestPrompt(
+      child: MainShell(
+        audioHandler: widget.audioHandler,
+        onThemeChanged: widget.onThemeChanged,
+      ),
     );
   }
 }

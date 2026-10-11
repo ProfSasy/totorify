@@ -28,6 +28,7 @@ class ConnectReceiver {
     this.port = ConnectProtocol.port,
     this.kind = ConnectDevice.kindTv,
     this.keepsLibrary = false,
+    this.admit,
     this.announce = true,
   });
 
@@ -47,8 +48,20 @@ class ConnectReceiver {
   /// who asks.
   final bool announce;
 
+  /// Asked before a controller is listened to, with who it says it is; null
+  /// lets anybody in. A TV stays in a house and answers whoever is on its
+  /// network. A phone is carried onto other networks: it asks its user,
+  /// says what it is playing only to who was let in, and gives its log to
+  /// nobody.
+  final Future<bool> Function(String id, String name)? admit;
+
   HttpServer? _server;
   final Set<WebSocket> _controllers = {};
+
+  // Connected, not let in yet; and those among them the user is being
+  // asked about.
+  final Set<WebSocket> _unadmitted = {};
+  final Set<WebSocket> _asking = {};
 
   // Who each controller said it is.
   final Map<WebSocket, String> _controllerIds = {};
@@ -113,10 +126,12 @@ class ConnectReceiver {
       await subscription.cancel();
     }
     _subscriptions.clear();
-    for (final socket in _controllers.toList()) {
+    for (final socket in [..._controllers, ..._unadmitted]) {
       await socket.close();
     }
     _controllers.clear();
+    _unadmitted.clear();
+    _asking.clear();
     _controllerIds.clear();
     controllers.value = 0;
     await _server?.close(force: true);
@@ -146,7 +161,7 @@ class ConnectReceiver {
       'name': name,
       'port': port,
       'kind': kind,
-      'nowPlaying': song == null
+      'nowPlaying': song == null || admit != null
           ? null
           : {
               'title': song.title,
@@ -167,7 +182,7 @@ class ConnectReceiver {
         request.response
           ..headers.contentType = ContentType.json
           ..write(jsonEncode(_info));
-      } else if (request.uri.path == ConnectProtocol.logPath) {
+      } else if (request.uri.path == ConnectProtocol.logPath && admit == null) {
         request.response
           ..headers.contentType = ContentType('text', 'plain', charset: 'utf-8')
           ..write(PlaybackLogService.instance.export(lastLines: 800));
@@ -183,9 +198,11 @@ class ConnectReceiver {
   void _accept(WebSocket socket) {
     // A controller whose app was frozen is noticed and dropped.
     socket.pingInterval = const Duration(seconds: 10);
-    _controllers.add(socket);
-    controllers.value = _controllers.length;
-    PlaybackLogService.instance.log('CONNECT', 'un dispositivo si è collegato');
+    if (admit == null) {
+      _letIn(socket);
+    } else {
+      _unadmitted.add(socket);
+    }
 
     socket.listen(
       (raw) => _onMessage(socket, raw),
@@ -195,7 +212,46 @@ class ConnectReceiver {
     );
   }
 
+  void _letIn(WebSocket socket) {
+    _unadmitted.remove(socket);
+    _controllers.add(socket);
+    controllers.value = _controllers.length;
+    PlaybackLogService.instance.log('CONNECT', 'un dispositivo si è collegato');
+  }
+
+  /// Asks whether who says [hello] may control this device. False when it
+  /// may not, or went away before the answer.
+  Future<bool> _ask(WebSocket socket, Map<String, dynamic> hello) async {
+    final ask = admit;
+    if (ask == null || !_unadmitted.contains(socket) || !_asking.add(socket)) return false;
+    final id = hello['id'];
+    final name = hello['name'];
+    final who = name is String && name.isNotEmpty ? name : 'Un dispositivo';
+    var allowed = false;
+    try {
+      if (id is String && id.isNotEmpty) {
+        _send(socket, ConnectProtocol.asking);
+        allowed = await ask(id, who);
+      }
+    } catch (e) {
+      debugPrint('ConnectReceiver._ask: $e');
+    } finally {
+      _asking.remove(socket);
+    }
+    if (!_unadmitted.contains(socket)) return false;
+    if (!allowed) {
+      PlaybackLogService.instance.log('CONNECT', '"$who" non è stato fatto entrare');
+      _send(socket, ConnectProtocol.refused);
+      _unadmitted.remove(socket);
+      unawaited(socket.close());
+      return false;
+    }
+    _letIn(socket);
+    return true;
+  }
+
   void _drop(WebSocket socket) {
+    _unadmitted.remove(socket);
     if (!_controllers.remove(socket)) return;
     _controllerIds.remove(socket);
     controllers.value = _controllers.length;
@@ -253,6 +309,11 @@ class ConnectReceiver {
     }
     final type = message['type'] as String? ?? '';
     final log = PlaybackLogService.instance;
+
+    // Not let in yet: all it can do is say who it is.
+    if (!_controllers.contains(socket)) {
+      if (type != ConnectProtocol.hello || !await _ask(socket, message)) return;
+    }
 
     try {
       switch (type) {

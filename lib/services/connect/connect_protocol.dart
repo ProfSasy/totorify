@@ -50,6 +50,12 @@ class ConnectProtocol {
   static const String state = 'state';
   static const String released = 'released';
 
+  /// Answers to `hello` from a player that lets in only who its user allows
+  /// (a phone): its user is being asked, which takes as long as a person
+  /// does; and the user said no, after which the connection is closed.
+  static const String asking = 'asking';
+  static const String refused = 'refused';
+
   /// What was changed on the player's copy of the controller's library (a
   /// heart given from the TV), for the controller to make its own; and the
   /// controller's answer, `upTo` the number of the last change it made.

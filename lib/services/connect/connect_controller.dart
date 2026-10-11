@@ -27,6 +27,8 @@ class ConnectController {
 
   static const Duration _probeTimeout = Duration(milliseconds: 700);
   static const Duration _connectTimeout = Duration(seconds: 4);
+  // How long a device may take to answer when it is asking its user.
+  static const Duration _consentTimeout = Duration(seconds: 40);
   static const int _parallelProbes = 64;
   static const int _maxRemembered = 6;
   // Pauses between the attempts to reach a device again after the
@@ -62,6 +64,14 @@ class ConnectController {
   final ValueNotifier<List<ConnectDevice>> devices = ValueNotifier<List<ConnectDevice>>(const []);
   final ValueNotifier<bool> scanning = ValueNotifier<bool>(false);
 
+  /// Name of the device whose user is being asked whether this one may play
+  /// there; null when none is.
+  final ValueNotifier<String?> waitingFor = ValueNotifier<String?>(null);
+
+  /// Whether the last [transferTo] failed because the user of the device
+  /// said no.
+  bool refused = false;
+
   final StreamController<String> _notices = StreamController<String>.broadcast();
 
   /// Short messages for the user (a device that can no longer be reached).
@@ -82,6 +92,9 @@ class ConnectController {
       notifier.addListener(_onLibraryChanged);
     }
   }
+
+  /// The user gave this device another name.
+  void rename(String name) => _name = name;
 
   /// The player stopped being a remote by itself (another device asked it
   /// to play): the connection that made it one is dropped.
@@ -267,6 +280,7 @@ class ConnectController {
     final handler = _handler;
     if (handler == null) return false;
     final log = PlaybackLogService.instance;
+    refused = false;
 
     // From one device straight to another: back here first, silently.
     if (_session != null) await _leave(resume: false);
@@ -274,7 +288,11 @@ class ConnectController {
     final generation = ++_sessionGeneration;
     final opened = await _open(device, generation);
     if (opened == null) {
-      log.error('CONNECT', '"${device.name}" (${device.host}) non raggiungibile');
+      if (refused) {
+        log.log('CONNECT', '"${device.name}" ha rifiutato');
+      } else {
+        log.error('CONNECT', '"${device.name}" (${device.host}) non raggiungibile');
+      }
       return false;
     }
     if (generation != _sessionGeneration) {
@@ -437,11 +455,28 @@ class ConnectController {
         onClosed: () => _onClosed(generation, device),
       );
       final welcome = session.next(ConnectProtocol.welcome);
+      final asking = session.next(ConnectProtocol.asking);
+      final refusal = session.next(ConnectProtocol.refused);
       session.send(ConnectProtocol.hello, {
         'id': StorageService.instance.connectId,
         'name': _name,
       });
-      return (session, await welcome.timeout(_connectTimeout));
+      var answer = await Future.any([welcome, asking, refusal]).timeout(_connectTimeout);
+      if (answer['type'] == ConnectProtocol.asking) {
+        // Its user is being asked: that takes as long as a person does.
+        waitingFor.value = device.name;
+        try {
+          answer = await Future.any([welcome, refusal]).timeout(_consentTimeout);
+        } finally {
+          waitingFor.value = null;
+        }
+      }
+      if (answer['type'] == ConnectProtocol.refused) {
+        refused = true;
+        await session.close();
+        return null;
+      }
+      return (session, answer);
     } catch (e) {
       debugPrint('ConnectController._open ${device.host}: $e');
       await session?.close();

@@ -665,6 +665,35 @@ class StorageService {
     return id;
   }
 
+  /// The name the user gave this device for the others; null when none was
+  /// given and the kind of device stands in ("iPhone").
+  String? get connectName {
+    final name = (_settingsBox.get('connect_name') as String?)?.trim() ?? '';
+    return name.isEmpty ? null : name;
+  }
+
+  Future<void> setConnectName(String name) async => _settingsBox.put('connect_name', name.trim());
+
+  /// Whether this device can be found and asked to play by the others (a
+  /// phone; a TV always can). Off until the user turns it on.
+  bool get receivesPlayback => _settingsBox.get('connect_receive', defaultValue: false) as bool;
+  Future<void> setReceivesPlayback(bool value) async => _settingsBox.put('connect_receive', value);
+
+  /// The devices the user allowed for good to play on this one, by id, with
+  /// the name they had.
+  Map<String, String> get connectTrusted {
+    final raw = _settingsBox.get('connect_trusted');
+    return {
+      if (raw is Map)
+        for (final entry in raw.entries) entry.key.toString(): entry.value.toString(),
+    };
+  }
+
+  Future<void> trustConnectDevice(String id, String name) async =>
+      _settingsBox.put('connect_trusted', {...connectTrusted, id: name});
+
+  Future<void> clearConnectTrusted() async => _settingsBox.delete('connect_trusted');
+
   /// How loud the app plays for the devices that control it, from 0 to 1.
   double get outputVolume =>
       (_settingsBox.get('output_volume', defaultValue: 1.0) as num?)?.toDouble() ?? 1.0;

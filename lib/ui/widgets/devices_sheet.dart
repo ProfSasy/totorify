@@ -83,8 +83,10 @@ class _DevicesSheetState extends State<_DevicesSheet> {
     } else {
       setState(() {
         _connecting = null;
-        _error = 'Non riesco a raggiungere ${device.name}. '
-            'Controlla che Totorify sia aperto lì e che siate sulla stessa rete.';
+        _error = _connect.refused
+            ? 'Su ${device.name} la richiesta non è stata accettata.'
+            : 'Non riesco a raggiungere ${device.name}. '
+                'Controlla che Totorify sia aperto lì e che siate sulla stessa rete.';
       });
     }
   }
@@ -131,6 +133,7 @@ class _DevicesSheetState extends State<_DevicesSheet> {
         _connect.scanning,
         _connect.activeDevice,
         _connect.libraryOwnedBy,
+        _connect.waitingFor,
         audioHandler.outputVolumeNotifier,
       ]),
       builder: (context, _) {
@@ -162,9 +165,11 @@ class _DevicesSheetState extends State<_DevicesSheet> {
                 label: device.name,
                 subtitle: active == device
                     ? 'In riproduzione'
-                    : (device.nowPlaying == null
-                        ? device.host
-                        : 'Sta suonando: ${device.nowPlaying}'),
+                    : (_connecting == device.id && _connect.waitingFor.value != null
+                        ? 'Conferma su ${device.name}…'
+                        : (device.nowPlaying == null
+                            ? device.host
+                            : 'Sta suonando: ${device.nowPlaying}')),
                 color: active == device ? cs.primary : null,
                 trailing: _connecting == device.id
                     ? const CupertinoActivityIndicator(radius: 9)
