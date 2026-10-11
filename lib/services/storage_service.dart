@@ -80,6 +80,7 @@ class StorageService {
     await _forgetSourceChoicesOnce();
     _removeLockScreenExperiment();
     _loadInitialData();
+    libraryOwnerNotifier.value = libraryOwner;
     _findSavedCanvases();
   }
 
@@ -173,25 +174,27 @@ class StorageService {
   }
 
   void _loadInitialData() {
-    // 1. Favorites
+    // 1. Favorites, most recently added first. A box gives its values in
+    // the order of their keys, not of their arrival: the moment each one
+    // was added is stored with it. Those saved before it was (no moment)
+    // keep the order they always had, after the others.
     _cachedFavorites.clear();
     _favoriteIds.clear();
+    final favorites = <(int, int, Song)>[];
     for (final raw in _favoritesBox.values) {
       if (raw != null) {
         try {
           final map = Map<String, dynamic>.from(raw as Map);
           final song = Song.fromMap(map);
-          _cachedFavorites.add(song);
+          favorites.add((map[_favoritedAtKey] as int? ?? 0, favorites.length, song));
           _favoriteIds.add(song.id);
         } catch (e) {
           debugPrint('StorageService._loadFavorites: $e');
         }
       }
     }
-    final reversedFavs = _cachedFavorites.reversed.toList();
-    _cachedFavorites
-      ..clear()
-      ..addAll(reversedFavs);
+    favorites.sort((a, b) => a.$1 != b.$1 ? b.$1.compareTo(a.$1) : b.$2.compareTo(a.$2));
+    _cachedFavorites.addAll(favorites.map((entry) => entry.$3));
 
     // 2. Playlists
     _cachedPlaylists.clear();
@@ -273,6 +276,8 @@ class StorageService {
   }
 
   // --- FAVORITES ---
+  static const String _favoritedAtKey = 'favoritedAt';
+
   List<Song> getFavorites() => List.unmodifiable(_cachedFavorites);
 
   bool isFavorite(String songId) => _favoriteIds.contains(songId);
@@ -287,7 +292,10 @@ class StorageService {
       _favoriteIds.add(song.id);
       _cachedFavorites.insert(0, song);
       favoritesNotifier.value = List.unmodifiable(_cachedFavorites);
-      await _favoritesBox.put(song.id, song.toMap());
+      await _favoritesBox.put(song.id, {
+        ...song.toMap(),
+        _favoritedAtKey: DateTime.now().millisecondsSinceEpoch,
+      });
     }
   }
 
@@ -651,6 +659,11 @@ class StorageService {
     return id;
   }
 
+  /// How loud the app plays for the devices that control it, from 0 to 1.
+  double get outputVolume =>
+      (_settingsBox.get('output_volume', defaultValue: 1.0) as num?)?.toDouble() ?? 1.0;
+  Future<void> setOutputVolume(double value) async => _settingsBox.put('output_volume', value);
+
   /// Whether the Library shows covers in a grid instead of rows.
   bool get libraryGrid => _settingsBox.get('library_grid', defaultValue: false) as bool? ?? false;
   Future<void> setLibraryGrid(bool value) async => _settingsBox.put('library_grid', value);
@@ -720,6 +733,162 @@ class StorageService {
         'followedAt': DateTime.now().millisecondsSinceEpoch,
       });
     }
+  }
+
+  // --- LIBRARY COPY ---
+  // A TV keeps a copy of the library of the phone it belongs to (see
+  // `LibrarySync`). The library travels in sections, so that a change to
+  // one does not send the others again.
+  static const String sectionFavorites = 'favorites';
+  static const String sectionPlaylists = 'playlists';
+  static const String sectionArtists = 'artists';
+  static const String sectionHistory = 'history';
+  static const String sectionExtras = 'extras';
+  static const List<String> librarySections = [
+    sectionFavorites,
+    sectionPlaylists,
+    sectionArtists,
+    sectionHistory,
+    sectionExtras,
+  ];
+
+  /// Name and id of the device whose library is copied here, or null when
+  /// the library is this device's own.
+  final ValueNotifier<({String id, String name})?> libraryOwnerNotifier =
+      ValueNotifier<({String id, String name})?>(null);
+
+  ({String id, String name})? get libraryOwner {
+    final raw = _settingsBox.get('library_owner');
+    if (raw is! Map || raw['id'] is! String) return null;
+    return (id: raw['id'] as String, name: raw['name'] as String? ?? 'Telefono');
+  }
+
+  /// Which version of each section is copied here, as its owner named it.
+  Map<String, String> get libraryRevisions {
+    final raw = _settingsBox.get('library_revisions');
+    return raw is Map
+        ? {for (final entry in raw.entries) entry.key.toString(): entry.value.toString()}
+        : {};
+  }
+
+  /// One section of this device's library, as plain data.
+  Object exportLibrarySection(String section) {
+    switch (section) {
+      case sectionFavorites:
+        return [for (final song in _cachedFavorites) song.toMap()];
+      case sectionPlaylists:
+        return [for (final playlist in _cachedPlaylists) playlist.toMap()];
+      case sectionArtists:
+        return [
+          for (final artist in _cachedArtists)
+            {
+              ...artist.toMap(),
+              'followedAt': switch (_artistsBox.get(artist.id)) {
+                {'followedAt': final int at} => at,
+                _ => 0,
+              },
+            },
+        ];
+      case sectionHistory:
+        return [for (final song in _cachedHistory) song.toMap()];
+      case sectionExtras:
+        return {
+          // What was learnt about the songs: the video matched to each, the
+          // offset it starts at, its Spotify id. Not what only makes sense
+          // here (the measured length of a downloaded file).
+          'mappings': {
+            for (final key in _ytMappingBox.keys)
+              if (key is String && !key.startsWith('duration_')) key: _ytMappingBox.get(key),
+          },
+          'covers': {
+            for (final key in _coversBox.keys)
+              if (key is String) key: _coversBox.get(key),
+          },
+          'accent': accentColor.toARGB32(),
+          'recentSearches': getRecentSearches(),
+        };
+    }
+    return const <dynamic>[];
+  }
+
+  /// Replaces one section of the library kept here with [data], the section
+  /// as [owner] has it at [revision]. What was learnt about the songs is
+  /// added to what is known here, not replaced.
+  Future<void> importLibrarySection(
+    String section,
+    dynamic data, {
+    required ({String id, String name}) owner,
+    required String revision,
+  }) async {
+    Iterable<Map<String, dynamic>> maps(dynamic raw) => [
+          for (final item in raw is List ? raw : const <dynamic>[])
+            if (item is Map) Map<String, dynamic>.from(item),
+        ];
+
+    switch (section) {
+      case sectionFavorites:
+        final songs = maps(data).toList();
+        await _favoritesBox.clear();
+        // The first of the list is the most recent one.
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await _favoritesBox.putAll({
+          for (var i = 0; i < songs.length; i++)
+            if (songs[i]['id'] is String) songs[i]['id']: {...songs[i], _favoritedAtKey: now - i},
+        });
+      case sectionPlaylists:
+        await _playlistsBox.clear();
+        await _playlistsBox.putAll({
+          for (final playlist in maps(data))
+            if (playlist['id'] is String) playlist['id']: playlist,
+        });
+      case sectionArtists:
+        await _artistsBox.clear();
+        await _artistsBox.putAll({
+          for (final artist in maps(data))
+            if (artist['id'] != null) artist['id'].toString(): artist,
+        });
+      case sectionHistory:
+        await _historyBox.put('recent_songs', maps(data).toList());
+      case sectionExtras:
+        if (data is! Map) return;
+        final mappings = data['mappings'];
+        if (mappings is Map) {
+          await _ytMappingBox.putAll({
+            for (final entry in mappings.entries)
+              if (entry.key is String && entry.value != null) entry.key: entry.value,
+          });
+        }
+        final covers = data['covers'];
+        if (covers is Map) {
+          await _coversBox.putAll({
+            for (final entry in covers.entries)
+              if (entry.key is String && entry.value is String) entry.key: entry.value,
+          });
+        }
+        if (data['accent'] is int) await _settingsBox.put('accent_color', data['accent']);
+        if (data['recentSearches'] is List) {
+          await _settingsBox.put(
+            'recent_searches',
+            (data['recentSearches'] as List).whereType<String>().toList(),
+          );
+        }
+      default:
+        return;
+    }
+
+    // Both written before waiting for either: sections arrive one right
+    // after the other, and each must see what the previous one recorded.
+    final previous = libraryOwner;
+    final ownerSaved = _settingsBox.put('library_owner', {'id': owner.id, 'name': owner.name});
+    final revisionsSaved = _settingsBox.put('library_revisions', {
+      // Another owner: nothing of what the previous one sent is current.
+      if (previous?.id == owner.id) ...libraryRevisions,
+      section: revision,
+    });
+    await ownerSaved;
+    await revisionsSaved;
+    _loadInitialData();
+    libraryOwnerNotifier.value = libraryOwner;
   }
 
   // --- RECENT SEARCHES ---

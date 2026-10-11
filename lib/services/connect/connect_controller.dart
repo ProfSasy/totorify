@@ -7,16 +7,20 @@ import 'package:flutter/foundation.dart';
 import '../audio_handler.dart';
 import '../playback_log_service.dart';
 import '../storage_service.dart';
+import 'connect_discovery.dart';
 import 'connect_protocol.dart';
+import 'library_sync.dart';
 
 /// The controlling side of a connection: finds the devices that can play
-/// for this one, hands the playback to one of them and takes it back.
+/// for this one, hands the playback to one of them or takes up what it is
+/// playing, and takes the playback back.
 ///
-/// Devices are found without any discovery protocol: the ones used before
-/// are asked first, then every address of the local network is asked the
-/// same question ("are you Totorify?") on the port the players listen on.
-/// It needs nothing but ordinary connections, which is all iOS lets an app
-/// make on the local network without a special entitlement.
+/// Devices are found in three ways at once: the ones used before are asked
+/// first; the ones that announce themselves on the network are heard (see
+/// [ConnectDiscovery]); and every address of the local network is asked the
+/// same question ("are you Totorify?") on the port the players listen on,
+/// which needs nothing but ordinary connections and so works where
+/// announcements do not get through.
 class ConnectController {
   ConnectController._();
   static final ConnectController instance = ConnectController._();
@@ -32,6 +36,20 @@ class ConnectController {
   AudioPlayerHandler? _handler;
   _Session? _session;
   int _sessionGeneration = 0;
+  String _name = 'Telefono';
+
+  /// False where the system's service discovery is not there (tests).
+  static bool useDiscovery = true;
+
+  // The copy of this device's library on the device that is playing: the
+  // versions it has, or null when it keeps none or keeps someone else's.
+  Map<String, String>? _libraryThere;
+  Timer? _libraryDebounce;
+
+  /// Name of the owner of the library the device that is playing keeps,
+  /// when it is not this device: its library is not replaced unless the
+  /// user asks to (see [sendLibrary]).
+  final ValueNotifier<String?> libraryOwnedBy = ValueNotifier<String?>(null);
 
   /// The device that is playing instead of this one, or null.
   final ValueNotifier<ConnectDevice?> activeDevice = ValueNotifier<ConnectDevice?>(null);
@@ -45,8 +63,33 @@ class ConnectController {
   /// Short messages for the user (a device that can no longer be reached).
   Stream<String> get notices => _notices.stream;
 
-  /// The player of this app, whose playback is handed over.
-  void attach(AudioPlayerHandler handler) => _handler = handler;
+  /// The player of this app, whose playback is handed over. [name] is what
+  /// the other devices call this one.
+  void attach(AudioPlayerHandler handler, {String? name}) {
+    _handler = handler;
+    if (name != null) _name = name;
+    handler.remoteNameNotifier.addListener(_onRemoteChanged);
+    final storage = StorageService.instance;
+    for (final notifier in <Listenable>[
+      storage.favoritesNotifier,
+      storage.playlistsNotifier,
+      storage.followedArtistsNotifier,
+    ]) {
+      notifier.addListener(_onLibraryChanged);
+    }
+  }
+
+  /// The player stopped being a remote by itself (another device asked it
+  /// to play): the connection that made it one is dropped.
+  void _onRemoteChanged() {
+    final session = _session;
+    if (session == null || _handler?.isRemote != false) return;
+    _session = null;
+    _sessionGeneration++;
+    activeDevice.value = null;
+    _forgetLibraryThere();
+    unawaited(session.close());
+  }
 
   // ── Finding devices ───────────────────────────────────────────────────────
 
@@ -77,12 +120,7 @@ class ConnectController {
       final body = await response.transform(utf8.decoder).join().timeout(_probeTimeout);
       final info = jsonDecode(body);
       if (info is! Map || info['app'] != ConnectProtocol.app) return null;
-      return ConnectDevice(
-        id: info['id'] as String? ?? host,
-        name: info['name'] as String? ?? 'Totorify',
-        host: host,
-        port: info['port'] as int? ?? port,
-      );
+      return ConnectDevice.fromInfo(Map<String, dynamic>.from(info), host, port);
     } catch (_) {
       return null;
     } finally {
@@ -91,10 +129,46 @@ class ConnectController {
   }
 
   void _found(ConnectDevice device) {
-    devices.value = [
-      ...devices.value.where((d) => d.id != device.id),
-      device,
-    ];
+    if (device.id == StorageService.instance.connectId) return;
+    final list = devices.value;
+    final index = list.indexWhere((d) => d.id == device.id);
+    // Found again (announced and asked, or at two addresses): it keeps its
+    // place in the list.
+    devices.value = index == -1
+        ? [...list, device]
+        : [...list.take(index), device, ...list.skip(index + 1)];
+  }
+
+  // Addresses being asked because of an announcement, not to ask twice.
+  final Set<String> _asking = {};
+
+  /// Looks for players in every way: [devices] starts over and fills up as
+  /// they are found. Announcements go on being heard until [stopListening].
+  Future<void> search() async {
+    // From scratch: a device announced before is not announced again to
+    // who is already listening.
+    await stopListening();
+    unawaited(_listen());
+    await scan();
+  }
+
+  Future<void> _listen() async {
+    if (!useDiscovery) return;
+    await ConnectDiscovery.instance.listen((host, port) async {
+      final key = '$host:$port';
+      if (!_asking.add(key)) return;
+      try {
+        final device = await probe(host, port: port);
+        if (device != null) _found(device);
+      } finally {
+        _asking.remove(key);
+      }
+    });
+  }
+
+  Future<void> stopListening() async {
+    if (!useDiscovery) return;
+    await ConnectDiscovery.instance.stopListening();
   }
 
   /// Addresses of the local networks this device is on, as "a.b.c." prefixes
@@ -182,8 +256,9 @@ class ConnectController {
 
   // ── Handing the playback over, and back ───────────────────────────────────
 
-  /// Hands the playback to [device]. Returns false when it cannot be
-  /// reached.
+  /// Hands the playback to [device]; when that is playing and this device
+  /// is not, takes up what it is playing instead. Returns false when it
+  /// cannot be reached.
   Future<bool> transferTo(ConnectDevice device) async {
     final handler = _handler;
     if (handler == null) return false;
@@ -207,14 +282,78 @@ class ConnectController {
     _session = session;
     activeDevice.value = device;
     unawaited(_remember(device));
+    final theirState = welcome['state'] is Map
+        ? ConnectState.fromMap(Map<String, dynamic>.from(welcome['state'] as Map))
+        : null;
     await handler.attachRemote(
       session,
       theirQueue: ConnectProtocol.decodeSongs(welcome['songs']),
-      theirState: welcome['state'] is Map
-          ? ConnectState.fromMap(Map<String, dynamic>.from(welcome['state'] as Map))
-          : null,
+      theirState: theirState,
+      // Music is on there and not here: the user wants to control it, not
+      // to replace it with what was left paused on this device.
+      takeTheirs: (theirState?.playing ?? false) && !handler.playbackState.value.playing,
     );
+    _syncLibrary(session, welcome);
     return true;
+  }
+
+  // ── The library, for a device that keeps a copy of it ─────────────────────
+
+  void _forgetLibraryThere() {
+    _libraryDebounce?.cancel();
+    _libraryThere = null;
+    libraryOwnedBy.value = null;
+  }
+
+  /// After connecting: sends what the device lacks of this device's library,
+  /// when it keeps one and it is this device's (or nobody's yet).
+  void _syncLibrary(_Session session, Map<String, dynamic> welcome, {bool force = false}) {
+    _forgetLibraryThere();
+    final there = LibrarySync.describedBy(welcome);
+    if (there == null) return;
+    final mine = StorageService.instance.connectId;
+    if (!force && there.ownerId != null && there.ownerId != mine) {
+      libraryOwnedBy.value = there.ownerName ?? 'un altro dispositivo';
+      return;
+    }
+    _libraryThere = LibrarySync.send(
+      session,
+      ownerId: mine,
+      ownerName: _name,
+      theirs: there.ownerId == mine ? there.revisions : const {},
+    );
+  }
+
+  /// Replaces the library the device that is playing keeps with the one of
+  /// this device, which becomes the one it follows.
+  void sendLibrary() {
+    final session = _session;
+    if (session == null || libraryOwnedBy.value == null) return;
+    libraryOwnedBy.value = null;
+    _libraryThere = LibrarySync.send(
+      session,
+      ownerId: StorageService.instance.connectId,
+      ownerName: _name,
+      theirs: const {},
+    );
+  }
+
+  /// Something of the library changed here while a device keeps its copy:
+  /// it is sent once the changes stop.
+  void _onLibraryChanged() {
+    if (_libraryThere == null || _session == null) return;
+    _libraryDebounce?.cancel();
+    _libraryDebounce = Timer(const Duration(seconds: 2), () {
+      final session = _session;
+      final there = _libraryThere;
+      if (session == null || there == null || !session.isOpen) return;
+      _libraryThere = LibrarySync.send(
+        session,
+        ownerId: StorageService.instance.connectId,
+        ownerName: _name,
+        theirs: there,
+      );
+    });
   }
 
   /// Takes the playback back to this device, from where the other one was.
@@ -227,6 +366,7 @@ class ConnectController {
     _session = null;
     _sessionGeneration++;
     activeDevice.value = null;
+    _forgetLibraryThere();
 
     // The other device stops and says where it was.
     Duration? at;
@@ -265,7 +405,10 @@ class ConnectController {
         onClosed: () => _onClosed(generation, device),
       );
       final welcome = session.next(ConnectProtocol.welcome);
-      session.send(ConnectProtocol.hello);
+      session.send(ConnectProtocol.hello, {
+        'id': StorageService.instance.connectId,
+        'name': _name,
+      });
       return (session, await welcome.timeout(_connectTimeout));
     } catch (e) {
       debugPrint('ConnectController._open ${device.host}: $e');
@@ -325,6 +468,7 @@ class ConnectController {
             ConnectState.fromMap(Map<String, dynamic>.from(welcome['state'] as Map)),
           );
         }
+        _syncLibrary(session, welcome);
       }
       log.log('CONNECT', 'collegamento con "${device.name}" ripreso');
       return;
@@ -335,6 +479,7 @@ class ConnectController {
     _session = null;
     _sessionGeneration++;
     activeDevice.value = null;
+    _forgetLibraryThere();
     await _handler?.detachRemote();
     _notices.add('${device.name} non è più raggiungibile');
   }

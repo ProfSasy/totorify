@@ -17,6 +17,10 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Totorify cerca sulla rete di casa i dispositivi su cui continuare la musica, come la TV.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_totorify._tcp</string>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

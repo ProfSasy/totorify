@@ -2,11 +2,12 @@ import '../../models/song.dart';
 
 /// How two Totorify apps on the same network talk to each other.
 ///
-/// One of them plays (a TV, usually) and listens on [port]: it answers an
-/// HTTP request at [infoPath] with who it is, which is how it is found, and
-/// accepts a WebSocket at [socketPath]. The other controls it: it sends what
-/// to play and from where, and then acts as its remote. Messages are JSON
-/// objects with a `type`.
+/// One of them plays (a TV, usually) and listens on [port]: it announces
+/// itself on the network as a [serviceType] service, answers an HTTP request
+/// at [infoPath] with who it is and what it is playing, and accepts a
+/// WebSocket at [socketPath]. The other controls it: it sends what to play
+/// and from where, or takes up what is playing there, and then acts as its
+/// remote. Messages are JSON objects with a `type`.
 ///
 /// The device that plays owns the playback: it resolves the stream itself,
 /// keeps the queue and goes on by itself when the controller goes away.
@@ -14,6 +15,9 @@ class ConnectProtocol {
   ConnectProtocol._();
 
   static const int port = 47836;
+
+  /// The name players announce themselves with (DNS-SD over mDNS).
+  static const String serviceType = '_totorify._tcp';
   static const String infoPath = '/totorify';
 
   /// The diagnostic log of the device that plays, as plain text: a TV has
@@ -34,7 +38,12 @@ class ConnectProtocol {
   static const String jump = 'jump';
   static const String mode = 'mode';
   static const String speed = 'speed';
+  static const String volume = 'volume';
   static const String release = 'release';
+
+  /// A part of the controller's library, for a player that keeps a copy of
+  /// it (see `LibrarySync`).
+  static const String library = 'library';
 
   // Player → controller.
   static const String welcome = 'welcome';
@@ -60,23 +69,56 @@ class ConnectDevice {
   final String host;
   final int port;
 
+  /// `tv` or `phone`.
+  final String kind;
+
+  /// What it was playing when it was asked ("title · artist"), or null when
+  /// it was silent. Not remembered between sessions.
+  final String? nowPlaying;
+
   const ConnectDevice({
     required this.id,
     required this.name,
     required this.host,
     this.port = ConnectProtocol.port,
+    this.kind = kindTv,
+    this.nowPlaying,
   });
 
-  Map<String, dynamic> toMap() => {'id': id, 'name': name, 'host': host, 'port': port};
+  static const String kindTv = 'tv';
+  static const String kindPhone = 'phone';
+
+  Map<String, dynamic> toMap() =>
+      {'id': id, 'name': name, 'host': host, 'port': port, 'kind': kind};
 
   factory ConnectDevice.fromMap(Map<String, dynamic> map) => ConnectDevice(
         id: map['id'] as String? ?? '',
         name: map['name'] as String? ?? 'Dispositivo',
         host: map['host'] as String? ?? '',
         port: map['port'] as int? ?? ConnectProtocol.port,
+        kind: map['kind'] as String? ?? kindTv,
       );
 
-  ConnectDevice at(String host) => ConnectDevice(id: id, name: name, host: host, port: port);
+  /// The device as it describes itself at [ConnectProtocol.infoPath],
+  /// reached at [host].
+  factory ConnectDevice.fromInfo(Map<String, dynamic> info, String host, int port) {
+    final playing = info['nowPlaying'];
+    String? nowPlaying;
+    if (playing is Map && playing['playing'] == true) {
+      final title = playing['title'] as String? ?? '';
+      final artist = playing['artist'] as String? ?? '';
+      nowPlaying = [title, artist].where((part) => part.isNotEmpty).join(' · ');
+      if (nowPlaying.isEmpty) nowPlaying = null;
+    }
+    return ConnectDevice(
+      id: info['id'] as String? ?? host,
+      name: info['name'] as String? ?? 'Totorify',
+      host: host,
+      port: info['port'] as int? ?? port,
+      kind: info['kind'] as String? ?? kindTv,
+      nowPlaying: nowPlaying,
+    );
+  }
 
   @override
   bool operator ==(Object other) => other is ConnectDevice && other.id == id;
@@ -100,6 +142,9 @@ class ConnectState {
   /// `off`, `all` or `one`.
   final String repeat;
 
+  /// How loud the app plays, from 0 to 1, within the volume of the device.
+  final double volume;
+
   const ConnectState({
     required this.songId,
     required this.index,
@@ -109,6 +154,7 @@ class ConnectState {
     required this.loading,
     required this.shuffle,
     required this.repeat,
+    this.volume = 1.0,
   });
 
   Map<String, dynamic> toMap() => {
@@ -120,6 +166,7 @@ class ConnectState {
         'loading': loading,
         'shuffle': shuffle,
         'repeat': repeat,
+        'volume': volume,
       };
 
   factory ConnectState.fromMap(Map<String, dynamic> map) => ConnectState(
@@ -131,6 +178,7 @@ class ConnectState {
         loading: map['loading'] as bool? ?? false,
         shuffle: map['shuffle'] as bool? ?? false,
         repeat: map['repeat'] as String? ?? 'off',
+        volume: (map['volume'] as num?)?.toDouble() ?? 1.0,
       );
 }
 

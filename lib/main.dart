@@ -114,7 +114,10 @@ Future<void> _startApp() async {
   );
 
   // Other devices running Totorify can play instead of this one.
-  ConnectController.instance.attach(audioHandler);
+  ConnectController.instance.attach(
+    audioHandler,
+    name: defaultTargetPlatform == TargetPlatform.iOS ? 'iPhone' : 'Telefono',
+  );
 
   // Configure the shared audio session after all audio plugins are loaded.
   // The session is NOT activated here: activating it at launch would stop

@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../main.dart' show audioHandler;
 import '../../services/connect/connect_controller.dart';
 import '../../services/connect/connect_protocol.dart';
 import '../../services/playback_log_service.dart';
@@ -12,7 +13,8 @@ import 'app_sheet.dart';
 
 /// Lets the user choose where the music plays: this device, or another one
 /// running Totorify on the same network (a TV), which continues from the
-/// same point.
+/// same point; a device that is already playing is taken control of. While
+/// another device plays, its volume is set from here.
 Future<void> showDevicesSheet(BuildContext context) {
   PlaybackLogService.instance.log('UI', 'dispositivi: apri');
   return showAppSheet<void>(context, builder: (_) => const _DevicesSheet());
@@ -32,10 +34,34 @@ class _DevicesSheetState extends State<_DevicesSheet> {
   String? _connecting;
   String? _error;
 
+  // The volume while the slider is dragged, and when it was last sent: the
+  // other device is not told of every pixel.
+  double? _draggedVolume;
+  DateTime _volumeSentAt = DateTime.fromMillisecondsSinceEpoch(0);
+
   @override
   void initState() {
     super.initState();
-    _connect.scan();
+    _connect.search();
+  }
+
+  @override
+  void dispose() {
+    _connect.stopListening();
+    super.dispose();
+  }
+
+  void _dragVolume(double value) {
+    setState(() => _draggedVolume = value);
+    final now = DateTime.now();
+    if (now.difference(_volumeSentAt) < const Duration(milliseconds: 80)) return;
+    _volumeSentAt = now;
+    audioHandler.setOutputVolume(value);
+  }
+
+  void _releaseVolume(double value) {
+    audioHandler.setOutputVolume(value);
+    setState(() => _draggedVolume = null);
   }
 
   Future<void> _choose(ConnectDevice device) async {
@@ -100,11 +126,19 @@ class _DevicesSheetState extends State<_DevicesSheet> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return ListenableBuilder(
-      listenable: Listenable.merge([_connect.devices, _connect.scanning, _connect.activeDevice]),
+      listenable: Listenable.merge([
+        _connect.devices,
+        _connect.scanning,
+        _connect.activeDevice,
+        _connect.libraryOwnedBy,
+        audioHandler.outputVolumeNotifier,
+      ]),
       builder: (context, _) {
         final active = _connect.activeDevice.value;
         final devices = _connect.devices.value;
         final scanning = _connect.scanning.value;
+        final libraryOwner = _connect.libraryOwnedBy.value;
+        final volume = _draggedVolume ?? audioHandler.outputVolumeNotifier.value;
 
         return Column(
           mainAxisSize: MainAxisSize.min,
@@ -122,17 +156,52 @@ class _DevicesSheetState extends State<_DevicesSheet> {
               trailing: active == null ? Icon(AppIcons.check, color: cs.primary) : null,
               onTap: _backHere,
             ),
-            for (final device in devices)
+            for (final device in devices) ...[
               SheetAction(
-                icon: AppIcons.tv,
+                icon: device.kind == ConnectDevice.kindPhone ? AppIcons.phone : AppIcons.tv,
                 label: device.name,
-                subtitle: active == device ? 'In riproduzione' : device.host,
+                subtitle: active == device
+                    ? 'In riproduzione'
+                    : (device.nowPlaying == null
+                        ? device.host
+                        : 'Sta suonando: ${device.nowPlaying}'),
                 color: active == device ? cs.primary : null,
                 trailing: _connecting == device.id
                     ? const CupertinoActivityIndicator(radius: 9)
                     : (active == device ? Icon(AppIcons.check, color: cs.primary) : null),
                 onTap: () => _choose(device),
               ),
+              // What belongs to the device that is playing, right under it.
+              if (active == device) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(AppSpacing.xl, 0, AppSpacing.md, AppSpacing.sm),
+                  child: Row(
+                    children: [
+                      Icon(AppIcons.volumeDown, color: cs.onSurfaceVariant, size: 22),
+                      Expanded(
+                        child: Semantics(
+                          label: 'Volume di ${device.name}',
+                          child: Slider(
+                            value: volume.clamp(0.0, 1.0),
+                            onChanged: _dragVolume,
+                            onChangeEnd: _releaseVolume,
+                          ),
+                        ),
+                      ),
+                      Icon(AppIcons.volumeUp, color: cs.onSurfaceVariant, size: 22),
+                      const SizedBox(width: AppSpacing.md),
+                    ],
+                  ),
+                ),
+                if (libraryOwner != null)
+                  SheetAction(
+                    icon: AppIcons.playlist,
+                    label: 'Usa la mia libreria su ${device.name}',
+                    subtitle: 'Ora ha quella di $libraryOwner',
+                    onTap: _connect.sendLibrary,
+                  ),
+              ],
+            ],
             if (scanning)
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: AppSpacing.xl, vertical: AppSpacing.md),
@@ -169,7 +238,7 @@ class _DevicesSheetState extends State<_DevicesSheet> {
               SheetAction(
                 icon: AppIcons.refresh,
                 label: 'Cerca di nuovo',
-                onTap: _connect.scan,
+                onTap: _connect.search,
               ),
             SheetAction(
               icon: AppIcons.link,

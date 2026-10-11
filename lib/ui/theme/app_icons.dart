@@ -74,6 +74,8 @@ class AppIcons {
   static const IconData devices = Icons.speaker_group_outlined;
   static const IconData tv = Icons.tv_rounded;
   static const IconData phone = Icons.smartphone_rounded;
+  static const IconData volumeDown = Icons.volume_down_rounded;
+  static const IconData volumeUp = Icons.volume_up_rounded;
 }
 
 /// The three glyphs of the tab bar, drawn by hand: thin outlines at rest,

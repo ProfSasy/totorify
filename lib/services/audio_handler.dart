@@ -70,7 +70,10 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   static const Duration _endMargin = Duration(milliseconds: 250);
 
   VideoPlayerController? _player;
+  // Lowered for a moment while another app speaks.
   double _volume = 1.0;
+  // How loud this app plays, as set by the devices that control it.
+  double _outputVolume = 1.0;
   double _speed = 1.0;
 
   Timer? _positionTimer;
@@ -92,6 +95,13 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   /// Name of the device that is playing instead of this one, or null.
   final ValueNotifier<String?> remoteNameNotifier = ValueNotifier<String?>(null);
+
+  /// How loud the app that is playing plays, from 0 to 1: the one on the
+  /// other device while it plays instead of this one.
+  final ValueNotifier<double> outputVolumeNotifier = ValueNotifier<double>(1.0);
+  // When the volume of the other device was last set from here: its
+  // reports are not allowed to move the slider back while it is dragged.
+  DateTime? _volumeSetAt;
 
   bool get isRemote => _remote != null;
 
@@ -637,7 +647,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       _trackDuration = _resolveDuration(reported, knownDuration, currentSong);
       final misreported = (reported - _trackDuration).abs() > const Duration(seconds: 2);
 
-      await controller.setVolume(_volume);
+      await controller.setVolume(_playerVolume);
       await controller.setPlaybackSpeed(_speed);
       // A newer load can begin while this player is being set up (skipping
       // quickly through tracks). It silenced this one and will replace it:
@@ -1335,7 +1345,26 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   Future<void> setVolume(double volume) async {
     _volume = volume;
-    await _player?.setVolume(volume);
+    await _player?.setVolume(_playerVolume);
+  }
+
+  // Squared: what is heard follows the slider far better than with the
+  // plain value, which leaves nearly all the change in its lower third.
+  double get _playerVolume => _volume * _outputVolume * _outputVolume;
+
+  /// Sets how loud the app plays, from 0 to 1, within the volume of the
+  /// device: here, or on the device that is playing instead of this one.
+  Future<void> setOutputVolume(double volume) async {
+    final value = volume.clamp(0.0, 1.0).toDouble();
+    outputVolumeNotifier.value = value;
+    final remote = _remote;
+    if (remote != null) {
+      _volumeSetAt = DateTime.now();
+      remote.send(ConnectProtocol.volume, {'value': value});
+      return;
+    }
+    _outputVolume = value;
+    await _player?.setVolume(_playerVolume);
   }
 
   @override
@@ -1408,19 +1437,22 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   }
 
   /// Hands the playback to [remote]: what is playing here stops, and
-  /// continues there from the same point. With nothing loaded here, what
-  /// [remote] is playing ([theirQueue], [theirState]) is taken up instead.
+  /// continues there from the same point. With nothing loaded here, or when
+  /// [takeTheirs] is true, what [remote] is playing ([theirQueue],
+  /// [theirState]) is taken up instead, and this device becomes its remote.
   Future<void> attachRemote(
     RemoteOutput remote, {
     List<Song> theirQueue = const [],
     ConnectState? theirState,
+    bool takeTheirs = false,
   }) async {
-    final song = currentSong;
+    final song = takeTheirs && theirQueue.isNotEmpty ? null : currentSong;
     final at = position;
     PlaybackLogService.instance.log(
       'CONNECT',
-      'passo la riproduzione a "${remote.name}"'
-      '${song == null ? '' : ': "${song.title}" da ${at.inSeconds}s'}',
+      song == null
+          ? 'controllo quello che suona "${remote.name}"'
+          : 'passo la riproduzione a "${remote.name}": "${song.title}" da ${at.inSeconds}s',
     );
 
     // Nothing plays here any more; a load in progress is dropped.
@@ -1437,6 +1469,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
     _remote = remote;
     remoteNameNotifier.value = remote.name;
+    _volumeSetAt = null;
+    outputVolumeNotifier.value = theirState?.volume ?? 1.0;
     _remoteTicker?.cancel();
     _remoteTicker = Timer.periodic(const Duration(milliseconds: 250), (_) {
       final anchor = _remoteAnchor;
@@ -1475,6 +1509,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _remoteTicker?.cancel();
     _remoteTicker = null;
     remoteNameNotifier.value = null;
+    outputVolumeNotifier.value = _outputVolume;
 
     final at = resumeAt ?? position;
     if (currentSong == null) {
@@ -1507,6 +1542,12 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       mediaItem.add(song.toMediaItem());
       StorageService.instance.addToHistory(song);
       _warmCanvasForCurrent();
+    }
+
+    final volumeSetAt = _volumeSetAt;
+    if (volumeSetAt == null ||
+        DateTime.now().difference(volumeSetAt) > const Duration(milliseconds: 1500)) {
+      outputVolumeNotifier.value = state.volume;
     }
 
     _trackDuration = state.duration;
@@ -1586,6 +1627,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       loading: loading,
       shuffle: _queue.shuffle,
       repeat: _queue.repeat.name,
+      volume: _outputVolume,
     );
   }
 
@@ -1598,6 +1640,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     bool play = true,
   }) async {
     if (songs.isEmpty) return;
+    // This device was the remote of another one: it plays itself now, and
+    // the other is left to what it was doing.
+    if (_remote != null) await detachRemote();
     final start = songs[index.clamp(0, songs.length - 1)];
     PlaybackLogService.instance.log(
       'CONNECT',
