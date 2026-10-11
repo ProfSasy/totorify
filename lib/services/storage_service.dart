@@ -631,6 +631,26 @@ class StorageService {
   bool get isAmoledTheme => _settingsBox.get('amoled_theme', defaultValue: false) as bool;
   Future<void> setAmoledTheme(bool value) async => _settingsBox.put('amoled_theme', value);
 
+  /// Devices this one has handed its playback to, most recent first, as
+  /// maps (see `ConnectDevice`): tried first the next time, before looking
+  /// around the network.
+  List<Map<String, dynamic>> get connectDevices => [
+        for (final raw in _settingsBox.get('connect_devices', defaultValue: <dynamic>[]) as List)
+          if (raw is Map) Map<String, dynamic>.from(raw),
+      ];
+  Future<void> setConnectDevices(List<Map<String, dynamic>> devices) async =>
+      _settingsBox.put('connect_devices', devices);
+
+  /// Identity and name of this device for the others on the network. The id
+  /// is made once and kept.
+  String get connectId {
+    final known = _settingsBox.get('connect_id') as String?;
+    if (known != null && known.isNotEmpty) return known;
+    final id = 'totorify-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
+    _settingsBox.put('connect_id', id);
+    return id;
+  }
+
   /// Whether the Library shows covers in a grid instead of rows.
   bool get libraryGrid => _settingsBox.get('library_grid', defaultValue: false) as bool? ?? false;
   Future<void> setLibraryGrid(bool value) async => _settingsBox.put('library_grid', value);

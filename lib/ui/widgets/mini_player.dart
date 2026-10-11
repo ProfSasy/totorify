@@ -12,6 +12,7 @@ import '../theme/app_ambience.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 import 'app_cover.dart';
+import 'devices_sheet.dart';
 import 'favorite_button.dart';
 import 'player_sheet.dart';
 
@@ -143,7 +144,30 @@ class _MiniPlayerBody extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 1),
-                        Row(
+                        // On another device: its name takes the artist's place.
+                        ValueListenableBuilder<String?>(
+                          valueListenable: audioHandler.remoteNameNotifier,
+                          builder: (context, remote, artistRow) => remote == null
+                              ? artistRow!
+                              : Row(
+                                  children: [
+                                    Icon(AppIcons.devices, size: 13, color: palette.accent),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text(
+                                        remote,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w700,
+                                          color: palette.accent,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                          child: Row(
                           children: [
                             ValueListenableBuilder<List<Song>>(
                               valueListenable:
@@ -169,11 +193,22 @@ class _MiniPlayerBody extends StatelessWidget {
                               ),
                             ),
                           ],
+                          ),
                         ),
                       ],
                     ),
                   ),
 
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: DevicesButton(
+                      remoteName: audioHandler.remoteNameNotifier,
+                      accent: palette.accent,
+                      idle: _ink,
+                      showName: false,
+                      size: 22,
+                    ),
+                  ),
                   FavoriteButton(
                     song: () => audioHandler.currentSong,
                     activeColor: palette.accent,

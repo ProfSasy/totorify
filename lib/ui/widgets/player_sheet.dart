@@ -21,6 +21,7 @@ import 'alternative_sources_sheet.dart';
 import 'app_cover.dart';
 import 'app_sheet.dart';
 import 'canvas_player_widget.dart';
+import 'devices_sheet.dart';
 import 'favorite_button.dart';
 import 'play_button.dart';
 import 'song_options_sheet.dart';
@@ -897,12 +898,17 @@ class _PlayerSheetState extends State<PlayerSheet>
                     // ── Sources, sleep timer, lyrics, queue ──────────────
                     Row(
                       children: [
-                        IconButton(
-                          tooltip: 'Fonti audio alternative',
-                          padding: EdgeInsets.zero,
-                          alignment: Alignment.centerLeft,
-                          onPressed: _showSources,
-                          icon: Icon(AppIcons.sources, color: quiet, size: 23),
+                        // Where the music plays: here, or on another device
+                        // (its name then takes the room there is).
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: DevicesButton(
+                              remoteName: widget.audioHandler.remoteNameNotifier,
+                              accent: palette.accent,
+                              idle: quiet,
+                            ),
+                          ),
                         ),
                         ValueListenableBuilder<String?>(
                           valueListenable: widget.audioHandler.sleepTimerNotifier,
@@ -930,7 +936,11 @@ class _PlayerSheetState extends State<PlayerSheet>
                             );
                           },
                         ),
-                        const Spacer(),
+                        IconButton(
+                          tooltip: 'Fonti audio alternative',
+                          onPressed: _showSources,
+                          icon: Icon(AppIcons.sources, color: quiet, size: 23),
+                        ),
                         IconButton(
                           tooltip: 'Testo',
                           onPressed: () => _tabController.animateTo(1),

@@ -10,6 +10,7 @@ import 'package:video_player/video_player.dart';
 import '../models/song.dart';
 import 'canvas_service.dart';
 import 'canvas_video_pool.dart';
+import 'connect/connect_protocol.dart';
 import 'cover_art_service.dart';
 import 'download_service.dart';
 import 'playback_log_service.dart';
@@ -46,6 +47,11 @@ enum _Open {
 /// every video (error 152), so it is no longer an option.
 ///
 /// Queue rules (order, shuffle, repeat) live in [PlaybackQueue].
+///
+/// The playback can be handed to another device running Totorify (see
+/// `connect/`). While it is, nothing plays here: every command goes to that
+/// device, which reports what it is doing, and this handler shows it, so
+/// the whole interface works as its remote.
 class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler {
   final PlaybackQueue _queue = PlaybackQueue();
 
@@ -71,6 +77,23 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   /// YouTube video being streamed, or null while a local file plays.
   String? _currentStreamId;
+
+  // The device that is playing instead of this one, when there is one.
+  RemoteOutput? _remote;
+  // True while a change that came from that device is applied here: it
+  // must not be sent back to it.
+  bool _followingRemote = false;
+  // Where the other device said it was, and when: the position shown moves
+  // on from there between its reports.
+  ({Duration position, DateTime at, bool playing})? _remoteAnchor;
+  Timer? _remoteTicker;
+  // Where play() starts from after the playback came back paused.
+  Duration? _resumeAt;
+
+  /// Name of the device that is playing instead of this one, or null.
+  final ValueNotifier<String?> remoteNameNotifier = ValueNotifier<String?>(null);
+
+  bool get isRemote => _remote != null;
 
   // True until the user (or the queue) asks for playback again after a stop
   // or a failed load: play() then loads the current song from scratch.
@@ -303,8 +326,16 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     return reported;
   }
 
-  void _updateQueueBroadcast() {
+  /// Tells the interface the queue has changed and, with [sync], the device
+  /// that is playing instead of this one.
+  void _updateQueueBroadcast({bool sync = true}) {
     queue.add(_queue.items.map((s) => s.toMediaItem()).toList());
+    if (sync && !_followingRemote) {
+      _remote?.send(ConnectProtocol.queue, {
+        'songs': ConnectProtocol.encodeSongs(_queue.items.map(_withSource)),
+        'currentId': currentSong?.id,
+      });
+    }
   }
 
   /// Publishes the current song with the length of what is actually playing.
@@ -420,9 +451,16 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     double? startSeconds,
     bool freshUrl = false,
   }) async {
-    final generation = ++_loadGeneration;
     final song = currentSong;
     if (song == null) return;
+    _resumeAt = null;
+    if (_remote != null) {
+      // Another device is playing: it loads the track, this one follows.
+      final from = startSeconds ?? _startOffsetOf(song).inMilliseconds / 1000;
+      _sendLoad(Duration(milliseconds: (from * 1000).round()));
+      return;
+    }
+    final generation = ++_loadGeneration;
     _endGateOpen = true;
     _userPaused = false;
     _loading = true;
@@ -772,7 +810,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _failedStreams.remove(song.id);
     _errorReloads.remove(song.id);
     _syncSuggestionsWithQueue();
-    _updateQueueBroadcast();
+    // Another device, if it is the one playing, gets the queue with the
+    // order to play it.
+    _updateQueueBroadcast(sync: false);
     mediaItem.add(song.toMediaItem());
     StorageService.instance.addToHistory(song);
 
@@ -816,9 +856,18 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       'play (daCapo=$_userStopped inCaricamento=$_loading)',
     );
     _userPaused = false;
+    if (_remote != null) {
+      _remote!.send(ConnectProtocol.play);
+      _expectFromRemote(playing: true);
+      return;
+    }
     if (_userStopped && currentSong != null) {
       _userStopped = false;
-      await _loadAndPlayCurrent();
+      // After the playback came back from another device, from where it was.
+      final from = _resumeAt;
+      await _loadAndPlayCurrent(
+        startSeconds: from == null ? null : from.inMilliseconds / 1000,
+      );
       return;
     }
     // While a track loads there is nothing to start yet: clearing
@@ -843,6 +892,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   Future<void> pause() async {
     PlaybackLogService.instance.log('CMD', 'pause (inCaricamento=$_loading)');
     _userPaused = true;
+    if (_remote != null) {
+      _remote!.send(ConnectProtocol.pause);
+      _expectFromRemote(playing: false);
+      return;
+    }
     if (_loading) {
       // No player events arrive during a load: show the pause ourselves.
       _publish(processing: AudioProcessingState.buffering, playing: false);
@@ -854,6 +908,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   @override
   Future<void> stop() async {
     PlaybackLogService.instance.log('CMD', 'stop');
+    if (_remote != null) {
+      _remote!.send(ConnectProtocol.pause);
+      _expectFromRemote(playing: false);
+      return;
+    }
     _userStopped = true;
     _loading = false;
     _starting = false;
@@ -875,6 +934,18 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     var target = position < Duration.zero ? Duration.zero : position;
     if (_trackDuration > Duration.zero && target > _trackDuration) target = _trackDuration;
     log.log('CMD', 'seek ${target.inSeconds}s (inCaricamento=$_loading)');
+
+    if (_remote != null) {
+      _remote!.send(ConnectProtocol.seek, {'positionMs': target.inMilliseconds});
+      _expectFromRemote(position: target);
+      return;
+    }
+    if (_userStopped && _resumeAt != null) {
+      // Not loaded yet (the playback came back paused): it starts from here.
+      _resumeAt = target;
+      _setPosition(target, announce: true);
+      return;
+    }
 
     final player = _player;
     if (_loading) {
@@ -919,6 +990,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   @override
   Future<void> skipToNext() async {
     PlaybackLogService.instance.log('CMD', 'skipToNext');
+    if (_remote != null) return _remote!.send(ConnectProtocol.next);
     _endGateOpen = false;
     await _advance();
   }
@@ -929,6 +1001,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   Future<void> skipToQueueItem(int index) async {
     if (index < 0 || index >= _queue.items.length) return;
     PlaybackLogService.instance.log('CMD', 'skipToQueueItem $index');
+    if (_remote != null) return _remote!.send(ConnectProtocol.jump, {'index': index});
     if (index == _queue.index && !_userStopped) {
       await seek(_startOffsetOf(currentSong));
       if (!playbackState.value.playing) await play();
@@ -941,6 +1014,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   @override
   Future<void> skipToPrevious() async {
     PlaybackLogService.instance.log('CMD', 'skipToPrevious');
+    if (_remote != null) return _remote!.send(ConnectProtocol.previous);
     final start = _startOffsetOf(currentSong);
     if (!_loading && _currentSeconds() - start.inMilliseconds / 1000 > 4.0) {
       await seek(start);
@@ -1243,6 +1317,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       repeatMode: repeatMode,
       updatePosition: position,
     ));
+    _sendModes();
   }
 
   @override
@@ -1255,6 +1330,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       shuffleMode: enabled ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
       updatePosition: position,
     ));
+    _sendModes();
   }
 
   Future<void> setVolume(double volume) async {
@@ -1265,6 +1341,289 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   @override
   Future<void> setSpeed(double speed) async {
     _speed = speed;
+    _remote?.send(ConnectProtocol.speed, {'value': speed});
     await _player?.setPlaybackSpeed(speed);
+  }
+
+  // --- Playing on another device ---
+  //
+  // Everything below the next heading runs on the device that controls;
+  // what follows it, on the device that plays.
+
+  /// [song] with the YouTube video this device plays for it, when known, so
+  /// that the other device plays the same recording without matching it
+  /// again (and the position means the same thing on both).
+  Song _withSource(Song song) {
+    if (song.youtubeVideoId != null && song.youtubeVideoId!.isNotEmpty) return song;
+    final source = (song.id == currentSong?.id ? _currentStreamId : null) ??
+        StorageService.instance.getCachedYouTubeMapping(song.id);
+    return (source == null || source.isEmpty) ? song : song.copyWith(youtubeVideoId: source);
+  }
+
+  /// Tells the other device to play the current song from [position], with
+  /// the whole queue.
+  void _sendLoad(Duration position) {
+    final remote = _remote;
+    if (remote == null || currentSong == null) return;
+    _userPaused = false;
+    _userStopped = false;
+    _trackDuration = Duration.zero;
+    remote.send(ConnectProtocol.load, {
+      'songs': ConnectProtocol.encodeSongs(_queue.items.map(_withSource)),
+      'index': _queue.index,
+      'positionMs': position.inMilliseconds,
+      'play': true,
+      'shuffle': _queue.shuffle,
+      'repeat': _queue.repeat.name,
+    });
+    _remoteAnchor = (position: position, at: DateTime.now(), playing: false);
+    positionNotifier.value = position;
+    _publish(
+      processing: AudioProcessingState.buffering,
+      playing: true,
+      pollPosition: false,
+    );
+  }
+
+  void _sendModes() {
+    if (_followingRemote) return;
+    _remote?.send(ConnectProtocol.mode, {
+      'shuffle': _queue.shuffle,
+      'repeat': _queue.repeat.name,
+    });
+  }
+
+  /// Shows at once what a command is about to do on the other device; its
+  /// next report confirms or corrects it.
+  void _expectFromRemote({bool? playing, Duration? position}) {
+    final shown = position ?? this.position;
+    final isPlaying = playing ?? playbackState.value.playing;
+    _remoteAnchor = (position: shown, at: DateTime.now(), playing: isPlaying);
+    positionNotifier.value = shown;
+    _publish(
+      processing: playbackState.value.processingState,
+      playing: isPlaying,
+      pollPosition: false,
+    );
+  }
+
+  /// Hands the playback to [remote]: what is playing here stops, and
+  /// continues there from the same point. With nothing loaded here, what
+  /// [remote] is playing ([theirQueue], [theirState]) is taken up instead.
+  Future<void> attachRemote(
+    RemoteOutput remote, {
+    List<Song> theirQueue = const [],
+    ConnectState? theirState,
+  }) async {
+    final song = currentSong;
+    final at = position;
+    PlaybackLogService.instance.log(
+      'CONNECT',
+      'passo la riproduzione a "${remote.name}"'
+      '${song == null ? '' : ': "${song.title}" da ${at.inSeconds}s'}',
+    );
+
+    // Nothing plays here any more; a load in progress is dropped.
+    _loadGeneration++;
+    _loading = false;
+    _starting = false;
+    _seeking = false;
+    _pendingSeek = null;
+    _resumeAt = null;
+    _stopPositionTimer();
+    final player = _player;
+    _player = null;
+    await _disposeQuietly(player);
+
+    _remote = remote;
+    remoteNameNotifier.value = remote.name;
+    _remoteTicker?.cancel();
+    _remoteTicker = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      final anchor = _remoteAnchor;
+      if (anchor == null || !anchor.playing) return;
+      var shown = anchor.position + DateTime.now().difference(anchor.at) * _speed;
+      if (_trackDuration > Duration.zero && shown > _trackDuration) shown = _trackDuration;
+      positionNotifier.value = shown;
+    });
+
+    if (song != null) {
+      _sendLoad(at);
+    } else if (theirQueue.isNotEmpty) {
+      applyRemoteQueue(theirQueue, currentId: theirState?.songId);
+      if (theirState != null) applyRemoteState(theirState);
+    }
+  }
+
+  /// The connection to the device that is playing was opened again.
+  void replaceRemote(RemoteOutput remote) {
+    if (_remote != null) _remote = remote;
+  }
+
+  /// Takes the playback back from the other device. With [resumeAt] the
+  /// current song continues here from that point: at once when [play] is
+  /// true, at the next play() otherwise.
+  Future<void> detachRemote({Duration? resumeAt, bool play = false}) async {
+    final remote = _remote;
+    if (remote == null) return;
+    PlaybackLogService.instance.log(
+      'CONNECT',
+      'riprendo la riproduzione da "${remote.name}"'
+      '${resumeAt == null ? '' : ' a ${resumeAt.inSeconds}s'}',
+    );
+    _remote = null;
+    _remoteAnchor = null;
+    _remoteTicker?.cancel();
+    _remoteTicker = null;
+    remoteNameNotifier.value = null;
+
+    final at = resumeAt ?? position;
+    if (currentSong == null) {
+      _publish(processing: AudioProcessingState.idle, playing: false);
+      return;
+    }
+    if (play) {
+      _userStopped = false;
+      await _loadAndPlayCurrent(startSeconds: at.inMilliseconds / 1000);
+      return;
+    }
+    // Paused: nothing is loaded until the user asks for it.
+    _userStopped = true;
+    _resumeAt = at;
+    positionNotifier.value = at;
+    _publish(processing: AudioProcessingState.ready, playing: false);
+  }
+
+  /// The other device reports what it is doing.
+  void applyRemoteState(ConnectState state) {
+    if (_remote == null) return;
+    final items = _queue.items;
+    var index = state.index;
+    if (index < 0 || index >= items.length || items[index].id != state.songId) {
+      index = state.songId == null ? -1 : items.indexWhere((s) => s.id == state.songId);
+    }
+    if (index != -1 && index != _queue.index) {
+      _queue.moveTo(index);
+      final song = currentSong!;
+      mediaItem.add(song.toMediaItem());
+      StorageService.instance.addToHistory(song);
+      _warmCanvasForCurrent();
+    }
+
+    _trackDuration = state.duration;
+    final shown = mediaItem.value?.duration ?? Duration.zero;
+    if (state.duration > Duration.zero &&
+        (shown - state.duration).abs() > const Duration(seconds: 1)) {
+      _publishCurrentMediaItem();
+    }
+
+    if (state.shuffle != _queue.shuffle || state.repeat != _queue.repeat.name) {
+      _followingRemote = true;
+      try {
+        unawaited(setShuffleMode(
+          state.shuffle ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
+        ));
+        unawaited(setRepeatMode(switch (state.repeat) {
+          'one' => AudioServiceRepeatMode.one,
+          'all' => AudioServiceRepeatMode.all,
+          _ => AudioServiceRepeatMode.none,
+        }));
+      } finally {
+        _followingRemote = false;
+      }
+    }
+
+    _remoteAnchor = (position: state.position, at: DateTime.now(), playing: state.playing && !state.loading);
+    positionNotifier.value = state.position;
+    _publish(
+      processing: state.loading ? AudioProcessingState.buffering : AudioProcessingState.ready,
+      playing: state.playing,
+      pollPosition: false,
+    );
+  }
+
+  /// The other device sends its queue (it grew by itself at the end, or
+  /// another controller changed it).
+  void applyRemoteQueue(List<Song> songs, {String? currentId}) {
+    if (_remote == null) return;
+    final mine = _queue.items;
+    final same = mine.length == songs.length &&
+        [for (var i = 0; i < songs.length; i++) i].every(
+          (i) => mine[i].id == songs[i].id && mine[i].thumbnailUrl == songs[i].thumbnailUrl,
+        );
+    if (same) return;
+    final hadCurrent = currentSong?.id;
+    _queue.adopt(songs, currentId: currentId ?? hadCurrent);
+    _syncSuggestionsWithQueue();
+    _followingRemote = true;
+    try {
+      _updateQueueBroadcast();
+    } finally {
+      _followingRemote = false;
+    }
+    final song = currentSong;
+    if (song != null && song.id != hadCurrent) mediaItem.add(song.toMediaItem());
+  }
+
+  // --- Playing for another device ---
+
+  /// What this device is doing, for the devices that control it.
+  ConnectState get connectState {
+    final state = playbackState.value;
+    final loading = _loading ||
+        state.processingState == AudioProcessingState.loading ||
+        state.processingState == AudioProcessingState.buffering;
+    return ConnectState(
+      songId: currentSong?.id,
+      index: _queue.index,
+      position: position,
+      duration: _trackDuration > Duration.zero
+          ? _trackDuration
+          : (currentSong?.duration ?? Duration.zero),
+      // A player that stops to buffer reports itself as not playing for a
+      // moment: for who controls it, it is still playing unless it was
+      // told to pause.
+      playing: state.playing || (loading && !_userPaused && !_userStopped),
+      loading: loading,
+      shuffle: _queue.shuffle,
+      repeat: _queue.repeat.name,
+    );
+  }
+
+  /// A controller asks this device to play [songs] from the one at [index],
+  /// starting at [position].
+  Future<void> loadFromRemote(
+    List<Song> songs,
+    int index,
+    Duration position, {
+    bool play = true,
+  }) async {
+    if (songs.isEmpty) return;
+    final start = songs[index.clamp(0, songs.length - 1)];
+    PlaybackLogService.instance.log(
+      'CONNECT',
+      'ricevuto "${start.title}" da ${position.inSeconds}s, coda di ${songs.length}',
+    );
+    _queue.replace(songs, start);
+    _failedStreams.remove(start.id);
+    _errorReloads.remove(start.id);
+    _syncSuggestionsWithQueue();
+    _updateQueueBroadcast();
+    mediaItem.add(start.toMediaItem());
+    StorageService.instance.addToHistory(start);
+    _warmCanvasForCurrent();
+    _upgradeCoversAround();
+
+    _userStopped = false;
+    final loaded = _loadAndPlayCurrent(startSeconds: position.inMilliseconds / 1000);
+    // Asked to stay paused: the load honours a pause that arrives meanwhile.
+    if (!play) unawaited(pause());
+    await loaded;
+  }
+
+  /// A controller changed the queue: the current song goes on playing.
+  void adoptQueue(List<Song> songs, {String? currentId}) {
+    _queue.adopt(songs, currentId: currentId);
+    _syncSuggestionsWithQueue();
+    _updateQueueBroadcast();
   }
 }

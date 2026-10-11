@@ -9,6 +9,7 @@ import 'services/auth_service.dart';
 import 'services/canvas_file_cache.dart';
 import 'services/canvas_service.dart';
 import 'services/canvas_video_pool.dart';
+import 'services/connect/connect_controller.dart';
 import 'services/download_service.dart';
 import 'services/playback_log_service.dart';
 import 'services/storage_service.dart';
@@ -111,6 +112,9 @@ Future<void> _startApp() async {
       rewindInterval: Duration(seconds: 15),
     ),
   );
+
+  // Other devices running Totorify can play instead of this one.
+  ConnectController.instance.attach(audioHandler);
 
   // Configure the shared audio session after all audio plugins are loaded.
   // The session is NOT activated here: activating it at launch would stop
@@ -275,12 +279,19 @@ class _MainWithErrorListener extends StatefulWidget {
 class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
   StreamSubscription<String>? _errorSub;
   StreamSubscription<String>? _downloadSub;
+  StreamSubscription<String>? _connectSub;
 
   @override
   void initState() {
     super.initState();
     // A download that fails would otherwise just stop spinning.
     _downloadSub = DownloadService.instance.failures.listen((msg) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
+      );
+    });
+    _connectSub = ConnectController.instance.notices.listen((msg) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
@@ -299,6 +310,7 @@ class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
   void dispose() {
     _errorSub?.cancel();
     _downloadSub?.cancel();
+    _connectSub?.cancel();
     super.dispose();
   }
 

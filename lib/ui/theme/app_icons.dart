@@ -69,6 +69,11 @@ class AppIcons {
   static const IconData account = Icons.account_circle_outlined;
   static const IconData import = Icons.download_rounded;
   static const IconData time = Icons.schedule_rounded;
+
+  // Devices
+  static const IconData devices = Icons.speaker_group_outlined;
+  static const IconData tv = Icons.tv_rounded;
+  static const IconData phone = Icons.smartphone_rounded;
 }
 
 /// The three glyphs of the tab bar, drawn by hand: thin outlines at rest,

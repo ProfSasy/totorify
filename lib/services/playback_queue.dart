@@ -63,6 +63,21 @@ class PlaybackQueue {
     if (_shuffle) _playedRound.add(start.id);
   }
 
+  /// Replaces the songs with [songs], as another device has them, keeping
+  /// the current song current (found again by id). When it is no longer in
+  /// the list nothing is current, and the next move starts from the top.
+  void adopt(List<Song> songs, {String? currentId}) {
+    final id = currentId ?? current?.id;
+    _items
+      ..clear()
+      ..addAll(songs);
+    _index = id == null ? -1 : _items.indexWhere((s) => s.id == id);
+    final ids = {for (final song in _items) song.id};
+    _backStack.removeWhere((played) => !ids.contains(played));
+    _playedRound.retainAll(ids);
+    if (!ids.contains(_plannedId)) _plannedId = null;
+  }
+
   void append(Song song) => _items.add(song);
 
   /// Appends the songs whose ids are not queued yet. Returns how many were
