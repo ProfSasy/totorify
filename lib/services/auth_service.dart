@@ -127,7 +127,20 @@ class AuthService extends ChangeNotifier {
   }
 
   /// Cached user display name from Keychain (available before init completes).
-  Future<String?> getSavedUserName() => _storage.read(key: _kUserName);
-  Future<String?> getSavedUserEmail() => _storage.read(key: _kUserEmail);
-  Future<String?> getSavedUserPhoto() => _storage.read(key: _kUserPhoto);
+  Future<String?> getSavedUserName() => _saved(_kUserName);
+  Future<String?> getSavedUserEmail() => _saved(_kUserEmail);
+  Future<String?> getSavedUserPhoto() => _saved(_kUserPhoto);
+
+  /// What was kept of the account, or null. Where there is no signing in
+  /// nothing was kept, and the system's keyring is not asked: on a computer
+  /// it may be locked, or not be there at all.
+  Future<String?> _saved(String key) async {
+    if (!isAvailable) return null;
+    try {
+      return await _storage.read(key: key);
+    } catch (e) {
+      debugPrint('AuthService._saved $key: $e');
+      return null;
+    }
+  }
 }
