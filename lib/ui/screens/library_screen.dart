@@ -492,7 +492,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             isPlaying: playingId == song.id,
             onTap: () {
               widget.audioHandler.playSong(song, queue: songs);
-              PlayerSheet.show(context, widget.audioHandler);
+              PlayerSheet.showOnPlay(context, widget.audioHandler);
             },
           );
         },

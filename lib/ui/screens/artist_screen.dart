@@ -186,7 +186,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
 
   void _play(Song song, List<Song> queue) {
     widget.audioHandler.playSong(song, queue: queue);
-    PlayerSheet.show(context, widget.audioHandler);
+    PlayerSheet.showOnPlay(context, widget.audioHandler);
   }
 
   Future<void> _openAllSongs() async {

@@ -18,10 +18,10 @@ class ConnectRequest {
   final Completer<bool> _answer = Completer<bool>();
 }
 
-/// This phone as a device that plays for the others.
+/// This device (a phone, a computer) as one that plays for the others.
 ///
-/// A phone is carried onto networks that are not its owner's, so it is not
-/// found nor listened to until the user turns this on in the settings, and
+/// A phone is carried onto networks that are not its owner's, and so is a
+/// laptop: it is found and listened to only while the setting is on, and
 /// even then a device plays here only after the user said yes to it: once,
 /// or for good.
 class ConnectHost {
@@ -42,10 +42,23 @@ class ConnectHost {
   /// Who is asking to play here; null when nobody is.
   final ValueNotifier<ConnectRequest?> request = ValueNotifier<ConnectRequest?>(null);
 
+  /// What this device is for the others: a phone unless the app says
+  /// otherwise before [apply] (the computer app does).
+  static String kind = ConnectDevice.kindPhone;
+
+  /// Whether this device shows, beside its own library, the one of the
+  /// phone that plays on it (see `LibrarySync`). The computer app does.
+  static bool keepsLibrary = false;
+
+  /// The name used until the user gives one; null for the usual ones.
+  static String? defaultName;
+
   /// What the other devices call this one.
   static String get deviceName {
     final chosen = StorageService.instance.connectName;
     if (chosen != null) return chosen;
+    final fallback = defaultName;
+    if (fallback != null && fallback.isNotEmpty) return fallback;
     return defaultTargetPlatform == TargetPlatform.iOS ? 'iPhone' : 'Telefono';
   }
 
@@ -63,7 +76,8 @@ class ConnectHost {
             handler: handler,
             id: StorageService.instance.connectId,
             name: deviceName,
-            kind: ConnectDevice.kindPhone,
+            kind: kind,
+            keepsLibrary: keepsLibrary,
             admit: _admit,
           );
           await receiver.start();

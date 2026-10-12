@@ -161,7 +161,11 @@ class _DevicesSheetState extends State<_DevicesSheet> {
             ),
             for (final device in devices) ...[
               SheetAction(
-                icon: device.kind == ConnectDevice.kindPhone ? AppIcons.phone : AppIcons.tv,
+                icon: switch (device.kind) {
+                  ConnectDevice.kindPhone => AppIcons.phone,
+                  ConnectDevice.kindComputer => AppIcons.computer,
+                  _ => AppIcons.tv,
+                },
                 label: device.name,
                 subtitle: active == device
                     ? 'In riproduzione'

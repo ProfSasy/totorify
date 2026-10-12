@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -34,6 +35,10 @@ class AuthService extends ChangeNotifier {
 
   GoogleSignInAccount? _currentUser;
 
+  /// Whether signing in with Google exists on this platform: it does on a
+  /// phone, not on a computer. The account is optional everywhere.
+  static bool get isAvailable => !(Platform.isWindows || Platform.isLinux);
+
   bool get isSignedIn => _currentUser != null;
   GoogleSignInAccount? get currentUser => _currentUser;
 
@@ -42,6 +47,7 @@ class AuthService extends ChangeNotifier {
 
   /// Call once at app startup to restore previous session.
   Future<void> init() async {
+    if (!isAvailable) return;
     try {
       // Try silent sign-in (restores previous session without UI)
       final account = await _googleSignIn.signInSilently();

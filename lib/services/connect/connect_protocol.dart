@@ -99,6 +99,7 @@ class ConnectDevice {
 
   static const String kindTv = 'tv';
   static const String kindPhone = 'phone';
+  static const String kindComputer = 'computer';
 
   Map<String, dynamic> toMap() =>
       {'id': id, 'name': name, 'host': host, 'port': port, 'kind': kind};

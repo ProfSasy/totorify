@@ -195,15 +195,24 @@ class ConnectController {
     try {
       final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4);
       for (final interface in interfaces) {
-        // Mobile data, VPN tunnels and Apple's device-to-device links are
-        // not where a TV is.
+        // Mobile data, VPN tunnels, Apple's device-to-device links and the
+        // networks a computer makes up for its virtual machines are not
+        // where a TV is.
         final name = interface.name.toLowerCase();
         if (name.startsWith('pdp_ip') ||
             name.startsWith('rmnet') ||
-            name.startsWith('utun') ||
+            name.contains('tun') ||
+            name.startsWith('tap') ||
+            name.startsWith('wg') ||
+            name.startsWith('ppp') ||
             name.startsWith('ipsec') ||
             name.startsWith('awdl') ||
-            name.startsWith('llw')) {
+            name.startsWith('llw') ||
+            name.startsWith('tailscale') ||
+            name.startsWith('docker') ||
+            name.startsWith('veth') ||
+            name.startsWith('virbr') ||
+            name.startsWith('br-')) {
           continue;
         }
         for (final address in interface.addresses) {

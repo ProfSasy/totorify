@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -66,6 +67,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _openSpotifyLogin() async {
+    // No web page inside the app on Linux: the cookie is typed in.
+    if (Platform.isLinux) {
+      _showSpDcInputDialog(context);
+      return;
+    }
     // Full screen, above the tabs: the page is a web login.
     await Navigator.of(context, rootNavigator: true).push(
       CupertinoPageRoute<bool>(builder: (_) => const SpotifyWebLoginScreen()),
@@ -121,6 +127,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             children: [
               // ── Account Google ──────────────────────────────────────────────────
+              if (AuthService.isAvailable) ...[
               _buildSectionHeader('Account'),
               _buildCardContainer([
                 ListenableBuilder(
@@ -152,6 +159,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ]),
 
               const SizedBox(height: 20),
+              ],
 
               // ── Audio & Streaming ─────────────────────────────────────────────
               _buildSectionHeader('Audio e riproduzione'),

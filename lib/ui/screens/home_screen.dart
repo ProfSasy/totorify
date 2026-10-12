@@ -138,7 +138,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _play(Song song, List<Song> queue) {
     widget.audioHandler.playSong(song, queue: queue);
-    PlayerSheet.show(context, widget.audioHandler);
+    PlayerSheet.showOnPlay(context, widget.audioHandler);
   }
 
   void _openPlaylist(Playlist playlist) {

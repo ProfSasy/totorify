@@ -80,7 +80,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
 
   void _play(Song song, List<Song> queue) {
     audioHandler.playSong(song, queue: queue);
-    PlayerSheet.show(context, audioHandler);
+    PlayerSheet.showOnPlay(context, audioHandler);
   }
 
   Future<void> _downloadAll(List<Song> songs, bool allDownloaded) async {

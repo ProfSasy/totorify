@@ -698,6 +698,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   /// Makes this app the one that owns audio output, so other apps stop and
   /// the lock screen shows this player.
   Future<void> _activateSession() async {
+    // A computer has no audio session to take: every app plays at once.
+    if (Platform.isWindows || Platform.isLinux) return;
     try {
       final session = await AudioSession.instance;
       if (!await session.setActive(true)) {

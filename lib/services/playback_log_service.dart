@@ -3,7 +3,7 @@ import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
+import 'app_folder.dart';
 
 /// One line of the diagnostic log.
 class LogEntry {
@@ -56,7 +56,7 @@ class PlaybackLogService {
   /// throws: without a file the log simply stays in memory.
   Future<void> init() async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await appFolder();
       final session = File('${dir.path}/$_sessionFileName');
       final previous = File('${dir.path}/$_previousFileName');
       if (await session.exists()) {

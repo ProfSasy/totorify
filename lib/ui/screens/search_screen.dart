@@ -515,7 +515,7 @@ class _SearchScreenState extends State<SearchScreen> {
                         isPlaying: currentId == song.id,
                         onTap: () {
                           widget.audioHandler.playSong(song, queue: _results);
-                          PlayerSheet.show(context, widget.audioHandler);
+                          PlayerSheet.showOnPlay(context, widget.audioHandler);
                         },
                       );
                     },

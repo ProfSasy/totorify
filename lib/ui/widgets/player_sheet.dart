@@ -39,6 +39,16 @@ class PlayerSheet extends StatefulWidget {
   /// bars included, so it shows playback messages itself.
   static bool isOpen = false;
 
+  /// Whether choosing a song opens the player over the page. On a phone it
+  /// does; where the player has a bar of its own always in sight (the
+  /// computer app) the page stays, and the player opens when asked.
+  static bool opensOnPlay = true;
+
+  /// For the pages, after starting a song.
+  static void showOnPlay(BuildContext context, AudioPlayerHandler audioHandler) {
+    if (opensOnPlay) show(context, audioHandler);
+  }
+
   static void show(BuildContext context, AudioPlayerHandler audioHandler) {
     PlaybackLogService.instance.log('UI', 'player: apri');
     showModalBottomSheet(

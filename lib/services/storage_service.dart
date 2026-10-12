@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:path_provider/path_provider.dart';
+import 'app_folder.dart';
 import '../models/artist.dart';
 import '../models/song.dart';
 import '../models/playlist.dart';
@@ -71,7 +71,7 @@ class StorageService {
       ValueNotifier<Color>(const Color(defaultAccentColor));
 
   Future<void> init() async {
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await appFolder();
     _documentsPath = appDir.path;
     await Hive.initFlutter(appDir.path);
 
@@ -783,6 +783,9 @@ class StorageService {
   /// Whether this device can be found and asked to play by the others (a
   /// phone; a TV always can). Off until the user turns it on.
   bool get receivesPlayback => _settingsBox.get('connect_receive', defaultValue: false) as bool;
+
+  /// Whether the user (or the app, at its first start) has chosen either way.
+  bool get receivesPlaybackWasChosen => _settingsBox.containsKey('connect_receive');
   Future<void> setReceivesPlayback(bool value) async => _settingsBox.put('connect_receive', value);
 
   /// The devices the user allowed for good to play on this one, by id, with
