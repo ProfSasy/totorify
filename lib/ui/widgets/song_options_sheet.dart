@@ -345,11 +345,11 @@ Future<void> shareSong(BuildContext context, Song song) async {
   final link = songLink(song);
   final text = '${song.title} — ${song.artist}${link == null ? '' : '\n$link'}';
   final box = context.findRenderObject() as RenderBox?;
-  await SharePlus.instance.share(ShareParams(
-    text: text,
+  await Share.share(
+    text,
     // The iPad shows the sheet next to something.
     sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
-  ));
+  );
 }
 
 /// Best cover of a playlist: its own, or the one of its first song.
