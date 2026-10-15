@@ -30,20 +30,16 @@ class LyricLine {
   /// lyrics timed line by line.
   final List<LyricWord> words;
 
-  const LyricLine({
-    required this.time,
-    required this.text,
-    this.words = const [],
-  });
+  const LyricLine({required this.time, required this.text, this.words = const []});
 
   LyricLine shifted(Duration by) => LyricLine(
-        time: time + by,
-        text: text,
-        words: [
-          for (final word in words)
-            LyricWord(start: word.start + by, end: word.end + by, text: word.text),
-        ],
-      );
+    time: time + by,
+    text: text,
+    words: [
+      for (final word in words)
+        LyricWord(start: word.start + by, end: word.end + by, text: word.text),
+    ],
+  );
 
   @override
   String toString() => '${time.inMilliseconds}ms: $text';
@@ -76,14 +72,18 @@ class Lyrics {
   /// The lines to show, one per row: the timed ones, or the plain text.
   List<String> get lines => isSynced
       ? [for (final line in syncedLyrics) line.text]
-      : plainLyrics.split('\n').map((line) => line.trim()).where((line) => line.isNotEmpty).toList();
+      : plainLyrics
+            .split('\n')
+            .map((line) => line.trim())
+            .where((line) => line.isNotEmpty)
+            .toList();
 
   Lyrics withSource(String source) => Lyrics(
-        plainLyrics: plainLyrics,
-        syncedLyrics: syncedLyrics,
-        isSynced: isSynced,
-        source: source,
-      );
+    plainLyrics: plainLyrics,
+    syncedLyrics: syncedLyrics,
+    isSynced: isSynced,
+    source: source,
+  );
 
   /// The same lyrics, every line [by] later (earlier when negative).
   Lyrics shifted(Duration by) => by == Duration.zero
@@ -111,17 +111,17 @@ class Lyrics {
   /// Compact form for storage: synced lines as [milliseconds, text] pairs,
   /// with their words when they have them.
   Map<String, dynamic> toMap() => {
-        'plain': plainLyrics,
-        'synced': [
-          for (final line in syncedLyrics)
-            [
-              line.time.inMilliseconds,
-              line.text,
-              if (line.words.isNotEmpty) [for (final word in line.words) word.toList()],
-            ],
+    'plain': plainLyrics,
+    'synced': [
+      for (final line in syncedLyrics)
+        [
+          line.time.inMilliseconds,
+          line.text,
+          if (line.words.isNotEmpty) [for (final word in line.words) word.toList()],
         ],
-        if (source.isNotEmpty) 'source': source,
-      };
+    ],
+    if (source.isNotEmpty) 'source': source,
+  };
 
   factory Lyrics.fromMap(Map<String, dynamic> map) {
     final synced = <LyricLine>[];
@@ -131,11 +131,13 @@ class Lyrics {
         if (raw.length > 2 && raw[2] is List)
           for (final word in raw[2] as List) ?LyricWord.fromList(word),
       ];
-      synced.add(LyricLine(
-        time: Duration(milliseconds: raw[0] as int),
-        text: raw[1] as String,
-        words: words,
-      ));
+      synced.add(
+        LyricLine(
+          time: Duration(milliseconds: raw[0] as int),
+          text: raw[1] as String,
+          words: words,
+        ),
+      );
     }
     return Lyrics(
       plainLyrics: map['plain'] as String? ?? '',
@@ -185,7 +187,9 @@ class Lyrics {
         final text = content.substring(start, end);
         if (text.trim().isEmpty) continue;
         final from = toDuration(stamps[i]);
-        final to = i + 1 < stamps.length ? toDuration(stamps[i + 1]) : from + const Duration(milliseconds: 600);
+        final to = i + 1 < stamps.length
+            ? toDuration(stamps[i + 1])
+            : from + const Duration(milliseconds: 600);
         words.add(LyricWord(start: from, end: to, text: text));
       }
       final text = content.replaceAll(wordRegExp, '').replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -232,11 +236,13 @@ class Lyrics {
           final value = _unescape(plain);
           final timed = spans.isEmpty ? null : spans.last;
           if (timed?.begin != null && value.trim().isNotEmpty) {
-            words.add(LyricWord(
-              start: timed!.begin!,
-              end: timed.end ?? timed.begin! + const Duration(milliseconds: 600),
-              text: value,
-            ));
+            words.add(
+              LyricWord(
+                start: timed!.begin!,
+                end: timed.end ?? timed.begin! + const Duration(milliseconds: 600),
+                text: value,
+              ),
+            );
           } else if (words.isNotEmpty && value.trim().isEmpty) {
             // The space between two words belongs to the first.
             final last = words.removeLast();

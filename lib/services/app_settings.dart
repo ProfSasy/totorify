@@ -87,6 +87,44 @@ class AppSettings {
   /// A song liked is downloaded too.
   late final downloadOnLike = _setting<bool>('download_on_like', false);
 
+  // ── Lyrics ──────────────────────────────────────────────────────────────
+
+  /// The sources of lyrics asked, in this order; those left out are off.
+  late final lyricsSources = _setting<List<String>>('lyrics_sources', const [
+    'youlyplus',
+    'lrclib',
+    'simpmusic',
+    'betterlyrics',
+    'unison',
+    'kugou',
+    'youtube',
+  ]);
+
+  /// 0 small, 1 normal, 2 large.
+  late final lyricsTextSize = _setting<int>('lyrics_text_size', 1);
+
+  /// Lines centred instead of aligned to the left.
+  late final lyricsCentered = _setting<bool>('lyrics_centered', false);
+
+  /// The lines not being sung are blurred.
+  late final lyricsBlur = _setting<bool>('lyrics_blur', false);
+
+  /// Lyrics timed word by word light up word by word (karaoke).
+  late final lyricsWordSync = _setting<bool>('lyrics_word_sync', true);
+
+  /// Each line shows its translation under it.
+  late final lyricsTranslate = _setting<bool>('lyrics_translate', false);
+
+  /// The language lyrics are translated into.
+  late final lyricsTranslateTo = _setting<String>('lyrics_translate_to', 'it');
+
+  /// Lines in other alphabets (Japanese, Korean, Russian…) show how they
+  /// are pronounced in Latin letters.
+  late final lyricsRomanize = _setting<bool>('lyrics_romanize', true);
+
+  /// The lyrics of the next songs in the queue are looked up in advance.
+  late final lyricsPreload = _setting<bool>('lyrics_preload', true);
+
   // ── Privacy ─────────────────────────────────────────────────────────────
 
   /// What is played is not added to the history (nor to the statistics).
@@ -124,6 +162,15 @@ class AppSettings {
       saveDataOnCellular,
       crossfadeSeconds,
       downloadOnLike,
+      lyricsSources,
+      lyricsTextSize,
+      lyricsCentered,
+      lyricsBlur,
+      lyricsWordSync,
+      lyricsTranslate,
+      lyricsTranslateTo,
+      lyricsRomanize,
+      lyricsPreload,
       pauseListenHistory,
       pauseSearchHistory,
     ]) {}

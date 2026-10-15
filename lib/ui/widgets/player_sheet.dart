@@ -3,15 +3,12 @@ import 'dart:math' as math;
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
-import '../../models/lyrics_model.dart';
 import '../../models/song.dart';
 import '../../services/audio_handler.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/canvas_service.dart';
 import '../../services/canvas_video_pool.dart';
-import '../../services/lyrics_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/ytmusic_service.dart';
 import '../screens/artist_screen.dart';
@@ -24,6 +21,7 @@ import 'app_sheet.dart';
 import 'canvas_player_widget.dart';
 import 'devices_sheet.dart';
 import 'favorite_button.dart';
+import 'lyrics_view.dart';
 import 'play_button.dart';
 import 'song_options_sheet.dart';
 import 'song_tile.dart';
@@ -82,22 +80,11 @@ class _PlayerSheetState extends State<PlayerSheet>
   late TabController _tabController;
   late final AnimationController _enterController;
   late final Animation<double> _enterCurve;
-  Lyrics _lyrics = Lyrics.empty;
-  bool _isLoadingLyrics = false;
   String? _lastLoadedSongId;
-  String? _lastLoadedLyricsSongId;
 
-  final ScrollController _lyricsScrollController = ScrollController();
-  final ValueNotifier<int> _activeLyricIndexNotifier = ValueNotifier<int>(-1);
   StreamSubscription<String>? _errorSub;
   StreamSubscription<String>? _infoSub;
   int _lastTabIndex = 0;
-
-  // Lyric auto-follow: while the user scrolls, follow is paused and it
-  // resumes a few seconds after the last manual scroll.
-  static const double _lyricLineExtent = 72;
-  bool _userBrowsingLyrics = false;
-  Timer? _lyricsFollowTimer;
 
   // Canvas state
   bool _showCanvas = true;
@@ -147,33 +134,13 @@ class _PlayerSheetState extends State<PlayerSheet>
         'player: tab=${_tabController.index == 0 ? 'player' : _tabController.index == 1 ? 'testi' : 'coda'}',
       );
       setState(() => _lastTabIndex = _tabController.index);
-      if (_tabController.index == 1) {
-        // Re-entering the lyrics tab always resumes following.
-        _lyricsFollowTimer?.cancel();
-        _userBrowsingLyrics = false;
-        if (_activeLyricIndexNotifier.value >= 0) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _scrollToActiveLyric(
-              _activeLyricIndexNotifier.value,
-              force: true,
-            );
-          });
-        }
-      } else {
-        _lyricsFollowTimer?.cancel();
-        _userBrowsingLyrics = false;
-      }
     });
 
     final current = widget.audioHandler.currentSong;
     if (current != null) {
       _loadCanvas(current);
-      _loadLyrics(current);
     }
     CanvasService.instance.isCanvasEnabledNotifier.addListener(_onCanvasSettingChanged);
-
-    // Sync karaoke lyrics on position tick
-    widget.audioHandler.positionNotifier.addListener(_syncLyricsToPosition);
 
     _errorSub = widget.audioHandler.errorStream.listen(_showNotice);
     _infoSub = widget.audioHandler.infoStream.listen(_showNotice);
@@ -188,30 +155,16 @@ class _PlayerSheetState extends State<PlayerSheet>
     });
   }
 
-  void _syncLyricsToPosition() {
-    if (!mounted || !_lyrics.isSynced || _lyrics.syncedLyrics.isEmpty) return;
-    final pos = widget.audioHandler.position;
-    final idx = _lyrics.syncedLyrics.lastIndexWhere((line) => line.time <= pos);
-    if (idx != _activeLyricIndexNotifier.value && idx != -1) {
-      _activeLyricIndexNotifier.value = idx;
-      _scrollToActiveLyric(idx);
-    }
-  }
-
   @override
   void dispose() {
     CanvasService.instance.isCanvasEnabledNotifier.removeListener(_onCanvasSettingChanged);
-    widget.audioHandler.positionNotifier.removeListener(_syncLyricsToPosition);
     _errorSub?.cancel();
     _infoSub?.cancel();
     _noticeTimer?.cancel();
     PlayerSheet.isOpen = false;
     PlaybackLogService.instance.log('UI', 'player: chiudi');
-    _lyricsFollowTimer?.cancel();
     _enterController.dispose();
     _tabController.dispose();
-    _lyricsScrollController.dispose();
-    _activeLyricIndexNotifier.dispose();
     super.dispose();
   }
 
@@ -262,77 +215,6 @@ class _PlayerSheetState extends State<PlayerSheet>
     }
   }
 
-  void _scrollToActiveLyric(int idx, {bool force = false}) {
-    if (!_lyricsScrollController.hasClients) return;
-    if (_tabController.index != 1) return; // Only scroll when on lyrics tab
-    if (_userBrowsingLyrics && !force) return;
-    final position = _lyricsScrollController.position;
-    if (!position.hasViewportDimension) return;
-    // The ListView top padding is (viewport - line)/2, so scrolling to
-    // idx * line places the active line exactly at the viewport center.
-    final targetOffset = idx * _lyricLineExtent;
-    _lyricsScrollController.animateTo(
-      targetOffset.clamp(0.0, position.maxScrollExtent),
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
-    );
-  }
-
-  void _onLyricsScrollNotification(ScrollNotification notification) {
-    if (notification is ScrollStartNotification ||
-        notification is UserScrollNotification) {
-      final isUserScroll = notification is UserScrollNotification
-          ? notification.direction != ScrollDirection.idle
-          : (notification as ScrollStartNotification).dragDetails != null;
-      // ScrollDirection is exported by the widgets library through Material.
-      if (isUserScroll) {
-        _userBrowsingLyrics = true;
-        _lyricsFollowTimer?.cancel();
-      }
-    } else if (notification is ScrollEndNotification &&
-        _userBrowsingLyrics) {
-      _lyricsFollowTimer?.cancel();
-      _lyricsFollowTimer = Timer(const Duration(seconds: 4), () {
-        _userBrowsingLyrics = false;
-        final active = _activeLyricIndexNotifier.value;
-        if (mounted && active >= 0) {
-          _scrollToActiveLyric(active, force: true);
-        }
-      });
-    }
-  }
-
-  Future<void> _loadLyrics(Song song, {bool refresh = false}) async {
-    if (_lastLoadedLyricsSongId == song.id && (_lyrics.isNotEmpty || _isLoadingLyrics)) return;
-    _lastLoadedLyricsSongId = song.id;
-    _lyricsFollowTimer?.cancel();
-    _userBrowsingLyrics = false;
-    if (mounted) {
-      setState(() {
-        _isLoadingLyrics = true;
-        _lyrics = Lyrics.empty;
-      });
-    }
-    _activeLyricIndexNotifier.value = -1;
-    final lyrics = await LyricsService.instance.getLyrics(song, refresh: refresh);
-    if (mounted && _lastLoadedLyricsSongId == song.id) {
-      setState(() {
-        _lyrics = lyrics;
-        _isLoadingLyrics = false;
-      });
-      if (_tabController.index == 1 && _lyrics.isSynced) {
-        final currentPos = widget.audioHandler.position;
-        final idx = _lyrics.syncedLyrics.lastIndexWhere((l) => l.time <= currentPos);
-        if (idx != -1) {
-          _activeLyricIndexNotifier.value = idx;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _scrollToActiveLyric(idx, force: true);
-          });
-        }
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<MediaItem?>(
@@ -373,10 +255,6 @@ class _PlayerSheetState extends State<PlayerSheet>
             });
           }
 
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            _loadLyrics(currentSong);
-          });
         }
 
         // The modal sheet strips padding AND viewPadding from the ambient
@@ -484,7 +362,12 @@ class _PlayerSheetState extends State<PlayerSheet>
                                   palette,
                                   bottomInset,
                                 ),
-                                _buildLyricsTab(palette, bottomInset),
+                                LyricsView(
+                                  audioHandler: widget.audioHandler,
+                                  palette: palette,
+                                  bottomInset: bottomInset,
+                                  visible: _tabController.index == 1,
+                                ),
                                 _buildQueueTab(palette, bottomInset),
                               ],
                             ),
@@ -1087,144 +970,6 @@ class _PlayerSheetState extends State<PlayerSheet>
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildLyricsTab(AmbientPalette palette, double bottomInset) {
-    final faint = _ink.withValues(alpha: 0.38);
-    if (_isLoadingLyrics) {
-      return const Center(
-        child: CupertinoActivityIndicator(color: _ink, radius: 14),
-      );
-    }
-
-    if (!_lyrics.isSynced && _lyrics.plainLyrics.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(AppIcons.lyrics, size: 46, color: faint),
-            const SizedBox(height: AppSpacing.md),
-            Text(
-              'Testo non disponibile',
-              style: TextStyle(
-                color: _ink.withValues(alpha: 0.72),
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _ink,
-                side: BorderSide(color: _ink.withValues(alpha: 0.4)),
-              ),
-              onPressed: () {
-                final current = widget.audioHandler.currentSong;
-                if (current != null) {
-                  _lastLoadedLyricsSongId = null;
-                  _loadLyrics(current, refresh: true);
-                }
-              },
-              child: const Text('Riprova'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (!_lyrics.isSynced) {
-      return SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-            AppSpacing.xl, AppSpacing.lg, AppSpacing.xl, bottomInset + AppSpacing.xl),
-        child: Text(
-          _lyrics.plainLyrics,
-          style: const TextStyle(
-            color: _ink,
-            fontSize: 20,
-            height: 1.6,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.2,
-          ),
-        ),
-      );
-    }
-
-    // Synced lyrics — the line being sung sits at the middle of the screen,
-    // with free manual scrolling that temporarily pauses auto-follow.
-    return ValueListenableBuilder<int>(
-      valueListenable: _activeLyricIndexNotifier,
-      builder: (context, activeIdx, _) {
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final viewport = constraints.maxHeight;
-            final halfLine = _lyricLineExtent / 2;
-            final verticalPadding =
-                (viewport / 2 - halfLine).clamp(0.0, viewport);
-            return NotificationListener<ScrollNotification>(
-              onNotification: (notification) {
-                _onLyricsScrollNotification(notification);
-                return false;
-              },
-              // Two lyric lines at the active size must always fit their row.
-              child: MediaQuery.withClampedTextScaling(
-                maxScaleFactor: 1.05,
-                child: ListView.builder(
-                  controller: _lyricsScrollController,
-                  padding: EdgeInsets.fromLTRB(
-                      AppSpacing.xl, verticalPadding, AppSpacing.xl, verticalPadding),
-                  physics: const BouncingScrollPhysics(),
-                  itemExtent: _lyricLineExtent,
-                  itemCount: _lyrics.syncedLyrics.length,
-                  itemBuilder: (context, index) {
-                    final line = _lyrics.syncedLyrics[index];
-                    final isActive = index == activeIdx;
-
-                    return GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        PlaybackLogService.instance.log(
-                            'UI', 'testi: tap riga ${line.time.inSeconds}s');
-                        _lyricsFollowTimer?.cancel();
-                        _userBrowsingLyrics = false;
-                        widget.audioHandler.seek(line.time);
-                        _scrollToActiveLyric(index, force: true);
-                      },
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: AnimatedDefaultTextStyle(
-                          duration: const Duration(milliseconds: 280),
-                          curve: Curves.easeOutCubic,
-                          // On top of the inherited style, which carries
-                          // the font of the app.
-                          style: DefaultTextStyle.of(context).style.copyWith(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w800,
-                            // Sung lines stay lit, the ones to come wait.
-                            color: isActive
-                                ? _ink
-                                : (index < activeIdx
-                                    ? _ink.withValues(alpha: 0.62)
-                                    : faint),
-                            height: 1.25,
-                            letterSpacing: -0.4,
-                          ),
-                          child: Text(
-                            line.text,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            );
-          },
-        );
-      },
     );
   }
 

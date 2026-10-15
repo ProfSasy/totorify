@@ -14,6 +14,7 @@ import 'canvas_video_pool.dart';
 import 'connect/connect_protocol.dart';
 import 'cover_art_service.dart';
 import 'download_service.dart';
+import 'lyrics_service.dart';
 import 'playback_log_service.dart';
 import 'playback_queue.dart';
 import 'recommendation_service.dart';
@@ -1021,10 +1022,19 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       await _prefetchNext();
       if (generation != _loadGeneration) return;
       _warmCanvasAround();
+      unawaited(LyricsService.instance.preload(_upcoming(2)));
       await Future<void>.delayed(const Duration(seconds: 4));
       if (generation != _loadGeneration) return;
       await CanvasService.instance.keepForReplay(song);
     }());
+  }
+
+  /// The [count] songs that come after the current one in queue order.
+  List<Song> _upcoming(int count) {
+    final items = _queue.items;
+    final index = _queue.index;
+    if (index < 0) return const [];
+    return items.sublist(index + 1, (index + 1 + count).clamp(index + 1, items.length));
   }
 
   /// Resolves the next track's stream ahead of time, so skipping to it (or

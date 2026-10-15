@@ -668,12 +668,34 @@ class StorageService {
     return raw is Map ? Map<String, dynamic>.from(raw) : null;
   }
 
+  bool _isManualLyrics(Object? key) {
+    final raw = _lyricsBox.get(key);
+    return raw is Map && raw['manual'] == true;
+  }
+
+  /// Forgets the lyrics found by the sources; those chosen or written by
+  /// the user stay.
+  Future<void> clearFoundLyrics() async {
+    try {
+      await _lyricsBox.deleteAll([
+        for (final key in _lyricsBox.keys)
+          if (!_isManualLyrics(key)) key,
+      ]);
+    } catch (e) {
+      debugPrint('StorageService.clearFoundLyrics: $e');
+    }
+  }
+
+  /// How many songs have lyrics saved.
+  int get storedLyricsCount => _lyricsBox.length;
+
   Future<void> saveLyrics(String songId, Map<String, dynamic> data) async {
     try {
       if (_lyricsBox.length >= _maxStoredLyrics) {
-        // The oldest go first, but never those of a downloaded song.
+        // The oldest go first, but never those of a downloaded song nor
+        // those the user chose or wrote.
         final evict = _lyricsBox.keys
-            .where((key) => !_downloadedIds.contains(key))
+            .where((key) => !_downloadedIds.contains(key) && !_isManualLyrics(key))
             .take(_maxStoredLyrics ~/ 5)
             .toList();
         await _lyricsBox.deleteAll(evict);

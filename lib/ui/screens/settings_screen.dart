@@ -12,6 +12,7 @@ import '../../services/download_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
 import 'spotify_web_login_screen.dart';
+import 'settings/lyrics_settings_screen.dart';
 import 'settings/playback_settings_screen.dart';
 import 'settings/privacy_settings_screen.dart';
 import 'settings/settings_kit.dart';
@@ -168,6 +169,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title: 'Riproduzione',
                   subtitle: 'Qualità, normalizzazione, parti da saltare, dissolvenza, coda',
                   onTap: () => SettingsPage.open(context, const PlaybackSettingsScreen()),
+                ),
+                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                SettingLink(
+                  icon: AppIcons.lyrics,
+                  title: 'Testi',
+                  subtitle: 'Fonti, karaoke, traduzione e pronuncia',
+                  onTap: () => SettingsPage.open(context, const LyricsSettingsScreen()),
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
                 SettingLink(
