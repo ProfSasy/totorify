@@ -10,6 +10,10 @@
 	<string>Totorify</string>
 	<key>CFBundleName</key>
 	<string>Totorify</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Per cercare la musica con la voce.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Per trasformare in testo quello che dici quando cerchi con la voce.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Per scegliere la copertina di una playlist.</string>
 	<key>UIBackgroundModes</key>

@@ -12,6 +12,7 @@ import '../../services/download_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
 import 'spotify_web_login_screen.dart';
+import 'settings/integrations_settings_screen.dart';
 import 'settings/library_settings_screen.dart';
 import 'settings/lyrics_settings_screen.dart';
 import 'settings/playback_settings_screen.dart';
@@ -184,6 +185,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title: 'Libreria',
                   subtitle: 'Statistiche, playlist nascoste, artisti, backup',
                   onTap: () => SettingsPage.open(context, const LibrarySettingsScreen()),
+                ),
+                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                SettingLink(
+                  icon: AppIcons.integrations,
+                  title: 'Integrazioni',
+                  subtitle: 'Last.fm, ListenBrainz, intelligenza artificiale, aggiornamenti',
+                  onTap: () => SettingsPage.open(context, const IntegrationsSettingsScreen()),
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
                 SettingLink(

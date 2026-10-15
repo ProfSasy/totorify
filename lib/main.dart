@@ -4,9 +4,11 @@ import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'services/ai_service.dart';
 import 'services/audio_handler.dart';
 import 'services/auth_service.dart';
 import 'services/canvas_file_cache.dart';
+import 'services/app_settings.dart';
 import 'services/canvas_service.dart';
 import 'services/canvas_video_pool.dart';
 import 'services/connect/connect_controller.dart';
@@ -15,8 +17,10 @@ import 'services/download_service.dart';
 import 'services/listening_stats.dart';
 import 'services/network_watcher.dart';
 import 'services/playback_log_service.dart';
+import 'services/scrobbler.dart';
 import 'services/session_keeper.dart';
 import 'services/storage_service.dart';
+import 'services/update_checker.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/main_shell.dart';
 import 'ui/theme/app_theme.dart';
@@ -122,6 +126,8 @@ Future<void> _startApp() async {
   // The queue of the last session comes back, paused.
   await SessionKeeper.instance.attach(audioHandler);
   await ListeningStats.instance.attach(audioHandler);
+  await Scrobbler.instance.attach(audioHandler);
+  unawaited(AiService.instance.init());
   unawaited(NetworkWatcher.instance.start());
   DownloadService.instance.downloadWhatIsLiked();
 
@@ -329,6 +335,17 @@ class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
         SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
       );
     });
+    // A newer version on GitHub: said once, a moment after the start.
+    if (AppSettings.instance.checkUpdates.value) {
+      Future<void>.delayed(const Duration(seconds: 5), () async {
+        final update = await UpdateChecker.instance.check();
+        if (update == null || !mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          duration: const Duration(seconds: 6),
+          content: Text('C\'è una nuova versione di Totorify (${update.behind} modifiche)'),
+        ));
+      });
+    }
     _infoSub = widget.audioHandler.infoStream.listen((msg) {
       if (!mounted || PlayerSheet.isOpen) return;
       ScaffoldMessenger.of(context).showSnackBar(

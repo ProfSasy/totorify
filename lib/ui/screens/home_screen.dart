@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../models/artist.dart';
 import '../../models/playlist.dart';
 import '../../models/song.dart';
+import '../../services/ai_mix_service.dart';
+import '../../services/ai_service.dart';
 import '../../services/library_extras.dart';
 import '../../services/listening_stats.dart';
 import '../../services/audio_handler.dart';
@@ -27,6 +29,7 @@ import '../widgets/song_tile.dart';
 import '../widgets/top_bar.dart';
 import 'artist_screen.dart';
 import 'history_screen.dart';
+import 'settings/settings_kit.dart' show askText;
 import 'stats_screen.dart';
 import 'playlist_screen.dart';
 
@@ -224,6 +227,29 @@ class _HomeScreenState extends State<HomeScreen> {
     ));
   }
 
+  Future<void> _openAiMix() async {
+    final mood = await askText(
+      context,
+      title: 'Mix con l\'IA',
+      message: 'Che atmosfera vuoi? (facoltativo: "allegro", "per studiare"…)',
+      placeholder: 'Qualsiasi',
+      confirm: 'Crea',
+    );
+    if (mood == null || !mounted) return;
+    PlaybackLogService.instance.log('UI', 'home: mix IA "${mood.trim()}"');
+    setState(() => _openingId = 'ai_mix');
+    try {
+      final playlist = await AiMixService.instance.build(mood: mood);
+      if (mounted) _openPlaylist(playlist);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _openingId = null);
+    }
+  }
+
   void _openStats() {
     PlaybackLogService.instance.log('UI', 'home: apri statistiche');
     Navigator.of(context, rootNavigator: true)
@@ -368,6 +394,38 @@ class _HomeScreenState extends State<HomeScreen> {
                               },
                             ),
                           ],
+                        );
+                      },
+                    ),
+                  ),
+
+                  // ── A mix made by the AI, when the user set it up ───────
+                  SliverToBoxAdapter(
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: AiService.instance.configured,
+                      builder: (context, configured, _) {
+                        if (!configured) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(
+                              AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, 0),
+                          child: Material(
+                            color: cs.surfaceContainerHigh,
+                            borderRadius: BorderRadius.circular(AppRadius.lg),
+                            clipBehavior: Clip.antiAlias,
+                            child: ListTile(
+                              leading: Icon(AppIcons.smart, color: cs.primary, size: 30),
+                              title: const Text('Crea un mix con l\'IA'),
+                              subtitle: const Text('Brani scelti per te dai tuoi ascolti'),
+                              trailing: _openingId == 'ai_mix'
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(AppIcons.chevronRight),
+                              onTap: _openingId == 'ai_mix' ? null : _openAiMix,
+                            ),
+                          ),
                         );
                       },
                     ),

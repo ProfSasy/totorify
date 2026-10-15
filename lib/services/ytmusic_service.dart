@@ -941,6 +941,41 @@ class YTMusicService {
     }
   }
 
+  /// The YouTube video [videoId] as a song: title, channel, length, frame.
+  Future<Song?> songOfVideo(String videoId) async {
+    try {
+      final video = await _yt.videos.get(videoId);
+      final artist = video.author.replaceAll(RegExp(r'\s*-\s*Topic$|VEVO$'), '').trim();
+      return Song(
+        id: video.id.value,
+        title: video.title,
+        artist: artist,
+        duration: video.duration ?? Duration.zero,
+        thumbnailUrl: video.thumbnails.highResUrl,
+        youtubeVideoId: video.id.value,
+      );
+    } catch (e) {
+      debugPrint('YTMusic.songOfVideo $videoId: $e');
+      return null;
+    }
+  }
+
+  /// The id of the video a YouTube or YouTube Music link points to.
+  static String? videoIdOfLink(String text) {
+    final uri = Uri.tryParse(text.trim());
+    if (uri == null || !uri.hasScheme) return null;
+    final host = uri.host.toLowerCase();
+    if (host == 'youtu.be') return uri.pathSegments.isEmpty ? null : uri.pathSegments.first;
+    if (!host.contains('youtube.com')) return null;
+    final v = uri.queryParameters['v'];
+    if (v != null && v.isNotEmpty) return v;
+    final segments = uri.pathSegments;
+    if (segments.length >= 2 && (segments.first == 'shorts' || segments.first == 'live')) {
+      return segments[1];
+    }
+    return null;
+  }
+
   // ── Related / Radio ───────────────────────────────────────────────────────
 
   Future<List<Song>> getRelatedSongs(String videoId) async {

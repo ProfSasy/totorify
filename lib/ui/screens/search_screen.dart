@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import '../../models/album.dart';
 import '../../models/artist.dart';
 import '../../models/playlist.dart';
@@ -9,10 +10,12 @@ import '../../models/song.dart';
 import '../../services/audio_handler.dart';
 import '../../services/cover_art_service.dart';
 import '../../services/playback_log_service.dart';
+import '../../services/playlist_importer_service.dart';
 import '../../services/spotify_catalog_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/track_matcher_service.dart';
 import '../../services/ytmusic_catalog_service.dart';
+import '../../services/ytmusic_service.dart';
 import '../../services/spotify_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
 import '../app_navigation.dart';
@@ -42,6 +45,9 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
+  // True while the microphone listens for a voice search.
+  bool _listening = false;
+
   static const String _allKinds = 'Tutto';
 
   final TextEditingController _searchController = TextEditingController();
@@ -99,10 +105,108 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   /// Explicit search: adds the query to the recent-searches list.
+  /// A link pasted in the field opens what it points to: a video plays, a
+  /// playlist or an album opens.
+  Future<bool> _openLink(String text) async {
+    final uri = Uri.tryParse(text);
+    if (uri == null || !uri.hasScheme || !uri.host.contains('.')) return false;
+    final host = uri.host.toLowerCase();
+    // A "radio" list (RD…) is YouTube's own mix after a video: the video
+    // is what was shared.
+    final list = uri.queryParameters['list'];
+    final realList = list != null && !list.startsWith('RD');
+    final isPlaylist = realList ||
+        (host.contains('spotify.com') &&
+            (uri.path.contains('/playlist/') || uri.path.contains('/album/')));
+    final videoId = YTMusicService.videoIdOfLink(text);
+    if (!isPlaylist && videoId == null) {
+      if (host.contains('spotify.com') || host.contains('youtube') || host == 'youtu.be') {
+        _showMessage('Questo link non si può aprire: incolla quello di un brano o di una playlist');
+        return true;
+      }
+      return false;
+    }
+    PlaybackLogService.instance.log('UI', 'search: apro il link $text');
+    setState(() => _isSearching = true);
+    try {
+      if (videoId != null && !realList) {
+        final song = await YTMusicService.instance.songOfVideo(videoId);
+        if (!mounted) return true;
+        if (song == null) {
+          _showMessage('Video non trovato');
+        } else {
+          unawaited(widget.audioHandler.startRadio(song));
+          PlayerSheet.showOnPlay(context, widget.audioHandler);
+        }
+        return true;
+      }
+      final playlist = await PlaylistImporterService.instance.importFromUrl(text);
+      if (!mounted) return true;
+      if (playlist == null || playlist.songs.isEmpty) {
+        _showMessage('Playlist non trovata');
+      } else {
+        await Navigator.push(
+          context,
+          CupertinoPageRoute<void>(
+            builder: (_) => PlaylistScreen(
+              playlist: playlist.copyWith(isSystem: true),
+              audioHandler: widget.audioHandler,
+            ),
+          ),
+        );
+      }
+      return true;
+    } finally {
+      if (mounted) setState(() => _isSearching = false);
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.maybeOf(context)
+        ?.showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 3)));
+  }
+
+  /// Listens to what the user says and searches it.
+  Future<void> _voiceSearch() async {
+    final speech = SpeechToText();
+    var available = false;
+    try {
+      available = await speech.initialize();
+    } catch (e) {
+      debugPrint('SearchScreen voice: $e');
+    }
+    if (!available) {
+      _showMessage('La ricerca vocale non è disponibile: controlla i permessi di microfono e dettatura');
+      return;
+    }
+    PlaybackLogService.instance.log('UI', 'search: ricerca vocale');
+    setState(() => _listening = true);
+    await speech.listen(
+      localeId: 'it_IT',
+      listenFor: const Duration(seconds: 10),
+      pauseFor: const Duration(seconds: 2),
+      onResult: (result) {
+        if (!mounted) return;
+        _searchController.text = result.recognizedWords;
+        if (result.finalResult) {
+          setState(() => _listening = false);
+          if (result.recognizedWords.trim().isNotEmpty) {
+            _submitSearch(result.recognizedWords);
+          }
+        }
+      },
+    );
+    // Stops by itself; the state follows.
+    Future<void>.delayed(const Duration(seconds: 11), () {
+      if (mounted && _listening) setState(() => _listening = false);
+    });
+  }
+
   Future<void> _submitSearch(String query) async {
     final clean = query.trim();
     if (clean.isEmpty) return;
     _debounce?.cancel();
+    if (await _openLink(clean)) return;
     await StorageService.instance.addRecentSearch(clean);
     if (!mounted) return;
     setState(() => _recentSearches = StorageService.instance.getRecentSearches());
@@ -339,7 +443,17 @@ class _SearchScreenState extends State<SearchScreen> {
             width: 48,
             child: _isSearching
                 ? const CupertinoActivityIndicator(color: ink, radius: 9)
-                : _searchController.text.isNotEmpty
+                : _searchController.text.isEmpty
+                    ? IconButton(
+                        tooltip: 'Ricerca vocale',
+                        icon: Icon(
+                          AppIcons.mic,
+                          color: _listening ? Theme.of(context).colorScheme.primary : hint,
+                          size: 22,
+                        ),
+                        onPressed: _listening ? null : _voiceSearch,
+                      )
+                    : _searchController.text.isNotEmpty
                     ? IconButton(
                         tooltip: 'Cancella',
                         icon: const Icon(AppIcons.clear, color: hint, size: 20),

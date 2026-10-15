@@ -125,6 +125,22 @@ class AppSettings {
   /// The lyrics of the next songs in the queue are looked up in advance.
   late final lyricsPreload = _setting<bool>('lyrics_preload', true);
 
+  // ── Artificial intelligence (the key is in the keychain) ───────────────
+
+  late final aiProvider = _setting<String>('ai_provider', 'anthropic');
+  late final aiModel = _setting<String>('ai_model', '');
+
+  /// For an OpenAI-compatible service other than OpenAI (OpenRouter…).
+  late final aiEndpoint = _setting<String>('ai_endpoint', '');
+
+  /// Lyrics are translated by the model instead of Google Translate.
+  late final aiTranslation = _setting<bool>('ai_translation', false);
+
+  // ── Updates ─────────────────────────────────────────────────────────────
+
+  /// At every launch, GitHub is asked whether a newer version is out.
+  late final checkUpdates = _setting<bool>('check_updates', true);
+
   // ── Privacy ─────────────────────────────────────────────────────────────
 
   /// What is played is not added to the history (nor to the statistics).
@@ -171,6 +187,11 @@ class AppSettings {
       lyricsTranslateTo,
       lyricsRomanize,
       lyricsPreload,
+      aiProvider,
+      aiModel,
+      aiEndpoint,
+      aiTranslation,
+      checkUpdates,
       pauseListenHistory,
       pauseSearchHistory,
     ]) {}

@@ -54,6 +54,7 @@ dependencies:
   share_plus: 10.1.4
   image_picker: 1.1.2
   file_picker: 8.1.7
+  speech_to_text: 7.0.0
 
 # Pinned to the commit that fixes iOS >= 13 playback-state reporting
 # (upstream PR #1140): without it MPNowPlayingInfoCenter.playbackState is

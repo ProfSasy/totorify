@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'ai_service.dart';
+import 'app_settings.dart';
+
 /// The translation of a song's lines, and how the lines written in another
 /// alphabet are pronounced in Latin letters.
 @immutable
@@ -76,6 +79,17 @@ class LyricsTranslator {
     final cached = _cache[key];
     if (cached != null) return cached;
 
+    // With a model of the user's, it translates (and spells) instead.
+    if (AppSettings.instance.aiTranslation.value && AiService.instance.configured.value) {
+      try {
+        final annotations = await _withAi(lines, target, translate, wantsRomanization);
+        _cache[key] = annotations;
+        return annotations;
+      } catch (e) {
+        debugPrint('LyricsTranslator: IA non riuscita, uso Google ($e)');
+      }
+    }
+
     final translations = List<String>.filled(lines.length, '');
     final romanized = List<String>.filled(lines.length, '');
     // Batches of whole lines, under the size a request takes.
@@ -108,6 +122,37 @@ class LyricsTranslator {
     _cache[key] = annotations;
     if (_cache.length > 30) _cache.remove(_cache.keys.first);
     return annotations;
+  }
+
+  Future<LyricsAnnotations> _withAi(
+    List<String> lines,
+    String target,
+    bool translate,
+    bool romanize,
+  ) async {
+    final language = languages[target] ?? target;
+    final numbered = [for (var i = 0; i < lines.length; i++) '$i: ${lines[i]}'].join('\n');
+    final answer = await AiService.instance.complete(
+      'Ecco le righe di una canzone, numerate:\n$numbered\n\n'
+      'Rispondi solo con un oggetto JSON con due liste di ${lines.length} stringhe, una per riga '
+      'e nello stesso ordine: "t" con la traduzione in $language '
+      '(stringa vuota se la riga è già in $language o se non va tradotta)'
+      '${romanize ? ', "r" con la pronuncia in lettere latine delle righe scritte in un altro '
+          'alfabeto (stringa vuota per le altre)' : ''}.',
+      system: 'Traduci testi di canzoni in modo naturale e fedele al senso, riga per riga.',
+      maxTokens: 8000,
+    );
+    final data = AiService.extractJson(answer);
+    if (data is! Map) throw FormatException('risposta non in JSON');
+    List<String> list(Object? raw) {
+      if (raw is! List || raw.length != lines.length) return List<String>.filled(lines.length, '');
+      return [for (final item in raw) '${item ?? ''}'.trim()];
+    }
+
+    return LyricsAnnotations(
+      translations: translate ? list(data['t']) : const [],
+      romanized: romanize ? list(data['r']) : const [],
+    );
   }
 
   Future<({List<String> translations, List<String> romanized})> _request(
