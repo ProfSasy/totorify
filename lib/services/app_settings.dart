@@ -159,6 +159,11 @@ class AppSettings {
   /// A different color of the app at every launch.
   late final randomAccent = _setting<bool>('random_accent', false);
 
+  // ── Listening together ──────────────────────────────────────────────────
+
+  /// Who listens along may also play, pause, skip and propose songs.
+  late final togetherGuestsControl = _setting<bool>('together_guests_control', false);
+
   // ── Privacy ─────────────────────────────────────────────────────────────
 
   /// What is played is not added to the history (nor to the statistics).
@@ -215,6 +220,7 @@ class AppSettings {
       showCodec,
       haptics,
       randomAccent,
+      togetherGuestsControl,
       pauseListenHistory,
       pauseSearchHistory,
     ]) {}

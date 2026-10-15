@@ -225,6 +225,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   },
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                SettingSwitch(
+                  setting: AppSettings.instance.togetherGuestsControl,
+                  title: 'Chi ascolta insieme può comandare',
+                  subtitle: 'Può mettere in pausa, saltare e proporre brani per la coda',
+                ),
+                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
                 ListTile(
                   title: Text('Nome di questo dispositivo'),
                   subtitle: Text(ConnectHost.deviceName),

@@ -29,6 +29,7 @@ class ConnectReceiver {
     this.kind = ConnectDevice.kindTv,
     this.keepsLibrary = false,
     this.admit,
+    this.listenersMayControl,
     this.announce = true,
   });
 
@@ -53,7 +54,11 @@ class ConnectReceiver {
   /// network. A phone is carried onto other networks: it asks its user,
   /// says what it is playing only to who was let in, and gives its log to
   /// nobody.
-  final Future<bool> Function(String id, String name)? admit;
+  final Future<bool> Function(String id, String name, {bool listener})? admit;
+
+  /// Whether the devices listening along may also play, pause and skip, and
+  /// propose songs for the queue.
+  final bool Function()? listenersMayControl;
 
   HttpServer? _server;
   final Set<WebSocket> _controllers = {};
@@ -70,6 +75,12 @@ class ConnectReceiver {
   // The controllers that have just connected and not sent their library yet:
   // the one that does is the phone whose library is shown from then on.
   final Set<WebSocket> _newcomers = {};
+  // The devices that listen along instead of controlling: they get what
+  // this one plays, and play it themselves.
+  final Set<WebSocket> _listeners = {};
+
+  /// How many devices are listening along.
+  final ValueNotifier<int> listeners = ValueNotifier<int>(0);
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   Timer? _ticker;
 
@@ -236,7 +247,7 @@ class ConnectReceiver {
     try {
       if (id is String && id.isNotEmpty) {
         _send(socket, ConnectProtocol.asking);
-        allowed = await ask(id, who);
+        allowed = await ask(id, who, listener: hello['role'] == 'listener');
       }
     } catch (e) {
       debugPrint('ConnectReceiver._ask: $e');
@@ -261,6 +272,7 @@ class ConnectReceiver {
     _controllerIds.remove(socket);
     _controllerOps.remove(socket);
     _newcomers.remove(socket);
+    if (_listeners.remove(socket)) listeners.value = _listeners.length;
     controllers.value = _controllers.length;
     PlaybackLogService.instance.log('CONNECT', 'un dispositivo si è scollegato');
   }
@@ -331,16 +343,40 @@ class ConnectReceiver {
       if (type != ConnectProtocol.hello || !await _ask(socket, message)) return;
     }
 
+    // A device listening along only listens, unless this one lets it do more.
+    if (_listeners.contains(socket) && type != ConnectProtocol.hello) {
+      final allowed = listenersMayControl?.call() ?? false;
+      const commands = {
+        ConnectProtocol.play,
+        ConnectProtocol.pause,
+        ConnectProtocol.next,
+        ConnectProtocol.previous,
+        ConnectProtocol.seek,
+        ConnectProtocol.suggest,
+      };
+      if (!allowed || !commands.contains(type)) return;
+    }
+
     try {
       switch (type) {
+        case ConnectProtocol.suggest:
+          final songs = ConnectProtocol.decodeSongs(message['songs']);
+          for (final song in songs) {
+            handler.playNext(song);
+          }
+          if (songs.isNotEmpty) log.log('CONNECT', 'brano proposto da chi ascolta insieme');
         case ConnectProtocol.hello:
+          if (message['role'] == 'listener' && _listeners.add(socket)) {
+            listeners.value = _listeners.length;
+            log.log('CONNECT', 'un dispositivo ascolta insieme');
+          }
           final who = message['name'];
           if (who is String && who.isNotEmpty) log.log('CONNECT', 'è "$who"');
           final whoId = message['id'];
           if (whoId is String) _controllerIds[socket] = whoId;
           final knows = message['libraryOps'];
           if (knows is List) _controllerOps[socket] = knows.whereType<String>().toSet();
-          _newcomers.add(socket);
+          if (!_listeners.contains(socket)) _newcomers.add(socket);
           _send(socket, ConnectProtocol.welcome, {
             'device': _info,
             'state': handler.connectState.toMap(),

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../main.dart' show audioHandler;
 import '../../services/connect/connect_controller.dart';
 import '../../services/connect/connect_protocol.dart';
+import '../../services/connect/together_client.dart';
 import '../../services/playback_log_service.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
@@ -91,6 +92,22 @@ class _DevicesSheetState extends State<_DevicesSheet> {
     }
   }
 
+  Future<void> _join(ConnectDevice device) async {
+    if (_connecting != null) return;
+    PlaybackLogService.instance.log('UI', 'dispositivi: ascolto insieme a "${device.name}"');
+    setState(() {
+      _connecting = 'together:${device.id}';
+      _error = null;
+    });
+    final ok = await TogetherClient.instance.join(device);
+    if (!mounted) return;
+    setState(() {
+      _connecting = null;
+      if (!ok) _error = TogetherClient.instance.lastError;
+    });
+    if (ok) Navigator.pop(context);
+  }
+
   Future<void> _backHere() async {
     if (_connect.activeDevice.value == null) {
       Navigator.pop(context);
@@ -135,6 +152,7 @@ class _DevicesSheetState extends State<_DevicesSheet> {
         _connect.libraryOwnedBy,
         _connect.waitingFor,
         audioHandler.outputVolumeNotifier,
+        TogetherClient.instance.host,
       ]),
       builder: (context, _) {
         final active = _connect.activeDevice.value;
@@ -210,6 +228,37 @@ class _DevicesSheetState extends State<_DevicesSheet> {
                     onTap: _connect.sendLibrary,
                   ),
               ],
+            ],
+            // ── Listening together ─────────────────────────────────────
+            if (TogetherClient.instance.host.value case final together?) ...[
+              const SheetTitle('Ascolta insieme'),
+              SheetAction(
+                icon: AppIcons.together,
+                label: 'Ascolti insieme a ${together.name}',
+                subtitle: 'Tocca per uscire: la musica resta qui',
+                color: cs.primary,
+                onTap: () async {
+                  await TogetherClient.instance.leave();
+                  if (mounted) setState(() {});
+                },
+              ),
+            ] else if (devices.isNotEmpty && active == null) ...[
+              const SheetTitle(
+                'Ascolta insieme',
+                subtitle: 'Suona qui in sincrono con un altro dispositivo, seguendo la sua coda',
+              ),
+              for (final device in devices)
+                SheetAction(
+                  icon: AppIcons.together,
+                  label: device.name,
+                  subtitle: device.nowPlaying == null
+                      ? 'Unisciti'
+                      : 'Unisciti: sta suonando ${device.nowPlaying}',
+                  trailing: _connecting == 'together:${device.id}'
+                      ? const CupertinoActivityIndicator(radius: 9)
+                      : null,
+                  onTap: () => _join(device),
+                ),
             ],
             if (scanning)
               const Padding(

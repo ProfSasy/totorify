@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../app_settings.dart';
 import '../audio_handler.dart';
 import '../playback_log_service.dart';
 import '../storage_service.dart';
@@ -11,10 +12,13 @@ import 'connect_receiver.dart';
 
 /// A device asking to play its music on this phone, while the user decides.
 class ConnectRequest {
-  ConnectRequest._(this.id, this.name);
+  ConnectRequest._(this.id, this.name, {this.listener = false});
 
   final String id;
   final String name;
+
+  /// True when it asks to listen along, not to play here.
+  final bool listener;
   final Completer<bool> _answer = Completer<bool>();
 }
 
@@ -79,6 +83,7 @@ class ConnectHost {
             kind: kind,
             keepsLibrary: keepsLibrary,
             admit: _admit,
+            listenersMayControl: () => AppSettings.instance.togetherGuestsControl.value,
           );
           await receiver.start();
           if (receiver.isRunning) _receiver = receiver;
@@ -124,16 +129,22 @@ class ConnectHost {
     return done;
   }
 
-  Future<bool> _admit(String id, String name) {
+  /// How many devices are listening along with this one.
+  ValueNotifier<int>? get listeners => _receiver?.listeners;
+
+  Future<bool> _admit(String id, String name, {bool listener = false}) {
     final storage = StorageService.instance;
     if (storage.connectTrusted.containsKey(id) || _allowedOnce.contains(id)) {
       return Future.value(true);
     }
     // One question at a time: who asks meanwhile is told no.
     if (request.value != null) return Future.value(false);
-    final asked = ConnectRequest._(id, name);
+    final asked = ConnectRequest._(id, name, listener: listener);
     request.value = asked;
-    PlaybackLogService.instance.log('CONNECT', '"$name" chiede di riprodurre qui');
+    PlaybackLogService.instance.log(
+      'CONNECT',
+      '"$name" chiede di ${listener ? 'ascoltare insieme' : 'riprodurre qui'}',
+    );
     Timer(_answerWithin, () => answer(asked, allow: false));
     return asked._answer.future;
   }

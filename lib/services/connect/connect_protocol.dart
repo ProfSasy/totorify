@@ -41,6 +41,10 @@ class ConnectProtocol {
   static const String volume = 'volume';
   static const String release = 'release';
 
+  /// From a device that listens along (see `TogetherClient`): a song it
+  /// proposes for the queue of the one it listens to.
+  static const String suggest = 'suggest';
+
   /// A part of the controller's library, for a player that keeps a copy of
   /// it (see `LibrarySync`).
   static const String library = 'library';

@@ -53,9 +53,11 @@ class _ConnectRequestPromptState extends State<ConnectRequestPrompt> {
       builder: (_) => PopScope(
         canPop: false,
         child: CupertinoAlertDialog(
-          title: const Text('Riprodurre su questo dispositivo?'),
+          title: Text(asked.listener ? 'Ascoltare insieme?' : 'Riprodurre su questo dispositivo?'),
           content: Text(
-            '"${asked.name}" vuole far suonare la sua musica qui e comandarla. '
+            asked.listener
+                ? '"${asked.name}" vuole ascoltare quello che suona qui, in sincrono.'
+                : '"${asked.name}" vuole far suonare la sua musica qui e comandarla. '
             'Quello che stai ascoltando verrà sostituito.',
           ),
           actions: [

@@ -14,6 +14,7 @@ import 'services/canvas_service.dart';
 import 'services/canvas_video_pool.dart';
 import 'services/connect/connect_controller.dart';
 import 'services/connect/connect_host.dart';
+import 'services/connect/together_client.dart';
 import 'services/download_service.dart';
 import 'services/listening_stats.dart';
 import 'services/network_watcher.dart';
@@ -142,6 +143,7 @@ Future<void> _startApp() async {
   ConnectController.instance.attach(audioHandler, name: ConnectHost.deviceName);
   // And this one can play for them, when the user turned that on.
   ConnectHost.instance.attach(audioHandler);
+  TogetherClient.instance.attach(audioHandler);
   unawaited(ConnectHost.instance.apply());
 
   // Configure the shared audio session after all audio plugins are loaded.
