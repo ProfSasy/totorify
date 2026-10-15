@@ -8,6 +8,7 @@ import 'app_settings.dart';
 import 'lyrics_sources.dart';
 import 'storage_service.dart';
 import 'track_matcher_service.dart';
+import 'ytmusic_service.dart';
 
 /// One answer of a search across all the sources, to choose from.
 @immutable
@@ -139,16 +140,19 @@ class LyricsService {
       artist ?? song.artist,
     );
     final primary = cleanArtist.split(RegExp(r'[,&]|feat\.|\+')).first.trim();
-    final mapped = StorageService.instance.getCachedYouTubeMapping(song.id);
-    final video = (mapped != null && mapped.isNotEmpty)
-        ? mapped
-        : (song.youtubeVideoId ?? (TrackMatcherService.needsResolution(song.id) ? null : song.id));
+    final video = TrackMatcherService.instance.knownStreamIdOf(song);
+    // A music video played from its studio recording: the lyrics are timed
+    // on the recording, which is shorter.
+    final played =
+        video != null && video != song.id && !TrackMatcherService.needsResolution(song.id)
+        ? YTMusicService.instance.streamDuration(video)
+        : null;
     return LyricsQuery(
       title: cleanTitle,
       artist: cleanArtist,
       primaryArtist: primary.isEmpty ? cleanArtist : primary,
       album: song.album,
-      durationSec: song.duration.inSeconds,
+      durationSec: (played ?? song.duration).inSeconds,
       videoId: video,
     );
   }

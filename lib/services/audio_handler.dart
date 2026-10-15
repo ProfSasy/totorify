@@ -633,16 +633,23 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
     final hadRemembered = yt.hasCachedAudioUrl(videoId);
 
-    // [freshUrl] makes this first lookup forget every remembered URL of the
-    // video, so the ones asked below are new as well.
-    final hlsAudio = await yt.getHlsAudioUrl(videoId, force: freshUrl);
-    if (generation != _loadGeneration) return superseded;
-    if (hlsAudio != null) {
-      final opened = await openUrl(hlsAudio, 'HLS audio', format: VideoFormat.hls);
-      if (opened != _Open.failed) return (result: opened, unavailable: false);
+    // Where Opus plays, its direct stream is the best audio there is: it
+    // goes first, and the HLS playlist (AAC) is what follows if it fails.
+    // On iOS the HLS playlist goes first: same AAC, better seeking.
+    final opusFirst = YTMusicService.opusPlayable;
+    String? hlsAudio;
+    if (!opusFirst) {
+      // [freshUrl] makes this first lookup forget every remembered URL of
+      // the video, so the ones asked below are new as well.
+      hlsAudio = await yt.getHlsAudioUrl(videoId, force: freshUrl);
+      if (generation != _loadGeneration) return superseded;
+      if (hlsAudio != null) {
+        final opened = await openUrl(hlsAudio, 'HLS audio', format: VideoFormat.hls);
+        if (opened != _Open.failed) return (result: opened, unavailable: false);
+      }
     }
 
-    var url = await yt.getAudioStreamUrl(videoId);
+    var url = await yt.getAudioStreamUrl(videoId, force: opusFirst && freshUrl);
     if (generation != _loadGeneration) return superseded;
 
     if (url == null) {
@@ -660,6 +667,15 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
           opened = await openUrl(url, 'stream (nuovo URL)');
           if (opened != _Open.failed) return (result: opened, unavailable: false);
         }
+      }
+    }
+
+    if (opusFirst) {
+      hlsAudio = await yt.getHlsAudioUrl(videoId);
+      if (generation != _loadGeneration) return superseded;
+      if (hlsAudio != null) {
+        final opened = await openUrl(hlsAudio, 'HLS audio', format: VideoFormat.hls);
+        if (opened != _Open.failed) return (result: opened, unavailable: false);
       }
     }
 
@@ -890,13 +906,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   /// The YouTube video [song] is played from, when known: the one matched
   /// for it, or its own id for a song of the YouTube catalog.
-  String? _videoIdOf(Song song) {
-    final mapped = StorageService.instance.getCachedYouTubeMapping(song.id);
-    if (mapped != null && mapped.isNotEmpty) return mapped;
-    final own = song.youtubeVideoId;
-    if (own != null && own.isNotEmpty) return own;
-    return TrackMatcherService.needsResolution(song.id) ? null : song.id;
-  }
+  String? _videoIdOf(Song song) => TrackMatcherService.instance.knownStreamIdOf(song);
 
   /// Looks up, beside the load, the parts of [videoId] to skip and how loud
   /// it is.
@@ -1093,6 +1103,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _failedStreams.remove(song.id);
     _errorReloads.remove(song.id);
     await StorageService.instance.cacheYouTubeMapping(song.id, newYoutubeVideoId);
+    await TrackMatcherService.instance.rememberChosenSource(song, newYoutubeVideoId);
     _queue.updateSong(song.id, (s) => s.copyWith(
           youtubeVideoId: newYoutubeVideoId,
           duration: (newDuration != null && newDuration > Duration.zero) ? newDuration : s.duration,

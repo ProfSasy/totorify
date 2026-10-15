@@ -69,6 +69,10 @@ class AppSettings {
   /// Every song plays at about the same loudness, as YouTube measures it.
   late final normalizeVolume = _setting<bool>('normalize_volume', true);
 
+  /// A song saved as a music video plays from its studio recording, when
+  /// YouTube Music has it: the master of the album, without the scenes.
+  late final preferStudioAudio = _setting<bool>('prefer_studio_audio', true);
+
   /// The queue, and where it was, come back at the next launch.
   late final persistentQueue = _setting<bool>('persistent_queue', true);
 
@@ -195,6 +199,7 @@ class AppSettings {
       sponsorBlock,
       sponsorBlockCategories,
       normalizeVolume,
+      preferStudioAudio,
       persistentQueue,
       permanentShuffle,
       skipUnplayable,

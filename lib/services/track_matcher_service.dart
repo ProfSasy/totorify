@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../models/song.dart';
+import 'app_settings.dart';
 import 'storage_service.dart';
 import 'ytmusic_catalog_service.dart';
 import 'ytmusic_service.dart';
@@ -362,6 +363,100 @@ class TrackMatcherService {
 
   bool _isVideoId(String? id) => id != null && id.isNotEmpty && !needsResolution(id);
 
+  // A title that names the upload a music video: its audio is the video's
+  // mix (scenes, intros, a quieter master), not the album track.
+  static final RegExp _musicVideoTitle = RegExp(
+    r'\b(official\s+(music\s+)?video|music\s+video|video\s+ufficiale|videoclip|official\s+mv|m/v)\b'
+    r'|[\(\[]\s*video\s*[\)\]]',
+    caseSensitive: false,
+  );
+
+  // The frame of a video; a song of YouTube Music has a square cover
+  // hosted elsewhere (googleusercontent).
+  static final RegExp _videoFrame = RegExp(r'ytimg\.com/vi');
+
+  /// True when [song] may be a video of YouTube rather than a studio
+  /// track: a music video, a lyric video, an upload. Its studio recording
+  /// is looked for once.
+  static bool isMusicVideo(Song song) =>
+      !needsResolution(song.id) &&
+      (_musicVideoTitle.hasMatch(song.title) || _videoFrame.hasMatch(song.thumbnailUrl));
+
+  // Where the studio recording of a music video is remembered (the video's
+  // own id when there is none): kept apart from the catalog matches, so
+  // that turning the setting off brings the videos back.
+  static String _studioKey(String id) => 'studio_$id';
+
+  /// Another video chosen for [song]: by the user, or after its own failed.
+  /// A song of YouTube naming itself (a link opened) has chosen nothing.
+  String? _chosenSourceOf(Song song) {
+    final own = song.youtubeVideoId;
+    if (_isVideoId(own) && own != song.id) return own;
+    final mapped = StorageService.instance.getCachedYouTubeMapping(song.id);
+    if (_isVideoId(mapped) && mapped != song.id) return mapped;
+    return null;
+  }
+
+  /// The YouTube video [song] plays from, when known without asking.
+  String? knownStreamIdOf(Song song) {
+    final chosen = _chosenSourceOf(song);
+    if (chosen != null) return chosen;
+    if (!needsResolution(song.id)) {
+      if (!isMusicVideo(song) || !AppSettings.instance.preferStudioAudio.value) return song.id;
+      final studio = StorageService.instance.getCachedYouTubeMapping(_studioKey(song.id));
+      return _isVideoId(studio) ? studio : song.id;
+    }
+    return null;
+  }
+
+  /// [videoId] was picked by hand as the source of [song]: a music video
+  /// whose own video is picked keeps it, instead of its studio recording.
+  Future<void> rememberChosenSource(Song song, String videoId) async {
+    if (needsResolution(song.id)) return;
+    await StorageService.instance.cacheYouTubeMapping(_studioKey(song.id), videoId);
+  }
+
+  /// The studio recording of the music video [video] on YouTube Music: same
+  /// title, same artist, not another version, not longer than the video.
+  /// The video's own id when there is none.
+  Future<String> _studioRecordingOf(Song video) async {
+    final key = _studioKey(video.id);
+    final known = StorageService.instance.getCachedYouTubeMapping(key);
+    if (_isVideoId(known)) return known!;
+    try {
+      final query = '${_canonicalTitle(video.title)} ${_canonicalArtist(video.artist).split(',').first}';
+      final songs = await YTMusicService.instance.search(query.replaceAll(_channelSuffix, ''));
+      Song? best;
+      for (final song in songs) {
+        // Itself a song of the catalog: already the studio recording.
+        if (song.id == video.id) break;
+        if (!isVideoOf(video, song)) continue;
+        if (video.duration > Duration.zero && song.duration > Duration.zero) {
+          // A video can open or close with a scene (the short film of
+          // "Thriller" lasts 13 minutes), but a song is not longer than its
+          // video, nor a fragment of it.
+          if (song.duration > video.duration + const Duration(seconds: 5)) continue;
+          if (song.duration.inSeconds * 3 < video.duration.inSeconds) continue;
+        }
+        best = song;
+        break;
+      }
+      final id = best?.id ?? video.id;
+      PlaybackLogService.instance.log(
+        'MATCHER',
+        best == null
+            ? 'nessuna versione in studio per il video "${video.title}"'
+            : 'video "${video.title}" -> versione in studio $id "${best.title}" di ${best.artist}',
+      );
+      await StorageService.instance.cacheYouTubeMapping(key, id);
+      return id;
+    } catch (e) {
+      // No network: the video plays, and the next time it is asked again.
+      debugPrint('TrackMatcher.studioRecordingOf: $e');
+      return video.id;
+    }
+  }
+
   /// YouTube video id to play for [song], or null when none can be found
   /// (no results or no network).
   Future<String?> resolveAndCacheStreamId(Song song) async {
@@ -369,14 +464,19 @@ class TrackMatcherService {
     // failed) wins for every kind of song, YouTube ones included. A stored
     // value is used only if it really is a video id: older versions could
     // save the catalog id itself here after a failed match.
+    if (!needsResolution(song.id)) {
+      final chosen = _chosenSourceOf(song);
+      if (chosen != null) return chosen;
+      if (isMusicVideo(song) && AppSettings.instance.preferStudioAudio.value) {
+        return _studioRecordingOf(song);
+      }
+      return song.id;
+    }
+
     if (_isVideoId(song.youtubeVideoId)) return song.youtubeVideoId;
 
     final cached = StorageService.instance.getCachedYouTubeMapping(song.id);
     if (_isVideoId(cached)) return cached;
-
-    if (!needsResolution(song.id)) {
-      return song.id;
-    }
 
     try {
       final cleanTitle = _canonicalTitle(song.title);

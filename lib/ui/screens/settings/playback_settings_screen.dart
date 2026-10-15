@@ -92,8 +92,11 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
           children: [
             SwitchListTile.adaptive(
               title: const Text('Qualità audio alta'),
-              subtitle: const Text(
-                'AAC a 128 kbps. Disattivala per consumare meno dati (circa 48 kbps).',
+              subtitle: Text(
+                YTMusicService.opusPlayable
+                    ? 'Opus a 130 kbps, il formato migliore di YouTube. Disattivala per '
+                          'consumare meno dati (circa 50 kbps).'
+                    : 'AAC a 128 kbps. Disattivala per consumare meno dati (circa 48 kbps).',
               ),
               value: _highQuality,
               activeTrackColor: primary,
@@ -109,6 +112,13 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
               setting: settings.saveDataOnCellular,
               title: 'Risparmia dati sulla rete cellulare',
               subtitle: 'Senza Wi-Fi ascolti sempre la versione più leggera',
+            ),
+            SettingSwitch(
+              setting: settings.preferStudioAudio,
+              title: 'Versione in studio al posto del videoclip',
+              subtitle:
+                  'Un brano salvato come videoclip suona dalla registrazione dell\'album, '
+                  'quando YouTube Music ce l\'ha: senza scene parlate e con il mixaggio originale',
             ),
             SettingSwitch(
               setting: settings.normalizeVolume,

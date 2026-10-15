@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist;
@@ -499,10 +500,21 @@ class YTMusicService {
     return base.resolve(chosen.uri).toString();
   }
 
-  /// Selects the best audio stream natively compatible with Apple iOS AVPlayer.
-  /// Priority:
-  ///   1. audio/mp4 (AAC itag 140 @ 128kbps or itag 139 @ 48kbps) - natively supported by AVFoundation
-  ///   2. Any available audio stream as fallback
+  /// True where the player decodes Opus in WebM (ExoPlayer on Android,
+  /// libmpv on Windows and Linux). AVPlayer on iOS does not.
+  static final bool opusPlayable =
+      !kIsWeb && (Platform.isAndroid || Platform.isWindows || Platform.isLinux);
+
+  /// The bitrate a format keeps on average; the peak one when not given.
+  static int _averageBitrate(dynamic format) =>
+      int.tryParse('${format['averageBitrate'] ?? format['bitrate'] ?? ''}') ?? 0;
+
+  /// The audio stream to play, out of the formats YouTube offers:
+  ///   - the original track only: not a dubbed language, not the
+  ///     compressed-dynamics copy (DRC) some videos have;
+  ///   - Opus where the player can decode it (about 130 kbps at 48 kHz, the
+  ///     best YouTube gives for free), AAC otherwise (itag 140, 128 kbps);
+  ///   - the highest bitrate for "Alta qualità", the lightest otherwise.
   String? _pickBestAppleCompatibleAudioUrl(List<dynamic> formats) =>
       _pickBestAppleCompatibleAudio(formats)?['url'] as String?;
 
@@ -514,19 +526,27 @@ class YTMusicService {
 
     if (audioFormats.isEmpty) return null;
 
-    // Filter for audio/mp4 (AAC) first - essential for iOS AVPlayer
-    final mp4Formats = audioFormats.where((f) {
+    bool original(dynamic f) {
+      if (f['isDrc'] == true || '${f['xtags'] ?? ''}'.contains('drc')) return false;
+      final track = f['audioTrack'];
+      return track is! Map || track['audioIsDefault'] != false;
+    }
+
+    final originals = audioFormats.where(original).toList();
+    final pool = originals.isNotEmpty ? originals : audioFormats;
+
+    bool isMp4(dynamic f) {
       final mime = (f['mimeType'] as String? ?? '').toLowerCase();
       return mime.contains('mp4') || mime.contains('m4a') || mime.contains('mp4a');
-    }).toList();
+    }
 
-    final targetList = mp4Formats.isNotEmpty ? mp4Formats : audioFormats;
+    bool isOpus(dynamic f) => (f['mimeType'] as String? ?? '').toLowerCase().contains('opus');
 
-    targetList.sort((a, b) {
-      final bBit = (b['bitrate'] ?? b['averageBitrate'] as int?) ?? 0;
-      final aBit = (a['bitrate'] ?? a['averageBitrate'] as int?) ?? 0;
-      return bBit.compareTo(aBit);
-    });
+    final opus = opusPlayable ? pool.where(isOpus).toList() : const [];
+    final mp4 = pool.where(isMp4).toList();
+    final targetList = opus.isNotEmpty ? opus : (mp4.isNotEmpty ? mp4 : pool);
+
+    targetList.sort((a, b) => _averageBitrate(b).compareTo(_averageBitrate(a)));
 
     // "Alta qualità" picks the highest bitrate; otherwise prefer the lightest
     // stream to save data on the go.
