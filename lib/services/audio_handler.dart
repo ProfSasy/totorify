@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:video_player/video_player.dart';
 
 import '../models/song.dart';
+import 'app_settings.dart';
 import 'canvas_service.dart';
 import 'canvas_video_pool.dart';
 import 'connect/connect_protocol.dart';
@@ -16,6 +17,7 @@ import 'download_service.dart';
 import 'playback_log_service.dart';
 import 'playback_queue.dart';
 import 'recommendation_service.dart';
+import 'sponsor_block_service.dart';
 import 'storage_service.dart';
 import 'track_matcher_service.dart';
 import 'ytmusic_service.dart';
@@ -57,6 +59,50 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   final _errorController = StreamController<String>.broadcast();
   Stream<String> get errorStream => _errorController.stream;
+
+  /// Short notes of what the player did by itself (a part of the video
+  /// skipped, a song that could not be played and was passed over).
+  final _infoController = StreamController<String>.broadcast();
+  Stream<String> get infoStream => _infoController.stream;
+
+  AudioPlayerHandler() {
+    AppSettings.instance.normalizeVolume.addListener(_onNormalizeChanged);
+  }
+
+  // SponsorBlock: the parts of the video playing to jump over, and which of
+  // them were already jumped (or entered on purpose by the user) in this
+  // load.
+  List<SkipSegment> _segments = const [];
+  final Set<int> _segmentsPassed = {};
+
+  // How much the current track is lowered to sound as loud as the others.
+  double _gain = 1.0;
+
+  // Songs that could not be played one after the other: past a few, the
+  // queue is not skipped through any further.
+  int _consecutiveFailures = 0;
+  static const int _maxConsecutiveFailures = 3;
+
+  /// Where what plays comes from ("HLS audio", "file locale"…), for the
+  /// details of the track.
+  final ValueNotifier<String?> sourceNotifier = ValueNotifier<String?>(null);
+
+  /// YouTube video being streamed, or null while a local file plays.
+  String? get currentStreamId => _currentStreamId;
+
+  /// How much the current track is lowered by the normalization (1 = not).
+  double get normalizationGain => _gain;
+
+  // Crossfade: the player of the song fading out while the next one fades
+  // in, how loud it was when it started to fade, and the level of the one
+  // coming in (0 to 1).
+  VideoPlayerController? _fadingOut;
+  double _fadingOutVolume = 0;
+  double _fadeIn = 1.0;
+  Timer? _fadeTimer;
+  // True while the load of the song coming in is being started by the
+  // crossfade itself: any other load ends the crossfade at once.
+  bool _crossfadeStarting = false;
 
   // Background playback must be allowed explicitly: by default the plugin
   // pauses its players when the app leaves the foreground.
@@ -286,6 +332,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         final position = await player.position;
         if (position == null || !identical(player, _player) || _loading || _seeking) return;
         _setPosition(position);
+        _skipSegmentAt(position);
+        _maybeCrossfade(position);
         // The end is called here, a moment early, rather than left to the
         // player: it can believe the track is twice as long, and once it has
         // stopped by itself it is busy parking at the end, which gets in the
@@ -470,6 +518,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       _sendLoad(Duration(milliseconds: (from * 1000).round()));
       return;
     }
+    if (_crossfadeStarting) {
+      _crossfadeStarting = false;
+    } else {
+      _finishCrossfade();
+    }
     final generation = ++_loadGeneration;
     _endGateOpen = true;
     _userPaused = false;
@@ -479,6 +532,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _seekGeneration++;
     _pendingSeek = null;
     _trackDuration = Duration.zero;
+    _segments = const [];
+    _segmentsPassed.clear();
     final start = startSeconds ?? _startOffsetOf(song).inMilliseconds / 1000;
     positionNotifier.value = Duration(milliseconds: (start * 1000).round());
     final log = PlaybackLogService.instance;
@@ -500,6 +555,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       if (allowLocal && await StorageService.instance.hasLocalAudioFile(song.id)) {
         if (generation != _loadGeneration) return;
         final path = await StorageService.instance.getLocalAudioPath(song.id);
+        _prepareExtras(_videoIdOf(song), generation);
         final opened = await _open(
           () => VideoPlayerController.file(File(path), videoPlayerOptions: _audioOptions),
           generation,
@@ -527,6 +583,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         return;
       }
       _currentStreamId = videoId;
+      _prepareExtras(videoId, generation);
 
       final outcome = await _openStream(videoId, generation, start: start, freshUrl: freshUrl);
       if (outcome.result == _Open.ok) {
@@ -659,6 +716,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       if (generation != _loadGeneration) return _Open.superseded;
       _setPosition(startAt, announce: true);
       _publishCurrentMediaItem();
+      sourceNotifier.value = source;
+      _consecutiveFailures = 0;
       log.log(
         'PLAY',
         '#$generation $source pronto in ${watch.elapsedMilliseconds}ms, '
@@ -675,6 +734,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         if (generation != _loadGeneration) return _Open.superseded;
         await controller.play();
         _starting = false;
+        if (_fadingOut != null) _startFadeRamp();
         // What it reported while starting was skipped: publish where it is.
         _onPlayerValue(controller);
       }
@@ -737,6 +797,180 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _userStopped = true;
     _loading = false;
     _publish(processing: AudioProcessingState.idle, playing: false);
+    _finishCrossfade();
+    _skipAfterFailure();
+  }
+
+  // ── Crossfade ───────────────────────────────────────────────────────────
+
+  /// Near the end of the track, with crossfade on, the next one starts
+  /// while this one goes on: this one fades out as the other fades in.
+  void _maybeCrossfade(Duration position) {
+    final seconds = AppSettings.instance.crossfadeSeconds.value;
+    if (seconds <= 0 || _fadingOut != null || _remote != null || !_endGateOpen) return;
+    // A short track would be all fade.
+    if (_trackDuration < Duration(seconds: seconds * 3)) return;
+    if (position < _trackDuration - Duration(seconds: seconds)) return;
+    if (_queue.repeat == PlaybackRepeat.one || _sleepTimerEndOfTrack || _userPaused) return;
+    final next = _queue.peekNext();
+    final old = _player;
+    if (next == null || old == null) return;
+
+    PlaybackLogService.instance.log('FADE', 'dissolvenza di ${seconds}s verso il prossimo brano');
+    _endGateOpen = false;
+    _fadingOutVolume = _playerVolume;
+    _fadingOut = old;
+    // The song fading out is no longer the player: what it reports is not
+    // published, and the next load does not silence it.
+    _player = null;
+    _fadeIn = 0.0;
+    _crossfadeStarting = true;
+    unawaited(_playIndex(next));
+  }
+
+  void _startFadeRamp() {
+    final total = AppSettings.instance.crossfadeSeconds.value * 1000;
+    final started = DateTime.now();
+    final old = _fadingOut;
+    _fadeTimer?.cancel();
+    _fadeTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      final level = total <= 0
+          ? 1.0
+          : (DateTime.now().difference(started).inMilliseconds / total).clamp(0.0, 1.0);
+      _fadeIn = level;
+      final player = _player;
+      if (player != null) unawaited(player.setVolume(_playerVolume).catchError((_) {}));
+      if (old != null) {
+        unawaited(old.setVolume(_fadingOutVolume * (1 - level)).catchError((_) {}));
+      }
+      if (level >= 1) _finishCrossfade();
+    });
+  }
+
+  /// Ends a crossfade at once: the song fading out stops, the one coming in
+  /// plays at its full volume.
+  void _finishCrossfade() {
+    _fadeTimer?.cancel();
+    _fadeTimer = null;
+    final old = _fadingOut;
+    _fadingOut = null;
+    _crossfadeStarting = false;
+    if (_fadeIn != 1.0) {
+      _fadeIn = 1.0;
+      final player = _player;
+      if (player != null) unawaited(player.setVolume(_playerVolume).catchError((_) {}));
+    }
+    if (old != null) unawaited(_disposeQuietly(old));
+  }
+
+  /// A song that cannot be played is passed over, when the user wants it:
+  /// the next one starts after a moment, unless something else was asked
+  /// meanwhile. A few failures in a row stop it (no network, most likely).
+  void _skipAfterFailure() {
+    if (!AppSettings.instance.skipUnplayable.value || _remote != null) return;
+    if (_consecutiveFailures >= _maxConsecutiveFailures) {
+      PlaybackLogService.instance.log('SKIP', 'troppi brani non riproducibili di fila: mi fermo');
+      _consecutiveFailures = 0;
+      return;
+    }
+    if (_queue.peekNext() == null) return;
+    _consecutiveFailures++;
+    final generation = _loadGeneration;
+    final failed = currentSong?.id;
+    unawaited(Future<void>.delayed(const Duration(milliseconds: 1500), () async {
+      if (generation != _loadGeneration || !_userStopped || currentSong?.id != failed) return;
+      PlaybackLogService.instance.log('SKIP', 'brano non riproducibile: passo al successivo');
+      _infoController.add('Brano non disponibile: passo al successivo');
+      await skipToNext();
+    }));
+  }
+
+  // ── SponsorBlock and normalization ──────────────────────────────────────
+
+  /// The YouTube video [song] is played from, when known: the one matched
+  /// for it, or its own id for a song of the YouTube catalog.
+  String? _videoIdOf(Song song) {
+    final mapped = StorageService.instance.getCachedYouTubeMapping(song.id);
+    if (mapped != null && mapped.isNotEmpty) return mapped;
+    final own = song.youtubeVideoId;
+    if (own != null && own.isNotEmpty) return own;
+    return TrackMatcherService.needsResolution(song.id) ? null : song.id;
+  }
+
+  /// Looks up, beside the load, the parts of [videoId] to skip and how loud
+  /// it is.
+  void _prepareExtras(String? videoId, int generation) {
+    if (videoId == null || videoId.isEmpty) {
+      _setGain(1.0);
+      return;
+    }
+    unawaited(() async {
+      final segments = await SponsorBlockService.instance.segmentsFor(videoId);
+      if (generation != _loadGeneration || segments.isEmpty) return;
+      _segments = segments;
+      PlaybackLogService.instance.log('SKIP', 'SponsorBlock $videoId: ${segments.join(', ')}');
+    }());
+    unawaited(_applyLoudness(videoId, generation));
+  }
+
+  Future<void> _applyLoudness(String videoId, int generation) async {
+    if (!AppSettings.instance.normalizeVolume.value) {
+      _setGain(1.0);
+      return;
+    }
+    final known = YTMusicService.instance.streamDetails(videoId);
+    // Known already (the streams were just looked up): set before playing.
+    if (known != null) {
+      _setGain(gainFor(known.loudnessDb));
+      return;
+    }
+    final db = await YTMusicService.instance.loudnessOf(videoId);
+    if (generation != _loadGeneration) return;
+    _setGain(gainFor(db));
+  }
+
+  /// How much a track [loudnessDb] louder than YouTube's reference is
+  /// lowered. Quieter ones are left as they are: the player cannot go above
+  /// full volume.
+  static double gainFor(double? loudnessDb) {
+    if (loudnessDb == null || loudnessDb <= 0) return 1.0;
+    return pow(10, -loudnessDb / 20).toDouble().clamp(0.2, 1.0);
+  }
+
+  void _setGain(double gain) {
+    if (gain == _gain) return;
+    _gain = gain;
+    final player = _player;
+    if (player != null) unawaited(player.setVolume(_playerVolume).catchError((_) {}));
+  }
+
+  void _onNormalizeChanged() {
+    final videoId = _currentStreamId ?? (currentSong == null ? null : _videoIdOf(currentSong!));
+    if (videoId == null) return;
+    unawaited(_applyLoudness(videoId, _loadGeneration));
+  }
+
+  /// Jumps over the marked part [position] is in, once per load. A part
+  /// that runs to the end of the track ends it.
+  void _skipSegmentAt(Duration position) {
+    if (_segments.isEmpty || _seeking || _loading || _remote != null) return;
+    for (var i = 0; i < _segments.length; i++) {
+      final segment = _segments[i];
+      if (_segmentsPassed.contains(i) || !segment.contains(position)) continue;
+      _segmentsPassed.add(i);
+      PlaybackLogService.instance.log('SKIP', 'salto $segment');
+      final toEnd = _trackDuration > Duration.zero &&
+          segment.end >= _trackDuration - const Duration(seconds: 2);
+      if (toEnd) {
+        unawaited(_onTrackEnded());
+      } else {
+        unawaited(seek(segment.end));
+        _infoController.add(segment.category == 'music_offtopic'
+            ? 'Saltata una parte non musicale'
+            : 'Saltato un segmento (${SponsorBlockService.categories[segment.category] ?? segment.category})');
+      }
+      return;
+    }
   }
 
   /// The current video cannot be played: try the next best match, up to
@@ -818,6 +1052,10 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       'CMD',
       'playSong "${song.title}" id=${song.id} coda=${queue?.length ?? 1}',
     );
+    // Something new starts shuffled, when the user always wants it so.
+    if (AppSettings.instance.permanentShuffle.value && !_queue.shuffle) {
+      await setShuffleMode(AudioServiceShuffleMode.all);
+    }
     _queue.replace((queue != null && queue.isNotEmpty) ? queue : [song], song);
     _failedStreams.remove(song.id);
     _errorReloads.remove(song.id);
@@ -909,6 +1147,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       _expectFromRemote(playing: false);
       return;
     }
+    _finishCrossfade();
     if (_loading) {
       // No player events arrive during a load: show the pause ourselves.
       _publish(processing: AudioProcessingState.buffering, playing: false);
@@ -925,6 +1164,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       _expectFromRemote(playing: false);
       return;
     }
+    _finishCrossfade();
     _userStopped = true;
     _loading = false;
     _starting = false;
@@ -947,6 +1187,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     if (_trackDuration > Duration.zero && target > _trackDuration) target = _trackDuration;
     log.log('CMD', 'seek ${target.inSeconds}s (inCaricamento=$_loading)');
 
+    for (var i = 0; i < _segments.length; i++) {
+      if (_segments[i].contains(target)) _segmentsPassed.add(i);
+    }
     if (_remote != null) {
       _remote!.send(ConnectProtocol.seek, {'positionMs': target.inMilliseconds});
       _expectFromRemote(position: target);
@@ -1271,6 +1514,74 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _updateQueueBroadcast();
   }
 
+  /// Keeps only the song that is playing.
+  void clearQueue() {
+    PlaybackLogService.instance.log('CMD', 'svuota coda');
+    _queue.keepOnlyCurrent();
+    _syncSuggestionsWithQueue();
+    _updateQueueBroadcast();
+  }
+
+  /// Mixes the songs after the current one, once (the order changes; the
+  /// shuffle mode does not).
+  void shuffleUpcoming() {
+    PlaybackLogService.instance.log('CMD', 'mescola la coda');
+    _queue.shuffleAfterCurrent();
+    _updateQueueBroadcast();
+  }
+
+  /// Plays [seed] followed by songs like it: a radio started from a song.
+  Future<void> startRadio(Song seed) async {
+    PlaybackLogService.instance.log('CMD', 'radio da "${seed.title}"');
+    final playing = playSong(seed, queue: [seed]);
+    try {
+      final related = await _freshSuggestions(seed);
+      if (currentSong?.id == seed.id && _queue.appendUnique(related.take(40)) > 0) {
+        _updateQueueBroadcast();
+      }
+    } catch (e) {
+      debugPrint('AudioPlayerHandler.startRadio: $e');
+    }
+    await playing;
+  }
+
+  /// Puts back a queue kept from a previous session, without playing it:
+  /// play() starts the current song from [position].
+  void restoreSession(
+    List<Song> songs,
+    int index, {
+    Duration position = Duration.zero,
+    bool shuffle = false,
+    PlaybackRepeat repeat = PlaybackRepeat.off,
+  }) {
+    if (songs.isEmpty || currentSong != null || _remote != null) return;
+    final start = songs[index.clamp(0, songs.length - 1)];
+    _queue.replace(songs, start);
+    _queue.setShuffle(shuffle);
+    _queue.setRepeat(repeat);
+    playbackState.add(playbackState.value.copyWith(
+      shuffleMode: shuffle ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
+      repeatMode: switch (repeat) {
+        PlaybackRepeat.one => AudioServiceRepeatMode.one,
+        PlaybackRepeat.all => AudioServiceRepeatMode.all,
+        PlaybackRepeat.off => AudioServiceRepeatMode.none,
+      },
+    ));
+    _updateQueueBroadcast(sync: false);
+    mediaItem.add(start.toMediaItem());
+    _userStopped = true;
+    _resumeAt = position;
+    positionNotifier.value = position;
+    PlaybackLogService.instance.log(
+      'SESSION',
+      'coda ripristinata: ${songs.length} brani, "${start.title}" da ${position.inSeconds}s',
+    );
+  }
+
+  /// The queue as it can be kept for the next session.
+  ({List<Song> songs, int index, bool shuffle, PlaybackRepeat repeat}) get queueSnapshot =>
+      (songs: _queue.items, index: _queue.index, shuffle: _queue.shuffle, repeat: _queue.repeat);
+
   List<Song> get currentPlaylist => _queue.items;
 
   /// Looks up and warms the Canvas of the current track, the one the user
@@ -1352,7 +1663,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   // Squared: what is heard follows the slider far better than with the
   // plain value, which leaves nearly all the change in its lower third.
-  double get _playerVolume => _volume * _outputVolume * _outputVolume;
+  double get _playerVolume => _volume * _outputVolume * _outputVolume * _gain * _fadeIn;
 
   /// Sets how loud the app plays, from 0 to 1, within the volume of the
   /// device: here, or on the device that is playing instead of this one.
@@ -1458,6 +1769,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     );
 
     // Nothing plays here any more; a load in progress is dropped.
+    _finishCrossfade();
     _loadGeneration++;
     _loading = false;
     _starting = false;

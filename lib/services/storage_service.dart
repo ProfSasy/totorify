@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'app_folder.dart';
+import 'app_settings.dart';
 import '../models/artist.dart';
 import '../models/song.dart';
 import '../models/playlist.dart';
@@ -87,6 +88,7 @@ class StorageService {
     _canvasBox = await _openBoxSafe(_canvasBoxName);
     _lyricsBox = await _openBoxSafe(_lyricsBoxName);
     _guestBox = await _openBoxSafe(_guestBoxName);
+    await AppSettings.instance.init();
 
     await _forgetSourceChoicesOnce();
     _removeLockScreenExperiment();
@@ -357,6 +359,8 @@ class StorageService {
   }
 
   Future<void> addToHistory(Song song) async {
+    // Paused by the user: what plays here is not remembered.
+    if (_replayingOps == 0 && AppSettings.instance.pauseListenHistory.value) return;
     final guest = libraryOwner != null;
     // Played on this device: it is in its own history, and in that of the
     // phone whose library is shown here, which is told. A play that phone
@@ -1382,7 +1386,7 @@ class StorageService {
 
   Future<void> addRecentSearch(String query) async {
     final clean = query.trim();
-    if (clean.isEmpty) return;
+    if (clean.isEmpty || AppSettings.instance.pauseSearchHistory.value) return;
     final searches = getRecentSearches().toList()
       ..removeWhere((q) => q.toLowerCase() == clean.toLowerCase())
       ..insert(0, clean);

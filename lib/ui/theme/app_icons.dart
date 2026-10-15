@@ -69,6 +69,28 @@ class AppIcons {
   static const IconData account = Icons.account_circle_outlined;
   static const IconData import = Icons.download_rounded;
   static const IconData time = Icons.schedule_rounded;
+  static const IconData info = Icons.info_outline_rounded;
+  static const IconData share = Icons.ios_share_rounded;
+  static const IconData privacy = Icons.privacy_tip_outlined;
+  static const IconData playback = Icons.graphic_eq_rounded;
+  static const IconData skip = Icons.fast_forward_rounded;
+  static const IconData stats = Icons.insights_rounded;
+  static const IconData backup = Icons.save_alt_rounded;
+  static const IconData translate = Icons.translate_rounded;
+  static const IconData mic = Icons.mic_none_rounded;
+  static const IconData edit = Icons.edit_outlined;
+  static const IconData pin = Icons.push_pin_outlined;
+  static const IconData pinned = Icons.push_pin_rounded;
+  static const IconData hide = Icons.visibility_off_outlined;
+  static const IconData block = Icons.block_rounded;
+  static const IconData integrations = Icons.extension_outlined;
+  static const IconData appearance = Icons.palette_outlined;
+  static const IconData together = Icons.groups_outlined;
+  static const IconData folder = Icons.folder_open_rounded;
+  static const IconData select = Icons.checklist_rounded;
+  static const IconData image = Icons.image_outlined;
+  static const IconData timer = Icons.timelapse_rounded;
+  static const IconData update = Icons.system_update_alt_rounded;
 
   // Devices
   static const IconData devices = Icons.speaker_group_outlined;

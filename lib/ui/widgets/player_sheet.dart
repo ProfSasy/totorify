@@ -13,6 +13,7 @@ import '../../services/canvas_service.dart';
 import '../../services/canvas_video_pool.dart';
 import '../../services/lyrics_service.dart';
 import '../../services/storage_service.dart';
+import '../../services/ytmusic_service.dart';
 import '../screens/artist_screen.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_icons.dart';
@@ -89,6 +90,7 @@ class _PlayerSheetState extends State<PlayerSheet>
   final ScrollController _lyricsScrollController = ScrollController();
   final ValueNotifier<int> _activeLyricIndexNotifier = ValueNotifier<int>(-1);
   StreamSubscription<String>? _errorSub;
+  StreamSubscription<String>? _infoSub;
   int _lastTabIndex = 0;
 
   // Lyric auto-follow: while the user scrolls, follow is paused and it
@@ -174,6 +176,7 @@ class _PlayerSheetState extends State<PlayerSheet>
     widget.audioHandler.positionNotifier.addListener(_syncLyricsToPosition);
 
     _errorSub = widget.audioHandler.errorStream.listen(_showNotice);
+    _infoSub = widget.audioHandler.infoStream.listen(_showNotice);
   }
 
   void _showNotice(String message) {
@@ -200,6 +203,7 @@ class _PlayerSheetState extends State<PlayerSheet>
     CanvasService.instance.isCanvasEnabledNotifier.removeListener(_onCanvasSettingChanged);
     widget.audioHandler.positionNotifier.removeListener(_syncLyricsToPosition);
     _errorSub?.cancel();
+    _infoSub?.cancel();
     _noticeTimer?.cancel();
     PlayerSheet.isOpen = false;
     PlaybackLogService.instance.log('UI', 'player: chiudi');
@@ -1259,6 +1263,11 @@ class _PlayerSheetState extends State<PlayerSheet>
           itemCount: playlist.length,
           // Rows are moved by their handle; a long press is not needed.
           buildDefaultDragHandles: false,
+          header: _QueueActions(
+            audioHandler: widget.audioHandler,
+            ink: _ink,
+            notify: _showNotice,
+          ),
           // Recommended next tracks, reloaded when the song or queue changes.
           footer: _QueueSuggestions(
             key: ValueKey('suggest_${currentSong?.id}_${playlist.length}'),
@@ -1415,6 +1424,12 @@ class _PlayerSheetState extends State<PlayerSheet>
           subtitle: timer == null ? null : 'Attivo: $timer',
           onTap: _showSleepTimerDialog,
         ),
+        SongMenuExtra(
+          icon: AppIcons.info,
+          label: 'Dettagli del brano',
+          subtitle: 'Sorgente, formato, volume',
+          onTap: () => showTrackDetails(context, widget.audioHandler),
+        ),
       ],
     );
   }
@@ -1464,6 +1479,118 @@ class _PlayerSheetState extends State<PlayerSheet>
         _showNotice('La musica si fermerà tra $choice minuti');
     }
   }
+}
+
+/// Above the queue: mix what is left, keep it as a playlist, empty it.
+class _QueueActions extends StatelessWidget {
+  const _QueueActions({required this.audioHandler, required this.ink, required this.notify});
+
+  final AudioPlayerHandler audioHandler;
+  final Color ink;
+  final void Function(String message) notify;
+
+  Future<void> _save(BuildContext context) async {
+    final songs = audioHandler.currentPlaylist;
+    if (songs.isEmpty) return;
+    final name = await askPlaylistName(context);
+    if (name == null) return;
+    PlaybackLogService.instance.log('UI', 'coda: salvo come playlist "$name"');
+    final storage = StorageService.instance;
+    final playlist = await storage.createPlaylist(name);
+    for (final song in songs) {
+      await storage.addSongToPlaylist(playlist.id, song);
+    }
+    notify('Coda salvata in "$name"');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget action(IconData icon, String label, VoidCallback onTap) => Padding(
+          padding: const EdgeInsets.only(right: AppSpacing.sm),
+          child: ActionChip(
+            avatar: Icon(icon, size: 16, color: ink),
+            label: Text(label, style: TextStyle(color: ink, fontSize: 13)),
+            backgroundColor: ink.withValues(alpha: 0.10),
+            side: BorderSide.none,
+            shape: const StadiumBorder(),
+            onPressed: onTap,
+          ),
+        );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.xl, 0, AppSpacing.xl, AppSpacing.sm),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            action(AppIcons.shuffle, 'Mescola', () {
+              audioHandler.shuffleUpcoming();
+              notify('Coda mescolata');
+            }),
+            action(AppIcons.save, 'Salva', () => _save(context)),
+            action(AppIcons.trash, 'Svuota', () {
+              audioHandler.clearQueue();
+              notify('Coda svuotata');
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// What is known of the track playing: where it comes from, its format,
+/// how loud it is (what other players call "nerd stats").
+Future<void> showTrackDetails(BuildContext context, AudioPlayerHandler handler) {
+  final song = handler.currentSong;
+  if (song == null) return Future.value();
+  final videoId = handler.currentStreamId;
+  final details = videoId == null ? null : YTMusicService.instance.streamDetails(videoId);
+  String kb(int bytes) => bytes > 1024 * 1024
+      ? '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB'
+      : '${(bytes / 1024).toStringAsFixed(0)} KB';
+  final gain = handler.normalizationGain;
+  final rows = <(String, String)>[
+    ('Sorgente', handler.sourceNotifier.value ?? 'sconosciuta'),
+    if (videoId != null) ('Video di YouTube', videoId),
+    if (details?.codec != null) ('Codec', details!.codec!),
+    if (details?.bitrate != null) ('Bitrate', '${(details!.bitrate! / 1000).round()} kbps'),
+    if (details?.sampleRate != null) ('Frequenza', '${details!.sampleRate} Hz'),
+    if (details?.channels != null) ('Canali', details!.channels == 2 ? 'Stereo' : '${details.channels}'),
+    if (details?.contentLength != null) ('Dimensione', kb(details!.contentLength!)),
+    if (details?.loudnessDb != null)
+      ('Volume misurato', '${details!.loudnessDb!.toStringAsFixed(1)} dB rispetto al riferimento'),
+    ('Normalizzazione', gain >= 0.999 ? 'nessuna riduzione' : '−${(-20 * math.log(gain) / math.ln10).toStringAsFixed(1)} dB'),
+    ('Velocità', '${handler.playbackState.value.speed}×'),
+  ];
+  return showAppSheet<void>(
+    context,
+    builder: (sheetContext) {
+      final cs = Theme.of(sheetContext).colorScheme;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SheetTitle('Dettagli del brano', subtitle: '${song.title} — ${song.artist}'),
+          for (final (label, value) in rows)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl, vertical: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 140,
+                    child: Text(label, style: AppText.caption(cs)),
+                  ),
+                  Expanded(
+                    child: SelectableText(value, style: AppText.tileTitle(cs).copyWith(fontSize: 14)),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      );
+    },
+  );
 }
 
 /// Shuffle and repeat: a glyph that lights up in the cover's color, with a

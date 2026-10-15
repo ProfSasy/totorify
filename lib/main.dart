@@ -12,7 +12,9 @@ import 'services/canvas_video_pool.dart';
 import 'services/connect/connect_controller.dart';
 import 'services/connect/connect_host.dart';
 import 'services/download_service.dart';
+import 'services/network_watcher.dart';
 import 'services/playback_log_service.dart';
+import 'services/session_keeper.dart';
 import 'services/storage_service.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/main_shell.dart';
@@ -116,6 +118,11 @@ Future<void> _startApp() async {
   );
 
   // Other devices running Totorify can play instead of this one.
+  // The queue of the last session comes back, paused.
+  await SessionKeeper.instance.attach(audioHandler);
+  unawaited(NetworkWatcher.instance.start());
+  DownloadService.instance.downloadWhatIsLiked();
+
   ConnectController.instance.attach(audioHandler, name: ConnectHost.deviceName);
   // And this one can play for them, when the user turned that on.
   ConnectHost.instance.attach(audioHandler);
@@ -233,7 +240,10 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     PlaybackLogService.instance.log('APP', 'lifecycle=${state.name}');
-    if (state == AppLifecycleState.paused) CanvasVideoPool.instance.suspend();
+    if (state == AppLifecycleState.paused) {
+      CanvasVideoPool.instance.suspend();
+      unawaited(SessionKeeper.instance.save());
+    }
     if (state == AppLifecycleState.resumed) {
       CanvasVideoPool.instance.resume();
       unawaited(ConnectHost.instance.resumed());
@@ -298,6 +308,7 @@ class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
   StreamSubscription<String>? _errorSub;
   StreamSubscription<String>? _downloadSub;
   StreamSubscription<String>? _connectSub;
+  StreamSubscription<String>? _infoSub;
 
   @override
   void initState() {
@@ -315,6 +326,12 @@ class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
         SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
       );
     });
+    _infoSub = widget.audioHandler.infoStream.listen((msg) {
+      if (!mounted || PlayerSheet.isOpen) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
+      );
+    });
     _errorSub = widget.audioHandler.errorStream.listen((msg) {
       // The open player covers the snack bar and shows the message itself.
       if (!mounted || PlayerSheet.isOpen) return;
@@ -329,6 +346,7 @@ class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
     _errorSub?.cancel();
     _downloadSub?.cancel();
     _connectSub?.cancel();
+    _infoSub?.cancel();
     super.dispose();
   }
 

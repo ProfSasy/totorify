@@ -11,8 +11,10 @@ import '../../services/connect/connect_host.dart';
 import '../../services/download_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
-import '../../services/ytmusic_service.dart';
 import 'spotify_web_login_screen.dart';
+import 'settings/playback_settings_screen.dart';
+import 'settings/privacy_settings_screen.dart';
+import 'settings/settings_kit.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
@@ -35,7 +37,6 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   double _storageUsedMB = 0.0;
-  bool _isHighQuality = true;
   bool _isAmoled = false;
   bool _hasSpDcCookie = false;
   bool _savesCanvas = true;
@@ -49,7 +50,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _hasSpDcCookie = SpotifyInternalAuthService.instance.hasSpDcCookie;
-    _isHighQuality = StorageService.instance.isHighQuality;
     _isAmoled = StorageService.instance.isAmoledTheme;
     _savesCanvas = StorageService.instance.savesCanvasWithDownloads;
     _receivesPlayback = StorageService.instance.receivesPlayback;
@@ -161,44 +161,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 20),
               ],
 
-              // ── Audio & Streaming ─────────────────────────────────────────────
-              _buildSectionHeader('Audio e riproduzione'),
+              // ── Pages of their own ─────────────────────────────────────────
               _buildCardContainer([
-                SwitchListTile.adaptive(
-                  title: Text('Qualità audio alta'),
-                  subtitle: Text(
-                      'AAC a 128 kbps. Disattivala per consumare meno dati (circa 48 kbps).'),
-                  value: _isHighQuality,
-                  activeTrackColor: primaryColor,
-                  onChanged: (val) {
-                    PlaybackLogService.instance
-                        .log('UI', 'settings: alta qualità = $val');
-                    setState(() => _isHighQuality = val);
-                    StorageService.instance.setHighQuality(val);
-                    // Streams already looked up were picked with the old
-                    // setting: the next track asks again.
-                    YTMusicService.instance.clearStreamCaches();
-                  },
+                SettingLink(
+                  icon: AppIcons.playback,
+                  title: 'Riproduzione',
+                  subtitle: 'Qualità, normalizzazione, parti da saltare, dissolvenza, coda',
+                  onTap: () => SettingsPage.open(context, const PlaybackSettingsScreen()),
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
-                ListenableBuilder(
-                  listenable: CanvasService.instance.isCanvasEnabledNotifier,
-                  builder: (context, _) {
-                    final isCanvasEnabled =
-                        CanvasService.instance.isCanvasEnabledNotifier.value;
-                    return SwitchListTile.adaptive(
-                      title: Text('Canvas'),
-                      subtitle: Text(
-                          'Il breve video in loop del brano, al posto della copertina nel player'),
-                      value: isCanvasEnabled,
-                      activeTrackColor: primaryColor,
-                      onChanged: (val) {
-                        PlaybackLogService.instance
-                            .log('UI', 'settings: canvas = $val');
-                        CanvasService.instance.setCanvasEnabled(val);
-                      },
-                    );
-                  },
+                SettingLink(
+                  icon: AppIcons.privacy,
+                  title: 'Privacy',
+                  subtitle: 'Cronologia degli ascolti e delle ricerche',
+                  onTap: () => SettingsPage.open(context, const PrivacySettingsScreen()),
                 ),
               ]),
 
@@ -438,19 +414,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     }
                   },
                 ),
-                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
-                ListTile(
-                  title: Text('Cancella la cronologia degli ascolti'),
-                  trailing: Icon(AppIcons.trash,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant, size: 18),
-                  onTap: () async {
-                    final messenger = ScaffoldMessenger.of(context);
-                    await StorageService.instance.clearHistory();
-                    messenger.showSnackBar(
-                      const SnackBar(content: Text('Cronologia cancellata')),
-                    );
-                  },
-                ),
               ]),
             ],
           ),
@@ -669,7 +632,7 @@ class _DeviceNameDialogState extends State<_DeviceNameDialog> {
         padding: const EdgeInsets.only(top: AppSpacing.md),
         child: CupertinoTextField(
           controller: _controller,
-          placeholder: 'iPhone di Salvatore',
+          placeholder: 'Il mio iPhone',
           autofocus: true,
           maxLength: 40,
           textCapitalization: TextCapitalization.words,

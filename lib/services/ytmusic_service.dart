@@ -11,6 +11,39 @@ import 'app_http.dart';
 /// Where the audio of a YouTube video can be streamed from, and its length.
 typedef _VideoStreams = ({String? audioUrl, String? hlsManifestUrl, Duration? duration});
 
+/// What YouTube says about the audio of a video: how loud it is, and the
+/// format of the direct stream picked for it.
+@immutable
+class StreamDetails {
+  const StreamDetails({
+    this.loudnessDb,
+    this.mimeType,
+    this.bitrate,
+    this.sampleRate,
+    this.channels,
+    this.contentLength,
+    this.itag,
+  });
+
+  /// How much louder than YouTube's reference the video is, in dB: positive
+  /// for a loud master. YouTube lowers those by as much.
+  final double? loudnessDb;
+  final String? mimeType;
+  final int? bitrate;
+  final int? sampleRate;
+  final int? channels;
+  final int? contentLength;
+  final int? itag;
+
+  /// The codec, as the mime type names it ("mp4a.40.2", "opus").
+  String? get codec {
+    final mime = mimeType;
+    if (mime == null) return null;
+    final match = RegExp(r'codecs="([^"]+)"').firstMatch(mime);
+    return match?.group(1);
+  }
+}
+
 /// YouTube Music service using authenticated & Apple VisionOS InnerTube APIs
 /// for rock-solid stream extraction on iOS devices.
 class YTMusicService {
@@ -54,6 +87,8 @@ class YTMusicService {
   final Map<String, (_VideoStreams, DateTime)> _streamsCache = {};
   final Map<String, Future<_VideoStreams?>> _streamsInFlight = {};
   final Map<String, (String, DateTime)> _hlsAudioCache = {};
+  final Map<String, StreamDetails> _details = {};
+
   final Map<String, (List<Song>, DateTime)> _searchCache = {};
   final Map<String, Future<List<Song>>> _searchInFlight = {};
 
@@ -167,6 +202,7 @@ class YTMusicService {
     _audioUrlCache.clear();
     _streamsCache.clear();
     _hlsAudioCache.clear();
+    _details.clear();
   }
 
   /// Drops everything remembered about the streams of [videoId].
@@ -310,8 +346,20 @@ class YTMusicService {
       millis = (int.tryParse('${data['videoDetails']?['lengthSeconds'] ?? ''}') ?? 0) * 1000;
     }
 
-    final audioUrl = _pickBestAppleCompatibleAudioUrl(formats);
+    final chosen = _pickBestAppleCompatibleAudio(formats);
+    final audioUrl = chosen?['url'] as String?;
     final hls = streaming?['hlsManifestUrl'] as String?;
+    final audioConfig = data['playerConfig']?['audioConfig'];
+    _details[videoId] = StreamDetails(
+      loudnessDb: _loudnessOf(chosen, audioConfig),
+      mimeType: chosen?['mimeType'] as String?,
+      bitrate: int.tryParse('${chosen?['averageBitrate'] ?? chosen?['bitrate'] ?? ''}'),
+      sampleRate: int.tryParse('${chosen?['audioSampleRate'] ?? ''}'),
+      channels: int.tryParse('${chosen?['audioChannels'] ?? ''}'),
+      contentLength: int.tryParse('${chosen?['contentLength'] ?? ''}'),
+      itag: int.tryParse('${chosen?['itag'] ?? ''}'),
+    );
+    _pruneCache(_details);
     final streams = (
       audioUrl: (audioUrl == null || audioUrl.isEmpty) ? null : audioUrl,
       hlsManifestUrl: (hls == null || hls.isEmpty) ? null : hls,
@@ -327,8 +375,33 @@ class YTMusicService {
     return streams;
   }
 
+  /// How much louder than YouTube's target the audio is, in dB: given for
+  /// each format, or worked out from the whole track's measure.
+  static double? _loudnessOf(Map<String, dynamic>? format, Object? audioConfig) {
+    final own = format?['loudnessDb'];
+    if (own is num) return own.toDouble();
+    if (audioConfig is! Map) return null;
+    final measured = audioConfig['trackAbsoluteLoudnessLkfs'] ?? audioConfig['perceptualLoudnessDb'];
+    final target = audioConfig['loudnessTargetLkfs'] ?? -14;
+    if (measured is! num || target is! num) return null;
+    return measured.toDouble() - target.toDouble();
+  }
+
   /// Real length of [videoId], known once its streams have been looked up.
   Duration? streamDuration(String videoId) => _streamsCache[videoId]?.$1.duration;
+
+  /// What is known of the audio of [videoId], once its streams have been
+  /// looked up.
+  StreamDetails? streamDetails(String videoId) => _details[videoId];
+
+  /// How loud [videoId] is (see [StreamDetails.loudnessDb]). Asks YouTube
+  /// when it is not known yet; null when it does not say.
+  Future<double?> loudnessOf(String videoId) async {
+    final known = _details[videoId];
+    if (known != null) return known.loudnessDb;
+    await _visionOsStreams(videoId);
+    return _details[videoId]?.loudnessDb;
+  }
 
   /// HLS manifest of [videoId] with every rendition, video included: the
   /// last resort, since playing it downloads the video as well.
@@ -358,7 +431,7 @@ class YTMusicService {
       final url = pickHlsAudioRendition(
         response.body,
         Uri.parse(manifest),
-        highQuality: StorageService.instance.isHighQuality,
+        highQuality: StorageService.instance.isHighQuality && !lowDataNow,
       );
       if (url == null) {
         debugPrint('YTMusic.hlsAudio $videoId: nessuna traccia solo audio nel manifest');
@@ -430,7 +503,10 @@ class YTMusicService {
   /// Priority:
   ///   1. audio/mp4 (AAC itag 140 @ 128kbps or itag 139 @ 48kbps) - natively supported by AVFoundation
   ///   2. Any available audio stream as fallback
-  String? _pickBestAppleCompatibleAudioUrl(List<dynamic> formats) {
+  String? _pickBestAppleCompatibleAudioUrl(List<dynamic> formats) =>
+      _pickBestAppleCompatibleAudio(formats)?['url'] as String?;
+
+  Map<String, dynamic>? _pickBestAppleCompatibleAudio(List<dynamic> formats) {
     final audioFormats = formats.where((f) {
       final mime = f['mimeType'] as String? ?? '';
       return mime.startsWith('audio/') && f['url'] != null;
@@ -454,10 +530,14 @@ class YTMusicService {
 
     // "Alta qualità" picks the highest bitrate; otherwise prefer the lightest
     // stream to save data on the go.
-    final hq = StorageService.instance.isHighQuality;
+    final hq = StorageService.instance.isHighQuality && !lowDataNow;
     final chosen = hq ? targetList.first : targetList.last;
-    return chosen['url'] as String?;
+    return Map<String, dynamic>.from(chosen as Map);
   }
+
+  /// Set while the lighter streams must be played whatever the quality
+  /// setting says (a mobile connection, with "save data" on).
+  static bool lowDataNow = false;
 
   Future<String?> _innerTubeStreamUrl(String videoId, {String? token}) async {
     try {

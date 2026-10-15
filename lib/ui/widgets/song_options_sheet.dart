@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../models/playlist.dart';
 import '../../models/song.dart';
@@ -7,6 +8,7 @@ import '../../services/audio_handler.dart';
 import '../../services/download_service.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/storage_service.dart';
+import '../../services/track_matcher_service.dart';
 import '../screens/artist_screen.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
@@ -138,6 +140,20 @@ Future<void> showSongOptions(
               audioHandler.playNext(song);
               say('Verrà riprodotto dopo questo brano');
             }),
+          ),
+          SheetAction(
+            icon: AppIcons.radio,
+            label: 'Avvia radio',
+            subtitle: 'Questo brano e altri simili',
+            onTap: () => act('avvia radio', () {
+              audioHandler.startRadio(song);
+              say('Radio avviata');
+            }),
+          ),
+          SheetAction(
+            icon: AppIcons.share,
+            label: 'Condividi',
+            onTap: () => act('condividi', () => shareSong(rootContext, song)),
           ),
           if (song.artist.trim().isNotEmpty)
             SheetAction(
@@ -309,6 +325,31 @@ class _PlaylistNameDialogState extends State<_PlaylistNameDialog> {
       ],
     );
   }
+}
+
+/// A link to [song] that opens anywhere: its Spotify page when it has one,
+/// its YouTube Music page otherwise.
+String? songLink(Song song) {
+  final spotify = song.spotifyTrackId ??
+      (song.id.startsWith('spotify_') ? song.id.substring('spotify_'.length) : null);
+  if (spotify != null && spotify.isNotEmpty) return 'https://open.spotify.com/track/$spotify';
+  final video = StorageService.instance.getCachedYouTubeMapping(song.id) ??
+      song.youtubeVideoId ??
+      (TrackMatcherService.needsResolution(song.id) ? null : song.id);
+  if (video == null || video.isEmpty) return null;
+  return 'https://music.youtube.com/watch?v=$video';
+}
+
+/// Opens the system's share sheet with [song]'s title and link.
+Future<void> shareSong(BuildContext context, Song song) async {
+  final link = songLink(song);
+  final text = '${song.title} — ${song.artist}${link == null ? '' : '\n$link'}';
+  final box = context.findRenderObject() as RenderBox?;
+  await SharePlus.instance.share(ShareParams(
+    text: text,
+    // The iPad shows the sheet next to something.
+    sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
+  ));
 }
 
 /// Best cover of a playlist: its own, or the one of its first song.

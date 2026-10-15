@@ -145,6 +145,30 @@ class PlaybackQueue {
     }
   }
 
+  /// Drops every song but the current one (all of them when none is).
+  void keepOnlyCurrent() {
+    final keep = current;
+    _items
+      ..clear()
+      ..addAll([?keep]);
+    _index = keep == null ? -1 : 0;
+    _backStack.clear();
+    _playedRound
+      ..clear()
+      ..addAll([?keep?.id]);
+    _plannedId = null;
+  }
+
+  /// Mixes the order of the songs after the current one, once.
+  void shuffleAfterCurrent() {
+    if (_index < 0 || _index >= _items.length - 2) return;
+    final upcoming = _items.sublist(_index + 1)..shuffle(_random);
+    _items
+      ..removeRange(_index + 1, _items.length)
+      ..addAll(upcoming);
+    _plannedId = null;
+  }
+
   /// Index the next track moves to, or null at the end of the queue.
   /// Manual skip rules: repeat-one does not affect this; the caller handles
   /// natural track end by restarting the current song.

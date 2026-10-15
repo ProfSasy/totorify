@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/song.dart';
+import 'app_settings.dart';
 import 'canvas_service.dart';
 import 'lyrics_service.dart';
 import 'playback_log_service.dart';
@@ -42,6 +43,25 @@ class DownloadService {
 
   /// Messages for the user about downloads that did not work.
   Stream<String> get failures => _failures.stream;
+
+  Set<String>? _likedIds;
+
+  /// From now on, a song given a heart is downloaded too, when the user
+  /// wants it so (Settings > Playback).
+  void downloadWhatIsLiked() {
+    final favorites = StorageService.instance.favoritesNotifier;
+    _likedIds = {for (final song in favorites.value) song.id};
+    favorites.addListener(() {
+      final known = _likedIds!;
+      final now = favorites.value;
+      final added = [for (final song in now) if (!known.contains(song.id)) song];
+      _likedIds = {for (final song in now) song.id};
+      if (!AppSettings.instance.downloadOnLike.value) return;
+      for (final song in added) {
+        if (!StorageService.instance.isDownloaded(song.id)) unawaited(downloadSong(song));
+      }
+    });
+  }
 
   /// The downloads folder, created when missing: it does not exist on a new
   /// install, nor after "delete all downloads" removed it.
