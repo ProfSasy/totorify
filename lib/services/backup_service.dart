@@ -73,8 +73,9 @@ class BackupService {
       Map<String, Object?>.from(backup['library'] as Map),
     );
     final preferences = backup['preferences'];
-    if (preferences is Map)
+    if (preferences is Map) {
       await AppSettings.instance.restore(Map<String, Object?>.from(preferences));
+    }
     final extras = backup['extras'];
     if (extras is Map) await LibraryExtras.instance.restore(Map<String, Object?>.from(extras));
     await ListeningStats.instance.restore(backup['plays']);
