@@ -124,8 +124,9 @@ class TogetherClient {
   Future<void> leave() async {
     final socket = _socket;
     _socket = null;
-    if (host.value != null)
+    if (host.value != null) {
       PlaybackLogService.instance.log('TOGETHER', 'esco dall\'ascolto insieme');
+    }
     host.value = null;
     _queue = const [];
     _last = null;
