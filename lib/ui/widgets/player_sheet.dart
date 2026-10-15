@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/song.dart';
+import '../../services/app_settings.dart';
 import '../../services/audio_handler.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/canvas_service.dart';
@@ -176,11 +178,12 @@ class _PlayerSheetState extends State<PlayerSheet>
 
   void _handleHorizontalSwipe(DragEndDetails details) {
     final velocity = details.primaryVelocity ?? 0;
+    final haptics = AppSettings.instance.haptics.value;
     if (velocity < -200) {
-      HapticFeedback.mediumImpact();
+      if (haptics) HapticFeedback.mediumImpact();
       widget.audioHandler.skipToNext();
     } else if (velocity > 200) {
-      HapticFeedback.mediumImpact();
+      if (haptics) HapticFeedback.mediumImpact();
       widget.audioHandler.skipToPrevious();
     }
   }
@@ -287,9 +290,15 @@ class _PlayerSheetState extends State<PlayerSheet>
                 }
                 final canvasVisible = _canvasShown && _tabController.index == 0;
 
+                final background = AppSettings.instance.playerBackground.value;
                 return Stack(
                   fit: StackFit.expand,
                   children: [
+                    if (background == 2)
+                      const ColoredBox(color: Colors.black)
+                    else if (background == 1 && mediaItem.artUri != null)
+                      _BlurredCover(url: mediaItem.artUri.toString(), palette: palette)
+                    else
                     // The cover's color, from its dark shade down to black.
                     AnimatedContainer(
                       duration: AppMotion.ambience,
@@ -1553,15 +1562,33 @@ class _SeekerBarState extends State<_SeekerBar> {
             ? _dragValue!.clamp(0.0, limit)
             : curMs;
 
+        final style = AppSettings.instance.seekBarStyle.value;
+        final baseHeight = switch (style) {
+          1 => 2.0,
+          2 => 8.0,
+          _ => 4.0,
+        };
+        final wavy = style == 3 && !_isDragging;
+        final details = widget.audioHandler.currentStreamId == null
+            ? null
+            : YTMusicService.instance.streamDetails(widget.audioHandler.currentStreamId!);
+        final format = [
+          if (details?.codec != null)
+            details!.codec!.startsWith('mp4a') ? 'AAC' : details.codec!.toUpperCase(),
+          if (details?.bitrate != null) '${(details!.bitrate! / 1000).round()} kbps',
+          if (details?.sampleRate != null) '${(details!.sampleRate! / 1000).toStringAsFixed(1)} kHz',
+        ].join(' · ');
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             SliderTheme(
               data: SliderTheme.of(context).copyWith(
-                trackHeight: _isDragging ? 6 : 4,
-                trackShape: const _SeekTrackShape(),
+                trackHeight: _isDragging ? baseHeight + 2 : baseHeight,
+                trackShape: _SeekTrackShape(
+                  wave: wavy ? position.inMilliseconds / 160 : null,
+                ),
                 thumbShape: RoundSliderThumbShape(
-                  enabledThumbRadius: _isDragging ? 8 : 6,
+                  enabledThumbRadius: _isDragging ? 8 : (style == 1 ? 4.5 : 6),
                   elevation: 0,
                   pressedElevation: 0,
                 ),
@@ -1601,6 +1628,8 @@ class _SeekerBarState extends State<_SeekerBar> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(_fmt(Duration(milliseconds: displayMs.toInt())), style: timeStyle),
+                if (AppSettings.instance.showCodec.value && format.isNotEmpty)
+                  Text(format, style: timeStyle.copyWith(fontSize: 10.5)),
                 Text(_fmt(totalDuration), style: timeStyle),
               ],
             ),
@@ -1614,7 +1643,10 @@ class _SeekerBarState extends State<_SeekerBar> {
 /// Track of the seek bar: it spans the whole width of the slider, so the
 /// bar lines up with the title above and the times below.
 class _SeekTrackShape extends SliderTrackShape with BaseSliderTrackShape {
-  const _SeekTrackShape();
+  const _SeekTrackShape({this.wave});
+
+  /// The phase of the wave the played part is drawn as; null for a line.
+  final double? wave;
 
   @override
   Rect getPreferredRect({
@@ -1666,9 +1698,62 @@ class _SeekTrackShape extends SliderTrackShape with BaseSliderTrackShape {
       trackRect.bottom,
     );
     if (activeRect.isEmpty) return;
-    context.canvas.drawRRect(
-      RRect.fromRectAndRadius(activeRect, radius),
-      Paint()..color = sliderTheme.activeTrackColor ?? Colors.white,
+    final phase = wave;
+    if (phase == null) {
+      context.canvas.drawRRect(
+        RRect.fromRectAndRadius(activeRect, radius),
+        Paint()..color = sliderTheme.activeTrackColor ?? Colors.white,
+      );
+      return;
+    }
+    // The part already played as a wave that moves with the song.
+    final middle = trackRect.center.dy;
+    final path = Path()..moveTo(trackRect.left, middle);
+    for (var x = trackRect.left; x <= activeRight; x += 1.5) {
+      path.lineTo(x, middle + 3.2 * math.sin((x - trackRect.left) / 18 * 2 * math.pi - phase));
+    }
+    context.canvas.drawPath(
+      path,
+      Paint()
+        ..color = sliderTheme.activeTrackColor ?? Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = trackRect.height * 0.8
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+}
+
+/// The cover of the song, blurred and darkened, behind the whole player.
+class _BlurredCover extends StatelessWidget {
+  const _BlurredCover({required this.url, required this.palette});
+
+  final String url;
+  final AmbientPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ColoredBox(color: palette.deep),
+        ImageFiltered(
+          imageFilter: ui.ImageFilter.blur(sigmaX: 38, sigmaY: 38),
+          child: Image(image: imageProviderFor(url), fit: BoxFit.cover),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.black.withValues(alpha: 0.35),
+                Colors.black.withValues(alpha: 0.5),
+                Colors.black.withValues(alpha: 0.85),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

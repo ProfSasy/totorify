@@ -141,6 +141,24 @@ class AppSettings {
   /// At every launch, GitHub is asked whether a newer version is out.
   late final checkUpdates = _setting<bool>('check_updates', true);
 
+  // ── Appearance ──────────────────────────────────────────────────────────
+
+  /// The player's background: 0 the cover's colors, 1 the cover itself,
+  /// blurred, 2 black.
+  late final playerBackground = _setting<int>('player_background', 0);
+
+  /// The progress bar of the player: 0 normal, 1 thin, 2 thick, 3 wavy.
+  late final seekBarStyle = _setting<int>('seek_bar_style', 0);
+
+  /// The format of what plays (codec, bitrate) shown under the bar.
+  late final showCodec = _setting<bool>('show_codec', false);
+
+  /// Small vibrations when changing song with a swipe and the like.
+  late final haptics = _setting<bool>('haptics', true);
+
+  /// A different color of the app at every launch.
+  late final randomAccent = _setting<bool>('random_accent', false);
+
   // ── Privacy ─────────────────────────────────────────────────────────────
 
   /// What is played is not added to the history (nor to the statistics).
@@ -192,6 +210,11 @@ class AppSettings {
       aiEndpoint,
       aiTranslation,
       checkUpdates,
+      playerBackground,
+      seekBarStyle,
+      showCodec,
+      haptics,
+      randomAccent,
       pauseListenHistory,
       pauseSearchHistory,
     ]) {}

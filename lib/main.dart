@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
@@ -92,6 +93,13 @@ Future<void> _startApp() async {
   // Initialize Storage Service (Hive DB)
   await StorageService.instance.init();
   PlaybackLogService.instance.log('INIT', 'storage pronto');
+  // A new color at every launch, when the user wants it so.
+  if (AppSettings.instance.randomAccent.value) {
+    final colors = AppTheme.presetColors;
+    final current = StorageService.instance.accentColor;
+    final others = [for (final (_, color) in colors) if (color != current) color];
+    await StorageService.instance.setAccentColor(others[Random().nextInt(others.length)]);
+  }
   // Canvas videos kept from earlier listens; nothing waits for them.
   unawaited(CanvasFileCache.instance.init());
 

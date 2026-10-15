@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import '../../services/app_settings.dart';
 import '../../services/audio_handler.dart';
 import '../../services/auth_service.dart';
 import '../../services/playback_log_service.dart';
@@ -16,6 +17,7 @@ import 'settings/integrations_settings_screen.dart';
 import 'settings/library_settings_screen.dart';
 import 'settings/lyrics_settings_screen.dart';
 import 'settings/playback_settings_screen.dart';
+import 'settings/player_settings_screen.dart';
 import 'settings/privacy_settings_screen.dart';
 import 'settings/settings_kit.dart';
 import '../theme/app_icons.dart';
@@ -267,6 +269,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     StorageService.instance.setAmoledTheme(val);
                     widget.onThemeChanged();
                   },
+                ),
+                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                SettingLink(
+                  title: 'Player',
+                  subtitle: 'Sfondo, barra di avanzamento, formato audio, vibrazione',
+                  onTap: () => SettingsPage.open(context, const PlayerSettingsScreen()),
+                ),
+                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                SettingSwitch(
+                  setting: AppSettings.instance.randomAccent,
+                  title: 'Colore casuale a ogni apertura',
+                  subtitle: 'Ogni volta che apri l\'app ha un colore diverso',
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
                 Padding(
