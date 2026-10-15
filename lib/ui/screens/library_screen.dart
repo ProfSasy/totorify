@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/playlist.dart';
 import '../../models/song.dart';
+import '../../services/library_extras.dart';
+import '../../services/listening_stats.dart';
 import '../../services/audio_handler.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/playlist_importer_service.dart';
@@ -50,7 +52,7 @@ class _Entry {
 
 class _LibraryScreenState extends State<LibraryScreen> {
   static const List<String> _filters = ['Playlist', 'Artisti', 'Scaricati', 'Preferiti'];
-  static const List<String> _sortModes = ['Recenti', 'Titolo', 'Artista'];
+  static const List<String> _sortModes = ['Recenti', 'Titolo', 'Artista', 'Più ascoltati'];
   static const double _chipsHeight = 46;
 
   /// Null shows everything.
@@ -76,6 +78,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
         list.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
       case 'Artista':
         list.sort((a, b) => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()));
+      case 'Più ascoltati':
+        final plays = <String, int>{};
+        for (final event in ListeningStats.instance.events) {
+          plays[event.song.id] = (plays[event.song.id] ?? 0) + 1;
+        }
+        list.sort((a, b) => (plays[b.id] ?? 0).compareTo(plays[a.id] ?? 0));
     }
     return list;
   }
@@ -85,6 +93,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (_sortMode == 'Titolo') {
       return List<Playlist>.from(input)
         ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    }
+    if (_sortMode == 'Più ascoltati') {
+      final plays = <String, int>{};
+      for (final event in ListeningStats.instance.events) {
+        plays[event.song.id] = (plays[event.song.id] ?? 0) + 1;
+      }
+      int score(Playlist p) => p.songs.fold(0, (sum, s) => sum + (plays[s.id] ?? 0));
+      return List<Playlist>.from(input)..sort((a, b) => score(b).compareTo(score(a)));
     }
     return input.reversed.toList();
   }
@@ -149,6 +165,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 storage.downloadsNotifier,
                 storage.followedArtistsNotifier,
                 widget.audioHandler.playbackIndicator,
+                LibraryExtras.instance.hiddenPlaylists,
               ]),
               builder: (context, _) => CustomScrollView(
                 controller: AppNavigation.rootScrollers[AppNavigation.libraryTab],
@@ -343,7 +360,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
             isSystem: true,
           )),
         ),
-        for (final playlist in _sortPlaylists(storage.playlistsNotifier.value))
+        for (final playlist in _sortPlaylists([
+          for (final p in storage.playlistsNotifier.value)
+            if (!LibraryExtras.instance.isHidden(p.id)) p,
+        ]))
           _Entry(
             title: playlist.title,
             subtitle: 'Playlist • ${playlist.songs.length} brani',

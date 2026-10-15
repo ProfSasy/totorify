@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'app_folder.dart';
 import 'app_settings.dart';
+import 'library_extras.dart';
 import '../models/artist.dart';
 import '../models/song.dart';
 import '../models/playlist.dart';
@@ -89,6 +90,7 @@ class StorageService {
     _lyricsBox = await _openBoxSafe(_lyricsBoxName);
     _guestBox = await _openBoxSafe(_guestBoxName);
     await AppSettings.instance.init();
+    await LibraryExtras.instance.init();
 
     await _forgetSourceChoicesOnce();
     _removeLockScreenExperiment();
@@ -386,6 +388,132 @@ class StorageService {
     await _saveGuest(sectionHistory);
   }
 
+  /// Takes [songId] out of the recent history (here and in the library of
+  /// the phone shown here).
+  Future<void> removeFromHistory(String songId) async {
+    _cachedHistory.removeWhere((s) => s.id == songId);
+    final guest = _guestHistory.any((s) => s.id == songId);
+    _guestHistory.removeWhere((s) => s.id == songId);
+    _publishHistory();
+    await _historyBox.put('recent_songs', _cachedHistory.map((s) => s.toMap()).toList());
+    if (guest) await _saveGuest(sectionHistory);
+  }
+
+  /// Gives the song [songId] another title and artist everywhere it is
+  /// kept: favourites, playlists, history, downloads.
+  Future<void> renameSong(String songId, {required String title, required String artist}) async {
+    Song edit(Song song) => song.id == songId ? song.copyWith(title: title, artist: artist) : song;
+    bool has(List<Song> songs) => songs.any((s) => s.id == songId);
+
+    if (_favoriteIds.contains(songId)) {
+      final index = _cachedFavorites.indexWhere((s) => s.id == songId);
+      if (index != -1) {
+        _cachedFavorites[index] = edit(_cachedFavorites[index]);
+        final raw = _favoritesBox.get(songId);
+        await _favoritesBox.put(songId, {
+          ...(raw is Map ? Map<String, dynamic>.from(raw) : const <String, dynamic>{}),
+          ..._cachedFavorites[index].toMap(),
+        });
+      }
+    }
+    for (final playlist in [..._cachedPlaylists, ..._guestPlaylists]) {
+      if (has(playlist.songs)) {
+        await savePlaylist(playlist.copyWith(songs: [for (final s in playlist.songs) edit(s)]));
+      }
+    }
+    if (has(_cachedHistory)) {
+      for (var i = 0; i < _cachedHistory.length; i++) {
+        _cachedHistory[i] = edit(_cachedHistory[i]);
+      }
+      await _historyBox.put('recent_songs', _cachedHistory.map((s) => s.toMap()).toList());
+    }
+    final download = _cachedDownloads.indexWhere((s) => s.id == songId);
+    if (download != -1) {
+      _cachedDownloads[download] = edit(_cachedDownloads[download]);
+      final raw = _downloadsBox.get(songId);
+      await _downloadsBox.put(songId, {
+        ...(raw is Map ? Map<String, dynamic>.from(raw) : const <String, dynamic>{}),
+        ..._cachedDownloads[download].toMap(),
+      });
+      downloadsNotifier.value = List.unmodifiable(_cachedDownloads);
+    }
+    _publishFavorites();
+    _publishHistory();
+  }
+
+  // --- BACKUP ---
+
+  /// The settings a backup carries. Logins, the devices met on the network
+  /// and what belongs to them stay on this device.
+  static const List<String> _backedUpSettings = [
+    'accent_color',
+    'amoled_theme',
+    'canvas_enabled',
+    'high_quality',
+    'library_grid',
+    'output_volume',
+    'recent_searches',
+    'save_canvas_with_downloads',
+  ];
+
+  /// This device's own library (not a phone's shown beside it), as it is
+  /// stored, for a backup.
+  Map<String, Object?> exportLibrary() {
+    List<Object?> values(Box box) => [for (final value in box.values) value];
+    return {
+      'favorites': values(_favoritesBox),
+      'playlists': values(_playlistsBox),
+      'history': _historyBox.get('recent_songs', defaultValue: const <dynamic>[]),
+      'artists': values(_artistsBox),
+      'settings': {
+        for (final key in _backedUpSettings)
+          if (_settingsBox.containsKey(key)) key: _settingsBox.get(key),
+      },
+      'sources': {
+        for (final key in _ytMappingBox.keys) '$key': _ytMappingBox.get(key),
+      },
+      'lyrics': {
+        for (final key in _lyricsBox.keys)
+          if (_isManualLyrics(key)) '$key': _lyricsBox.get(key),
+      },
+    };
+  }
+
+  /// Replaces this device's own library with the one of a backup.
+  Future<void> importLibrary(Map<String, Object?> data) async {
+    Future<void> refill(Box box, Object? raw, String Function(Map) keyOf) async {
+      if (raw is! List) return;
+      await box.clear();
+      for (final value in raw) {
+        if (value is Map) await box.put(keyOf(value), value);
+      }
+    }
+
+    await refill(_favoritesBox, data['favorites'], (m) => '${m['id']}');
+    await refill(_playlistsBox, data['playlists'], (m) => '${m['id']}');
+    await refill(_artistsBox, data['artists'], (m) => '${m['id']}');
+    if (data['history'] is List) await _historyBox.put('recent_songs', data['history']);
+    final settings = data['settings'];
+    if (settings is Map) {
+      for (final key in _backedUpSettings) {
+        if (settings.containsKey(key)) await _settingsBox.put(key, settings[key]);
+      }
+    }
+    final sources = data['sources'];
+    if (sources is Map) {
+      for (final entry in sources.entries) {
+        await _ytMappingBox.put('${entry.key}', entry.value);
+      }
+    }
+    final lyrics = data['lyrics'];
+    if (lyrics is Map) {
+      for (final entry in lyrics.entries) {
+        await _lyricsBox.put('${entry.key}', entry.value);
+      }
+    }
+    _loadInitialData();
+  }
+
   // --- PLAYLISTS ---
   List<Playlist> getPlaylists() => playlistsNotifier.value;
 
@@ -586,6 +714,27 @@ class StorageService {
   }
 
   // --- DOWNLOADS & OFFLINE ---
+  /// Images chosen by the user (a playlist's cover) are kept in the app's
+  /// folder and named `local:<path>`: the folder itself moves when iOS
+  /// reinstalls the app, so it is put in front only when they are shown.
+  static const String localImagePrefix = 'local:';
+
+  /// The file of a `local:` image, null for any other URL.
+  String? localImagePath(String? url) {
+    if (url == null || !url.startsWith(localImagePrefix)) return null;
+    return '$_documentsPath/${url.substring(localImagePrefix.length)}';
+  }
+
+  /// Copies [source] into the app's folder as an image of its own and
+  /// gives its `local:` name.
+  Future<String> keepImage(File source, String name) async {
+    final dir = Directory('$_documentsPath/images');
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    final file = '$name-${DateTime.now().millisecondsSinceEpoch}.jpg';
+    await source.copy('${dir.path}/$file');
+    return '${localImagePrefix}images/$file';
+  }
+
   bool isDownloaded(String songId) => _downloadedIds.contains(songId);
 
   static const String _canvasSuffix = '.canvas.mp4';

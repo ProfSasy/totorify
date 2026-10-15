@@ -1,8 +1,19 @@
+import 'dart:io';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../services/storage_service.dart';
+
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
+
+/// The picture behind [url]: a file of the app for a `local:` image, the
+/// network (through the cache) otherwise.
+ImageProvider imageProviderFor(String url) {
+  final local = StorageService.instance.localImagePath(url);
+  return local != null ? FileImage(File(local)) : CachedNetworkImageProvider(url);
+}
 
 /// Square (or round) artwork with one placeholder for every way it can be
 /// missing: no URL, still loading, failed.
@@ -35,8 +46,18 @@ class AppCover extends StatelessWidget {
     final url = this.url;
     final pixels = (size * MediaQuery.devicePixelRatioOf(context)).round();
 
+    final local = StorageService.instance.localImagePath(url);
     final image = (url == null || url.isEmpty)
         ? placeholder
+        : local != null
+        ? Image.file(
+            File(local),
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+            cacheWidth: pixels,
+            errorBuilder: (_, _, _) => placeholder,
+          )
         : CachedNetworkImage(
             imageUrl: url,
             width: size,

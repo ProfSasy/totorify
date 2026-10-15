@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../models/playlist.dart';
 import '../../models/song.dart';
 import '../../services/audio_handler.dart';
 import '../../services/download_service.dart';
+import '../../services/library_extras.dart';
 import '../../services/storage_service.dart';
 import '../../services/playback_log_service.dart';
 import '../theme/app_ambience.dart';
@@ -13,11 +16,13 @@ import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/app_cover.dart';
 import '../widgets/app_empty_state.dart';
+import '../widgets/app_sheet.dart';
 import '../widgets/collection_header.dart';
 import '../widgets/play_button.dart';
 import '../widgets/player_sheet.dart';
 import '../widgets/song_options_sheet.dart';
 import '../widgets/song_tile.dart';
+import 'settings/settings_kit.dart';
 
 /// Page of a collection of songs: a playlist of the user, a chart, an
 /// album, the favourites, the downloads. Its header and its play button
@@ -46,6 +51,13 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
   };
 
   final ValueNotifier<double> _scrollOffset = ValueNotifier<double>(0);
+
+  // Selection: the positions of the songs chosen, while choosing.
+  bool _selecting = false;
+  final Set<int> _selected = {};
+
+  // Reordering: the songs in the order being built, while it is.
+  List<Song>? _reordering;
 
   Playlist get playlist => widget.playlist;
   AudioPlayerHandler get audioHandler => widget.audioHandler;
@@ -205,6 +217,61 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                                 'Aggiungi brani dal loro menu o dalla ricerca.',
                           ),
                         )
+                      else if (_reordering != null)
+                        SliverReorderableList(
+                          itemCount: _reordering!.length,
+                          onReorder: (oldIndex, newIndex) => setState(() {
+                            if (newIndex > oldIndex) newIndex--;
+                            _reordering!.insert(newIndex, _reordering!.removeAt(oldIndex));
+                          }),
+                          itemBuilder: (context, index) {
+                            final song = _reordering![index];
+                            return Material(
+                              key: ValueKey('reorder_${song.id}_$index'),
+                              color: cs.surfaceDim,
+                              child: ListTile(
+                                leading: AppCover(url: song.thumbnailUrl, size: 44),
+                                title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                subtitle: Text(song.artist, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                trailing: ReorderableDragStartListener(
+                                  index: index,
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(8),
+                                    child: Icon(AppIcons.dragHandle),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        )
+                      else if (_selecting)
+                        SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) {
+                              final song = songs[index];
+                              final on = _selected.contains(index);
+                              return ListTile(
+                                leading: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      on ? AppIcons.saved : AppIcons.radioOff,
+                                      color: on ? palette.accent : cs.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: AppSpacing.md),
+                                    AppCover(url: song.thumbnailUrl, size: 44),
+                                  ],
+                                ),
+                                title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                subtitle: Text(song.artist, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                onTap: () => setState(() {
+                                  if (!_selected.remove(index)) _selected.add(index);
+                                }),
+                              );
+                            },
+                            childCount: songs.length,
+                          ),
+                        )
                       else
                         ValueListenableBuilder<(String?, bool)>(
                           valueListenable: audioHandler.playbackIndicator,
@@ -241,20 +308,49 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                   palette: palette,
                   scrollOffset: _scrollOffset,
                   actions: [
-                    if (editable)
-                      IconButton(
-                        tooltip: 'Elimina playlist',
-                        icon: const Icon(AppIcons.trash),
-                        onPressed: () => _confirmDelete(context),
+                    if (_reordering != null) ...[
+                      TextButton(
+                        onPressed: () => setState(() => _reordering = null),
+                        child: const Text('Annulla'),
                       ),
-                    if (playlist.id == 'system_downloads' && songs.isNotEmpty)
-                      IconButton(
-                        tooltip: 'Elimina tutti i download',
-                        icon: const Icon(AppIcons.trash),
-                        onPressed: () => _confirmClearAllDownloads(context),
+                      TextButton(
+                        onPressed: () => _saveOrder(current),
+                        child: const Text('Fine'),
                       ),
+                    ] else if (_selecting)
+                      TextButton(
+                        onPressed: () => setState(() {
+                          _selecting = false;
+                          _selected.clear();
+                        }),
+                        child: const Text('Fine'),
+                      )
+                    else ...[
+                      if (playlist.id == 'system_downloads' && songs.isNotEmpty)
+                        IconButton(
+                          tooltip: 'Elimina tutti i download',
+                          icon: const Icon(AppIcons.trash),
+                          onPressed: () => _confirmClearAllDownloads(context),
+                        ),
+                      IconButton(
+                        tooltip: 'Opzioni della playlist',
+                        icon: const Icon(AppIcons.more),
+                        onPressed: () => _showOptions(current, editable: editable, saved: stored != null),
+                      ),
+                    ],
                   ],
                 ),
+                if (_selecting)
+                  Positioned(
+                    left: AppSpacing.lg,
+                    right: AppSpacing.lg,
+                    bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.md,
+                    child: _SelectionBar(
+                      count: _selected.length,
+                      editable: editable,
+                      onAction: (action) => _onSelection(action, songs),
+                    ),
+                  ),
               ],
             ),
           );
@@ -434,6 +530,170 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     );
   }
 
+  void _say(String message) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
+  }
+
+  Future<void> _showOptions(Playlist current, {required bool editable, required bool saved}) {
+    final extras = LibraryExtras.instance;
+    final pinned = extras.isPinned(Pin.playlist, current.id);
+    final hidden = extras.isHidden(current.id);
+    return showAppSheet<void>(
+      context,
+      builder: (sheetContext) {
+        void act(String what, VoidCallback action) {
+          Navigator.pop(sheetContext);
+          PlaybackLogService.instance.log('UI', 'playlist "${current.title}": $what');
+          action();
+        }
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SheetTitle(current.title),
+            if (current.songs.isNotEmpty)
+              SheetAction(
+                icon: AppIcons.select,
+                label: 'Seleziona brani',
+                subtitle: 'Per metterne più di uno in coda, in una playlist, scaricarli',
+                onTap: () => act('seleziona', () => setState(() => _selecting = true)),
+              ),
+            if (editable) ...[
+              SheetAction(
+                icon: AppIcons.edit,
+                label: 'Rinomina',
+                onTap: () => act('rinomina', () => _rename(current)),
+              ),
+              SheetAction(
+                icon: AppIcons.image,
+                label: 'Cambia copertina',
+                subtitle: 'Scegli un\'immagine dalla galleria',
+                onTap: () => act('copertina', () => _pickCover(current)),
+              ),
+              if ((current.thumbnailUrl ?? '').startsWith(StorageService.localImagePrefix))
+                SheetAction(
+                  icon: AppIcons.refresh,
+                  label: 'Togli la copertina scelta',
+                  onTap: () => act('copertina originale', () {
+                    StorageService.instance.savePlaylist(current.copyWith(thumbnailUrl: ''));
+                  }),
+                ),
+              if (current.songs.length > 1)
+                SheetAction(
+                  icon: AppIcons.dragHandle,
+                  label: 'Riordina i brani',
+                  onTap: () => act('riordina', () {
+                    setState(() => _reordering = [...current.songs]);
+                  }),
+                ),
+            ],
+            if (saved || editable) ...[
+              SheetAction(
+                icon: pinned ? AppIcons.pinned : AppIcons.pin,
+                label: pinned ? 'Togli dalla Home' : 'Fissa nella Home',
+                onTap: () => act('fissa', () async {
+                  final now = await extras.togglePin(Pin.ofPlaylist(current, playlistCoverUrl(current)));
+                  _say(now ? 'Fissata in cima alla Home' : 'Tolta dalla Home');
+                }),
+              ),
+              SheetAction(
+                icon: AppIcons.hide,
+                label: hidden ? 'Mostra nella libreria' : 'Nascondi dalla libreria',
+                subtitle: hidden ? null : 'La ritrovi in Impostazioni > Libreria',
+                onTap: () => act('nascondi', () async {
+                  await extras.setHidden(current.id, !hidden);
+                  _say(hidden ? 'Di nuovo nella libreria' : 'Nascosta dalla libreria');
+                }),
+              ),
+            ],
+            if (editable)
+              SheetAction(
+                icon: AppIcons.trash,
+                label: 'Elimina playlist',
+                color: Theme.of(context).colorScheme.error,
+                onTap: () => act('elimina', () => _confirmDelete(context)),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _rename(Playlist current) async {
+    final name = await askText(
+      context,
+      title: 'Rinomina playlist',
+      initial: current.title,
+      placeholder: 'Nome della playlist',
+    );
+    final clean = name?.trim() ?? '';
+    if (clean.isEmpty || clean == current.title) return;
+    await StorageService.instance.renamePlaylist(current.id, clean);
+  }
+
+  Future<void> _pickCover(Playlist current) async {
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 88,
+      );
+      if (picked == null) return;
+      final url = await StorageService.instance.keepImage(File(picked.path), 'playlist');
+      await StorageService.instance.savePlaylist(current.copyWith(thumbnailUrl: url));
+      _say('Copertina cambiata');
+    } catch (e) {
+      PlaybackLogService.instance.error('UI', 'copertina della playlist: $e');
+      _say('Impossibile usare questa immagine');
+    }
+  }
+
+  Future<void> _saveOrder(Playlist current) async {
+    final order = _reordering;
+    if (order == null) return;
+    setState(() => _reordering = null);
+    PlaybackLogService.instance.log('UI', 'playlist "${current.title}": nuovo ordine');
+    await StorageService.instance.savePlaylist(current.copyWith(songs: order));
+  }
+
+  Future<void> _onSelection(String action, List<Song> songs) async {
+    final chosen = [
+      for (var i = 0; i < songs.length; i++)
+        if (_selected.contains(i)) songs[i],
+    ];
+    if (chosen.isEmpty) return;
+    PlaybackLogService.instance.log('UI', 'selezione: $action (${chosen.length} brani)');
+    switch (action) {
+      case 'play':
+        _play(chosen.first, chosen);
+      case 'queue':
+        for (final song in chosen) {
+          audioHandler.addToQueue(song);
+        }
+        _say('${chosen.length} brani aggiunti in coda');
+      case 'playlist':
+        await showAddSongsToPlaylists(context, songs: chosen, notify: _say);
+      case 'download':
+        unawaited(DownloadService.instance.downloadPlaylist(chosen));
+        _say('Download avviato per ${chosen.length} brani');
+      case 'remove':
+        for (final song in chosen) {
+          await StorageService.instance.removeSongFromPlaylist(playlist.id, song.id);
+        }
+        _say('${chosen.length} brani rimossi');
+    }
+    if (mounted) {
+      setState(() {
+        _selecting = false;
+        _selected.clear();
+      });
+    }
+  }
+
   Future<void> _toggleSaved(Playlist current, bool saved) async {
     final messenger = ScaffoldMessenger.of(context);
     if (saved) {
@@ -503,6 +763,49 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
             },
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The actions on the songs chosen, at the foot of the page.
+class _SelectionBar extends StatelessWidget {
+  const _SelectionBar({required this.count, required this.editable, required this.onAction});
+
+  final int count;
+  final bool editable;
+  final void Function(String action) onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    Widget action(IconData icon, String tooltip, String id) => IconButton(
+          tooltip: tooltip,
+          onPressed: count == 0 ? null : () => onAction(id),
+          icon: Icon(icon),
+        );
+    return Material(
+      color: cs.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      elevation: 6,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 4),
+        child: Row(
+          children: [
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                count == 0 ? 'Scegli i brani' : '$count scelti',
+                style: AppText.tileTitle(cs),
+              ),
+            ),
+            action(AppIcons.play, 'Riproduci', 'play'),
+            action(AppIcons.addToQueue, 'Aggiungi in coda', 'queue'),
+            action(AppIcons.save, 'Aggiungi a una playlist', 'playlist'),
+            action(AppIcons.download, 'Scarica', 'download'),
+            if (editable) action(AppIcons.trash, 'Rimuovi dalla playlist', 'remove'),
+          ],
+        ),
       ),
     );
   }

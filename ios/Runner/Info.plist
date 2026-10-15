@@ -10,6 +10,8 @@
 	<string>Totorify</string>
 	<key>CFBundleName</key>
 	<string>Totorify</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Per scegliere la copertina di una playlist.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

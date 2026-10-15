@@ -12,6 +12,7 @@ import '../../services/download_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/spotify_internal_auth_service.dart';
 import 'spotify_web_login_screen.dart';
+import 'settings/library_settings_screen.dart';
 import 'settings/lyrics_settings_screen.dart';
 import 'settings/playback_settings_screen.dart';
 import 'settings/privacy_settings_screen.dart';
@@ -176,6 +177,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title: 'Testi',
                   subtitle: 'Fonti, karaoke, traduzione e pronuncia',
                   onTap: () => SettingsPage.open(context, const LyricsSettingsScreen()),
+                ),
+                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                SettingLink(
+                  icon: AppIcons.playlist,
+                  title: 'Libreria',
+                  subtitle: 'Statistiche, playlist nascoste, artisti, backup',
+                  onTap: () => SettingsPage.open(context, const LibrarySettingsScreen()),
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
                 SettingLink(

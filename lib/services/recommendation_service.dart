@@ -4,6 +4,7 @@ import '../models/artist.dart';
 import '../models/song.dart';
 import 'cover_art_service.dart';
 import 'deezer_service.dart';
+import 'library_extras.dart';
 import 'storage_service.dart';
 import 'ytmusic_service.dart';
 
@@ -105,7 +106,7 @@ class RecommendationService {
   /// video currently playing for it, used when the catalog has no match.
   Future<List<Song>> forSong(Song song, {String? youtubeSeedId}) async {
     final cached = _cache[song.id];
-    if (cached != null) return cached;
+    if (cached != null) return LibraryExtras.instance.withoutBlocked(cached);
 
     final history = StorageService.instance.getHistory();
     final sources = await Future.wait([
@@ -124,7 +125,8 @@ class RecommendationService {
       if (_cache.length >= _maxCached) _cache.remove(_cache.keys.first);
       _cache[song.id] = ranked;
     }
-    return ranked;
+    // The artists the user blocked are never suggested.
+    return LibraryExtras.instance.withoutBlocked(ranked);
   }
 
   Future<List<Song>> _contextual(Song song, String? youtubeSeedId) async {
@@ -219,7 +221,7 @@ class RecommendationService {
   /// those of similar artists. Empty when the catalog does not answer.
   Future<List<Song>> mixOf(Artist artist) async {
     try {
-      return await _radio(artist.id);
+      return LibraryExtras.instance.withoutBlocked(await _radio(artist.id));
     } catch (e) {
       debugPrint('RecommendationService.mixOf: $e');
       return [];

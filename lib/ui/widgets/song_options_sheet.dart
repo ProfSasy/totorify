@@ -6,6 +6,7 @@ import '../../models/playlist.dart';
 import '../../models/song.dart';
 import '../../services/audio_handler.dart';
 import '../../services/download_service.dart';
+import '../../services/library_extras.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/track_matcher_service.dart';
@@ -67,6 +68,8 @@ Future<void> showSongOptions(
       final storage = StorageService.instance;
       final isFavorite = storage.isFavorite(song.id);
       final isDownloaded = storage.isDownloaded(song.id);
+      final pinned = LibraryExtras.instance.isPinned(Pin.song, song.id);
+      final blocked = LibraryExtras.instance.isBlocked(song.artist);
 
       void act(String what, VoidCallback action) {
         Navigator.pop(sheetContext);
@@ -155,6 +158,15 @@ Future<void> showSongOptions(
             label: 'Condividi',
             onTap: () => act('condividi', () => shareSong(rootContext, song)),
           ),
+          SheetAction(
+            icon: pinned ? AppIcons.pinned : AppIcons.pin,
+            iconColor: pinned ? cs.primary : null,
+            label: pinned ? 'Togli dalla Home' : 'Fissa nella Home',
+            onTap: () => act('fissa', () async {
+              final now = await LibraryExtras.instance.togglePin(Pin.ofSong(song));
+              say(now ? 'Fissato in cima alla Home' : 'Tolto dalla Home');
+            }),
+          ),
           if (song.artist.trim().isNotEmpty)
             SheetAction(
               icon: AppIcons.artistPage,
@@ -189,6 +201,21 @@ Future<void> showSongOptions(
               ),
             ),
           ),
+          SheetAction(
+            icon: AppIcons.edit,
+            label: 'Modifica titolo e artista',
+            onTap: () => act('modifica', () => _editSong(rootContext, song, say)),
+          ),
+          if (song.artist.trim().isNotEmpty)
+            SheetAction(
+              icon: AppIcons.block,
+              label: blocked ? 'Suggerisci di nuovo questo artista' : 'Non suggerirmi questo artista',
+              subtitle: blocked ? null : 'Niente più suoi brani in radio, mix e riproduzione automatica',
+              onTap: () => act('blocca artista', () async {
+                await LibraryExtras.instance.setBlocked(mainArtistOf(song), !blocked);
+                say(blocked ? 'Artista di nuovo suggerito' : 'Non ti verrà più suggerito');
+              }),
+            ),
           for (final extra in extras)
             SheetAction(
               icon: extra.icon,
@@ -202,71 +229,198 @@ Future<void> showSongOptions(
   );
 }
 
+/// The first artist named by [song].
+String mainArtistOf(Song song) =>
+    song.artist.split(RegExp(r',|&| feat\.| ft\.', caseSensitive: false)).first.trim();
+
+Future<void> _editSong(BuildContext context, Song song, void Function(String) say) async {
+  final result = await showCupertinoDialog<(String, String)>(
+    context: context,
+    builder: (_) => _EditSongDialog(song: song),
+  );
+  if (result == null) return;
+  final (title, artist) = result;
+  if (title.isEmpty || (title == song.title && artist == song.artist)) return;
+  PlaybackLogService.instance.log('UI', 'modifico "${song.title}" in "$title" - "$artist"');
+  await StorageService.instance.renameSong(song.id, title: title, artist: artist);
+  say('Brano modificato');
+}
+
+class _EditSongDialog extends StatefulWidget {
+  const _EditSongDialog({required this.song});
+
+  final Song song;
+
+  @override
+  State<_EditSongDialog> createState() => _EditSongDialogState();
+}
+
+class _EditSongDialogState extends State<_EditSongDialog> {
+  late final TextEditingController _title = TextEditingController(text: widget.song.title);
+  late final TextEditingController _artist = TextEditingController(text: widget.song.artist);
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _artist.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final style = TextStyle(color: Theme.of(context).colorScheme.onSurface);
+    return CupertinoAlertDialog(
+      title: const Text('Modifica il brano'),
+      content: Column(
+        children: [
+          const SizedBox(height: AppSpacing.md),
+          CupertinoTextField(controller: _title, placeholder: 'Titolo', style: style),
+          const SizedBox(height: AppSpacing.sm),
+          CupertinoTextField(controller: _artist, placeholder: 'Artista', style: style),
+        ],
+      ),
+      actions: [
+        CupertinoDialogAction(
+          child: const Text('Annulla'),
+          onPressed: () => Navigator.pop(context),
+        ),
+        CupertinoDialogAction(
+          isDefaultAction: true,
+          child: const Text('Salva'),
+          onPressed: () => Navigator.pop(context, (_title.text.trim(), _artist.text.trim())),
+        ),
+      ],
+    );
+  }
+}
+
 /// Lets the user pick the playlist [song] goes into, or make a new one.
 Future<void> showAddToPlaylist(
   BuildContext context, {
   required Song song,
   required void Function(String message) notify,
+}) =>
+    showAddSongsToPlaylists(context, songs: [song], notify: notify);
+
+/// Puts [songs] into one or more playlists, chosen in a list, or into a new
+/// one. A song already in a playlist is not added twice.
+Future<void> showAddSongsToPlaylists(
+  BuildContext context, {
+  required List<Song> songs,
+  required void Function(String message) notify,
 }) {
   final storage = StorageService.instance;
   final rootContext = Navigator.of(context, rootNavigator: true).context;
 
-  Future<void> addTo(Playlist playlist) async {
-    PlaybackLogService.instance
-        .log('UI', 'aggiungo "${song.title}" a "${playlist.title}"');
-    final added = await storage.addSongToPlaylist(playlist.id, song);
-    notify(added
-        ? 'Aggiunto a "${playlist.title}"'
-        : 'Già presente in "${playlist.title}"');
+  Future<void> addTo(List<Playlist> playlists) async {
+    var added = 0;
+    var already = 0;
+    for (final playlist in playlists) {
+      for (final song in songs) {
+        if (await storage.addSongToPlaylist(playlist.id, song)) {
+          added++;
+        } else {
+          already++;
+        }
+      }
+    }
+    PlaybackLogService.instance.log(
+      'UI',
+      'aggiungo ${songs.length} brani a ${playlists.map((p) => '"${p.title}"').join(', ')}',
+    );
+    final where = playlists.length == 1 ? '"${playlists.first.title}"' : '${playlists.length} playlist';
+    if (added == 0) {
+      notify(songs.length == 1 ? 'Già presente in $where' : 'Già tutti presenti in $where');
+    } else if (songs.length == 1 && playlists.length == 1) {
+      notify('Aggiunto a $where');
+    } else {
+      notify('Aggiunti $added brani a $where${already > 0 ? ' ($already erano già presenti)' : ''}');
+    }
   }
 
+  final chosen = <String>{};
   return showAppSheet<void>(
     context,
-    builder: (sheetContext) {
-      final cs = Theme.of(sheetContext).colorScheme;
-      final playlists = storage.getPlaylists();
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SheetTitle('Aggiungi a una playlist'),
-          SheetAction(
-            icon: AppIcons.add,
-            label: 'Nuova playlist',
-            leading: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: cs.surfaceContainerHighest,
-                borderRadius: AppRadius.cover,
-              ),
-              child: Icon(AppIcons.add, color: cs.onSurface),
+    builder: (sheetContext) => StatefulBuilder(
+      builder: (context, setSheetState) {
+        final cs = Theme.of(context).colorScheme;
+        final playlists = [
+          for (final p in storage.getPlaylists())
+            if (!LibraryExtras.instance.isHidden(p.id)) p,
+        ];
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SheetTitle(
+              songs.length == 1 ? 'Aggiungi a una playlist' : 'Aggiungi ${songs.length} brani',
+              subtitle: 'Tocca il cerchio per sceglierne più di una',
             ),
-            onTap: () async {
-              Navigator.pop(sheetContext);
-              final name = await askPlaylistName(rootContext);
-              if (name == null) return;
-              await addTo(await storage.createPlaylist(name));
-            },
-          ),
-          for (final playlist in playlists)
             SheetAction(
-              icon: AppIcons.playlist,
-              label: playlist.title,
-              subtitle: '${playlist.songs.length} brani',
-              leading: AppCover(
-                url: playlistCoverUrl(playlist),
-                size: 44,
-                icon: AppIcons.playlist,
+              icon: AppIcons.add,
+              label: 'Nuova playlist',
+              leading: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerHighest,
+                  borderRadius: AppRadius.cover,
+                ),
+                child: Icon(AppIcons.add, color: cs.onSurface),
               ),
-              onTap: () {
+              onTap: () async {
                 Navigator.pop(sheetContext);
-                addTo(playlist);
+                final name = await askPlaylistName(rootContext);
+                if (name == null) return;
+                await addTo([await storage.createPlaylist(name)]);
               },
             ),
-        ],
-      );
-    },
+            for (final playlist in playlists)
+              SheetAction(
+                icon: AppIcons.playlist,
+                label: playlist.title,
+                subtitle: '${playlist.songs.length} brani',
+                leading: AppCover(
+                  url: playlistCoverUrl(playlist),
+                  size: 44,
+                  icon: AppIcons.playlist,
+                ),
+                trailing: IconButton(
+                  tooltip: 'Scegli',
+                  onPressed: () => setSheetState(() {
+                    if (!chosen.remove(playlist.id)) chosen.add(playlist.id);
+                  }),
+                  icon: Icon(
+                    chosen.contains(playlist.id) ? AppIcons.saved : AppIcons.radioOff,
+                    color: chosen.contains(playlist.id) ? cs.primary : cs.onSurfaceVariant,
+                  ),
+                ),
+                onTap: () {
+                  if (chosen.isNotEmpty) {
+                    setSheetState(() {
+                      if (!chosen.remove(playlist.id)) chosen.add(playlist.id);
+                    });
+                    return;
+                  }
+                  Navigator.pop(sheetContext);
+                  addTo([playlist]);
+                },
+              ),
+            if (chosen.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(AppSpacing.xl, AppSpacing.md, AppSpacing.xl, 0),
+                child: FilledButton(
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    addTo([for (final p in playlists) if (chosen.contains(p.id)) p]);
+                  },
+                  child: Text('Aggiungi a ${chosen.length} playlist'),
+                ),
+              ),
+          ],
+        );
+      },
+    ),
   );
 }
 

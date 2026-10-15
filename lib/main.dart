@@ -12,6 +12,7 @@ import 'services/canvas_video_pool.dart';
 import 'services/connect/connect_controller.dart';
 import 'services/connect/connect_host.dart';
 import 'services/download_service.dart';
+import 'services/listening_stats.dart';
 import 'services/network_watcher.dart';
 import 'services/playback_log_service.dart';
 import 'services/session_keeper.dart';
@@ -120,6 +121,7 @@ Future<void> _startApp() async {
   // Other devices running Totorify can play instead of this one.
   // The queue of the last session comes back, paused.
   await SessionKeeper.instance.attach(audioHandler);
+  await ListeningStats.instance.attach(audioHandler);
   unawaited(NetworkWatcher.instance.start());
   DownloadService.instance.downloadWhatIsLiked();
 
@@ -243,6 +245,7 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
     if (state == AppLifecycleState.paused) {
       CanvasVideoPool.instance.suspend();
       unawaited(SessionKeeper.instance.save());
+      ListeningStats.instance.checkpoint();
     }
     if (state == AppLifecycleState.resumed) {
       CanvasVideoPool.instance.resume();

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../services/app_settings.dart';
+import '../../../services/listening_stats.dart';
 import '../../../services/playback_log_service.dart';
 import '../../../services/storage_service.dart';
 import 'settings_kit.dart';
@@ -45,6 +46,7 @@ class PrivacySettingsScreen extends StatelessWidget {
                 if (!sure) return;
                 PlaybackLogService.instance.log('UI', 'privacy: cancello la cronologia');
                 await storage.clearHistory();
+                await ListeningStats.instance.clear();
                 if (context.mounted) _say(context, 'Cronologia cancellata');
               },
             ),

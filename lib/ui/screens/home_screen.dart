@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../models/artist.dart';
 import '../../models/playlist.dart';
 import '../../models/song.dart';
+import '../../services/library_extras.dart';
+import '../../services/listening_stats.dart';
 import '../../services/audio_handler.dart';
 import '../../services/auth_service.dart';
 import '../../services/playback_log_service.dart';
@@ -24,6 +26,8 @@ import '../widgets/song_options_sheet.dart';
 import '../widgets/song_tile.dart';
 import '../widgets/top_bar.dart';
 import 'artist_screen.dart';
+import 'history_screen.dart';
+import 'stats_screen.dart';
 import 'playlist_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -220,6 +224,52 @@ class _HomeScreenState extends State<HomeScreen> {
     ));
   }
 
+  void _openStats() {
+    PlaybackLogService.instance.log('UI', 'home: apri statistiche');
+    Navigator.of(context, rootNavigator: true)
+        .push(CupertinoPageRoute<void>(builder: (_) => const StatsScreen()));
+  }
+
+  void _openHistoryScreen() {
+    PlaybackLogService.instance.log('UI', 'home: apri cronologia');
+    Navigator.of(context, rootNavigator: true)
+        .push(CupertinoPageRoute<void>(builder: (_) => const HistoryScreen()));
+  }
+
+  void _openPin(Pin pin) {
+    PlaybackLogService.instance.log('UI', 'home: apri fissato "${pin.title}"');
+    switch (pin.kind) {
+      case Pin.song:
+        final song = pin.asSong;
+        if (song != null) _play(song, [song]);
+      case Pin.artist:
+        final artist = pin.asArtist;
+        if (artist != null) ArtistScreen.open(context, widget.audioHandler, artist: artist);
+      default:
+        final playlist =
+            StorageService.instance.getPlaylists().where((p) => p.id == pin.id).firstOrNull;
+        if (playlist != null) {
+          _openPlaylist(playlist);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Questa playlist non c'è più")),
+          );
+        }
+    }
+  }
+
+  Widget _songRow(List<Song> songs) => _CardRow(
+        height: CoverCard.heightFor(118),
+        itemCount: songs.length,
+        itemBuilder: (context, index) => CoverCard(
+          imageUrl: songs[index].thumbnailUrl,
+          title: songs[index].title,
+          subtitle: songs[index].artist,
+          size: 118,
+          onTap: () => _play(songs[index], songs),
+        ),
+      );
+
   void _openHistory() {
     final history = StorageService.instance.getHistory();
     PlaybackLogService.instance.log('UI', 'home: apri cronologia');
@@ -279,6 +329,47 @@ class _HomeScreenState extends State<HomeScreen> {
                         widget.audioHandler.playbackIndicator,
                       ]),
                       builder: (context, _) => _buildQuickGrid(cs),
+                    ),
+                  ),
+
+                  // ── What the user pinned ────────────────────────────────
+                  SliverToBoxAdapter(
+                    child: ValueListenableBuilder<List<Pin>>(
+                      valueListenable: LibraryExtras.instance.pins,
+                      builder: (context, pins, _) {
+                        if (pins.isEmpty) return const SizedBox.shrink();
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SectionHeader('Fissati'),
+                            _CardRow(
+                              height: CoverCard.heightFor(118),
+                              itemCount: pins.length,
+                              itemBuilder: (context, index) {
+                                final pin = pins[index];
+                                final stored = pin.kind == Pin.playlist
+                                    ? storage.getPlaylists().where((p) => p.id == pin.id).firstOrNull
+                                    : null;
+                                return CoverCard(
+                                  imageUrl: stored == null
+                                      ? pin.imageUrl
+                                      : (playlistCoverUrl(stored) ?? pin.imageUrl),
+                                  title: pin.title,
+                                  subtitle: pin.subtitle,
+                                  size: 118,
+                                  circle: pin.kind == Pin.artist,
+                                  icon: switch (pin.kind) {
+                                    Pin.artist => AppIcons.artist,
+                                    Pin.playlist => AppIcons.playlist,
+                                    _ => AppIcons.note,
+                                  },
+                                  onTap: () => _openPin(pin),
+                                );
+                              },
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
 
@@ -345,6 +436,39 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
 
+                  // ── From the statistics: the month's most played, and the
+                  //    liked songs not heard for a while ─────────────────────
+                  SliverToBoxAdapter(
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: ListeningStats.instance.changes,
+                      builder: (context, _, _) {
+                        final stats = ListeningStats.instance;
+                        final top = [
+                          for (final entry in stats.topSongs(StatsPeriod.month, limit: 15))
+                            if (entry.plays >= 2) entry.item,
+                        ];
+                        final forgotten =
+                            stats.forgotten(storage.getFavorites()).take(15).toList();
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (top.length >= 3) ...[
+                              SectionHeader(
+                                'I più ascoltati del mese',
+                                trailing: _SeeAll(onTap: _openStats),
+                              ),
+                              _songRow(top),
+                            ],
+                            if (forgotten.length >= 3) ...[
+                              const SectionHeader('Da riascoltare'),
+                              _songRow(forgotten),
+                            ],
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+
                   // ── Followed artists ────────────────────────────────────
                   SliverToBoxAdapter(
                     child: ValueListenableBuilder<List<Artist>>(
@@ -382,7 +506,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   SliverToBoxAdapter(
                     child: ValueListenableBuilder<List<Playlist>>(
                       valueListenable: storage.playlistsNotifier,
-                      builder: (context, playlists, _) {
+                      builder: (context, all, _) {
+                        final playlists = [
+                          for (final p in all)
+                            if (!LibraryExtras.instance.isHidden(p.id)) p,
+                        ];
                         if (playlists.isEmpty) return const SizedBox.shrink();
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -535,9 +663,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   IconButton(
-                    tooltip: 'Ascoltati di recente',
+                    tooltip: 'Le tue statistiche',
+                    icon: const Icon(AppIcons.stats, size: 25),
+                    onPressed: _openStats,
+                  ),
+                  IconButton(
+                    tooltip: 'Cronologia',
                     icon: const Icon(AppIcons.history, size: 26),
-                    onPressed: _openHistory,
+                    onPressed: _openHistoryScreen,
                   ),
                   IconButton(
                     tooltip: 'Impostazioni',

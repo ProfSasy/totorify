@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:cached_network_image/cached_network_image.dart';
+import '../widgets/app_cover.dart' show imageProviderFor;
 import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
@@ -236,7 +236,7 @@ class AmbientPaletteService {
     try {
       info = await _load(
         ResizeImage(
-          CachedNetworkImageProvider(url),
+          imageProviderFor(url),
           width: _sampleSize,
           height: _sampleSize,
         ),
