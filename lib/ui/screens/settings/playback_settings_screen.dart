@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/canvas_service.dart';
 import '../../../services/playback_log_service.dart';
+import '../../../services/qobuz_flac/qobuz_flac_service.dart';
 import '../../../services/sponsor_block_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/ytmusic_service.dart';
 import '../../theme/app_icons.dart';
 import '../../widgets/app_sheet.dart';
+import 'flac_settings_screen.dart';
 import 'settings_kit.dart';
 
 /// Settings > Playback: quality, loudness, what is skipped, the queue.
@@ -78,6 +80,21 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _pickFlacQuality() async {
+    final setting = AppSettings.instance.flacQuality;
+    final value = await showChoiceSheet<int>(
+      context,
+      title: 'Qualità FLAC',
+      subtitle: 'La qualità richiesta a Qobuz per lo streaming senza perdita',
+      options: QobuzFlacService.qualityOptions,
+      selected: setting.value,
+    );
+    if (value == null) return;
+    PlaybackLogService.instance.log('UI', 'impostazioni: qualità FLAC $value');
+    await setting.set(value);
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = AppSettings.instance;
@@ -126,6 +143,44 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
               subtitle:
                   'Abbassa i brani registrati più forte, così suonano tutti allo stesso livello',
             ),
+          ],
+        ),
+        SettingsSection(
+          title: 'FLAC senza perdita (Qobuz)',
+          footer: 'Quando è attivo, ogni brano prova a suonare in FLAC senza '
+              'perdita da Qobuz; se il brano non è disponibile, la riproduzione '
+              'prosegue da YouTube come al solito. Serve un token del tuo '
+              'account Qobuz: aggiungilo nelle credenziali.',
+          children: [
+            SettingSwitch(
+              setting: settings.flacDlEnabled,
+              title: 'FLAC dal bridge (flacdownloader)',
+              subtitle: 'Bridge locale: nessun token, sessione mantenuta a casa',
+              onChanged: (_) => setState(() {}),
+            ),
+            SettingSwitch(
+              setting: settings.flacEnabled,
+              title: 'Riproduci in FLAC quando disponibile',
+              subtitle: 'Audio senza perdita, alla massima qualità del catalogo Qobuz',
+              onChanged: (_) => setState(() {}),
+            ),
+            if (settings.flacEnabled.value) ...[
+              SettingLink(
+                title: 'Qualità FLAC',
+                subtitle: QobuzFlacService.qualityLabel(settings.flacQuality.value),
+                onTap: _pickFlacQuality,
+              ),
+              ValueListenableBuilder<int>(
+                valueListenable: QobuzFlacService.instance.poolCountNotifier,
+                builder: (context, tokens, _) => SettingLink(
+                  title: 'Credenziali Qobuz',
+                  subtitle: tokens == 0
+                      ? 'Nessun token: da configurare'
+                      : '$tokens token nel pool',
+                  onTap: () => SettingsPage.open(context, const FlacSettingsScreen()),
+                ),
+              ),
+            ],
           ],
         ),
         SettingsSection(

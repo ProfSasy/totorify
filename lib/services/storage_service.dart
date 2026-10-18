@@ -741,8 +741,12 @@ class StorageService {
 
   String get downloadsPath => '$_documentsPath/downloads';
 
-  Future<String> getLocalAudioPath(String songId) async =>
-      '$downloadsPath/$songId.m4a';
+  Future<String> getLocalAudioPath(String songId) async {
+    // I FLAC dal bridge finiscono come .flac; le sorgenti abituali .m4a.
+    final flac = '$downloadsPath/$songId.flac';
+    if (await File(flac).exists()) return flac;
+    return '$downloadsPath/$songId.m4a';
+  }
 
   /// Where the Canvas video of a downloaded song is kept.
   String localCanvasPath(String songId) => '$downloadsPath/$songId$_canvasSuffix';

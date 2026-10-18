@@ -10,6 +10,7 @@ import 'playback_log_service.dart';
 import 'storage_service.dart';
 import 'track_matcher_service.dart';
 import 'ytmusic_service.dart';
+import 'flacdl/flacdl_service.dart';
 
 /// Outcome of fetching one audio file: [failure] is null when it worked,
 /// and [mode] says how the bytes came down.
@@ -111,6 +112,14 @@ class DownloadService {
       await _ensureDownloadDir();
       _updateProgress(song.id, 0.05);
 
+      // FLAC dal bridge: quando attivo, prima il file già pronto del bridge
+      // (qualità senza perdita, nessun token da gestire); se non va,
+      // si prosegue esattamente come sempre.
+      if (await _tryDownloadFlacDl(song)) {
+        _removeProgress(song.id);
+        return true;
+      }
+
       // The source is resolved exactly like playback does (scored matching,
       // remembered choices), so a download is never a different recording
       // from the one that plays.
@@ -182,12 +191,81 @@ class DownloadService {
     return false;
   }
 
+  /// FLAC dal bridge: un solo file dalla CDN del bridge, già pronto dal job
+  /// (Range a blocchi come i download abituali, UA da browser normale).
+  /// False quando manca il bridge, la sessione o il brano: il flusso YouTube
+  /// poi prosegue identico a sempre.
+  Future<bool> _tryDownloadFlacDl(Song song) async {
+    if (!AppSettings.instance.flacDlEnabled.value) return false;
+    final log = PlaybackLogService.instance;
+
+    final stream = await FlacDlService.instance.resolveDownload(song);
+    if (stream == null) {
+      log.log('DOWNLOAD', '"${song.title}": flacdl non disponibile, YouTube segue');
+      return false;
+    }
+
+    final filePath =
+        '${StorageService.instance.downloadsPath}/${song.id}.flac';
+    final tempFile = File('$filePath.tmp');
+    final finalFile = File(filePath);
+    final watch = Stopwatch()..start();
+    try {
+      if (await tempFile.exists()) await tempFile.delete();
+
+      final fetched = await _fetchAudio(
+        song,
+        Uri.parse(stream.url),
+        tempFile,
+        headers: FlacDlService.cdnHeaders,
+      );
+      if (fetched.failure != null) {
+        log.log(
+          'DOWNLOAD',
+          '"${song.title}": FLAC dal bridge non riuscito '
+          '(${fetched.failure})',
+        );
+        FlacDlService.instance.discard(song.id);
+        return false;
+      }
+
+      final bytes = await tempFile.length();
+      if (await finalFile.exists()) await finalFile.delete();
+      await tempFile.rename(filePath);
+      _updateProgress(song.id, 1.0);
+      await StorageService.instance.saveDownloadedSong(song);
+      await StorageService.instance.saveDownloadDuration(song.id, song.duration);
+      final seconds = watch.elapsedMilliseconds / 1000;
+      log.log(
+        'DOWNLOAD',
+        '"${song.title}" FLAC dal bridge: '
+        '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB in '
+        '${seconds.toStringAsFixed(1)}s, ${fetched.mode}, ${stream.name}',
+      );
+      unawaited(saveExtras(song));
+      return true;
+    } catch (e, stack) {
+      log.error('DOWNLOAD', '"${song.title}": FLAC dal bridge fallito: $e', stack);
+      try {
+        if (await tempFile.exists()) await tempFile.delete();
+      } catch (_) {}
+      return false;
+    }
+  }
+
   /// Brings the audio at [uri] down into [tempFile] and checks its size.
-  Future<_Fetch> _fetchAudio(Song song, Uri uri, File tempFile) async {
+  /// [headers] ridefinisce la UA: i file della CDN del bridge preferiscono
+  /// un UA da browser normale (FlacDlService.cdnHeaders).
+  Future<_Fetch> _fetchAudio(
+    Song song,
+    Uri uri,
+    File tempFile, {
+    Map<String, String> headers = const {'User-Agent': _visionOsUa},
+  }) async {
     // YouTube writes the size in the stream URL itself; asking the server
     // is the fallback.
     var expected = int.tryParse(uri.queryParameters['clen'] ?? '') ?? 0;
-    if (expected <= 0) expected = await _lengthFromServer(uri);
+    if (expected <= 0) expected = await _lengthFromServer(uri, headers);
 
     var mode = 'a blocchi';
     String? failure;
@@ -197,6 +275,7 @@ class DownloadService {
         uri: uri,
         tempFile: tempFile,
         contentLength: expected,
+        headers: headers,
       );
       failure = chunks.failure;
       if (chunks.retries > 0) mode = 'a blocchi (${chunks.retries} richieste ripetute)';
@@ -204,7 +283,7 @@ class DownloadService {
     // Small files, unknown length, or a server that ignored the ranges.
     if (expected <= _chunkSize || failure == _rangesIgnored) {
       mode = 'in un flusso';
-      failure = await _downloadStream(song: song, uri: uri, tempFile: tempFile);
+      failure = await _downloadStream(song: song, uri: uri, tempFile: tempFile, headers: headers);
     }
     if (failure != null) return (failure: failure, mode: mode);
 
@@ -218,10 +297,12 @@ class DownloadService {
     return (failure: null, mode: mode);
   }
 
-  Future<int> _lengthFromServer(Uri uri) async {
+  Future<int> _lengthFromServer(
+    Uri uri,
+    Map<String, String> headers,
+  ) async {
     try {
-      final response = await http
-          .head(uri, headers: const {'User-Agent': _visionOsUa})
+      final response = await http.head(uri, headers: headers)
           .timeout(const Duration(seconds: 8));
       return int.tryParse(response.headers['content-length'] ?? '') ?? 0;
     } catch (e) {
@@ -241,6 +322,7 @@ class DownloadService {
     required Uri uri,
     required File tempFile,
     required int contentLength,
+    Map<String, String> headers = const {'User-Agent': _visionOsUa},
   }) async {
     final totalChunks = (contentLength / _chunkSize).ceil();
     var completed = 0;
@@ -268,7 +350,7 @@ class DownloadService {
                 uri,
                 headers: {
                   'Range': 'bytes=$start-$end',
-                  'User-Agent': _visionOsUa,
+                  ...headers,
                 },
               ).timeout(_chunkTimeout);
 
@@ -336,10 +418,14 @@ class DownloadService {
     required Song song,
     required Uri uri,
     required File tempFile,
+    Map<String, String> headers = const {'User-Agent': _visionOsUa},
   }) async {
     final client = http.Client();
     try {
-      final req = http.Request('GET', uri)..headers['User-Agent'] = _visionOsUa;
+      final req = http.Request('GET', uri);
+      for (final entry in headers.entries) {
+        req.headers[entry.key] = entry.value;
+      }
       final response = await client.send(req).timeout(_chunkTimeout);
       if (response.statusCode != 200) return 'HTTP ${response.statusCode}';
 
@@ -438,14 +524,20 @@ class DownloadService {
 
   Future<void> deleteDownloadedSong(String songId) async {
     try {
-      final filePath = await StorageService.instance.getLocalAudioPath(songId);
-      final file = File(filePath);
-      if (await file.exists()) {
-        await file.delete();
-      }
-      final tempFile = File('$filePath.tmp');
-      if (await tempFile.exists()) {
-        await tempFile.delete();
+      // I FLAC dal bridge e i download abituali hanno estensioni diverse:
+      // si puliscono entrambe.
+      for (final path in [
+        '${StorageService.instance.downloadsPath}/$songId.m4a',
+        '${StorageService.instance.downloadsPath}/$songId.flac',
+      ]) {
+        final file = File(path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+        final tempFile = File('$path.tmp');
+        if (await tempFile.exists()) {
+          await tempFile.delete();
+        }
       }
       await StorageService.instance.removeDownloadedSong(songId);
       await _deleteSavedCanvas(songId);

@@ -17,6 +17,8 @@ import 'download_service.dart';
 import 'lyrics_service.dart';
 import 'playback_log_service.dart';
 import 'playback_queue.dart';
+import 'qobuz_flac/qobuz_flac_service.dart';
+import 'flacdl/flacdl_service.dart';
 import 'recommendation_service.dart';
 import 'sponsor_block_service.dart';
 import 'storage_service.dart';
@@ -541,6 +543,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _trackDuration = Duration.zero;
     _segments = const [];
     _segmentsPassed.clear();
+    _playingFlac = false;
     final start = startSeconds ?? _startOffsetOf(song).inMilliseconds / 1000;
     positionNotifier.value = Duration(milliseconds: (start * 1000).round());
     final log = PlaybackLogService.instance;
@@ -579,6 +582,12 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         // An unreadable file falls through to streaming below.
         if (opened != _Open.failed) return;
       }
+
+      // FLAC: prima il bridge (flacdownloader, nessun token richiesto),
+      // poi la sorgente Qobuz con i token dell'utente; se nessuna riesce,
+      // il caricamento prosegue da YouTube come sempre.
+      if (await _tryOpenFlacDl(song, generation, start: start)) return;
+      if (await _tryOpenFlac(song, generation, start: start)) return;
 
       final videoId = await TrackMatcherService.instance.resolveAndCacheStreamId(song);
       if (generation != _loadGeneration) {
@@ -962,6 +971,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   }
 
   void _onNormalizeChanged() {
+    // Un FLAC non è attenuato come i brani di YouTube: niente da rifare.
+    if (_playingFlac) return;
     final videoId = _currentStreamId ?? (currentSong == null ? null : _videoIdOf(currentSong!));
     if (videoId == null) return;
     unawaited(_applyLoudness(videoId, _loadGeneration));
@@ -1062,6 +1073,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     final song = _queue.items[next];
     try {
       if (StorageService.instance.isDownloaded(song.id)) return;
+      // FLAC (Qobuz): riscalda in anticipo la cache della prossima traccia
+      // (non fa nulla quando la funzione è spenta).
+      unawaited(QobuzFlacService.instance.prefetch(song));
       final videoId = await TrackMatcherService.instance.resolveAndCacheStreamId(song);
       if (videoId == null) return;
       final yt = YTMusicService.instance;
@@ -2011,5 +2025,93 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _queue.adopt(songs, currentId: currentId);
     _syncSuggestionsWithQueue();
     _updateQueueBroadcast();
+  }
+
+  // ── FLAC (Qobuz) ────────────────────────────────────────────────────────
+
+  // Brani per cui il FLAC non è riproducibile in questa sessione (uno stream
+  // che il lettore non accetta): per loro si suona da YouTube, senza
+  // riprovare a ogni caricamento.
+  final Set<String> _flacFailed = {};
+
+  /// I brani per i quali il bridge FLAC (flacdownloader) non è riuscito:
+  /// finché il brano suona, non si ritenta.
+  final Set<String> _flacDlFailed = {};
+
+  /// Prova ad aprire [song] in FLAC dal bridge locale, quando l'impostazione
+  /// è attiva e il bridge ha sessione. True quando la riproduzione è
+  /// partita da lì; altrimenti prosegue — come sempre — con Qobuz/YouTube.
+  Future<bool> _tryOpenFlacDl(Song song, int generation, {required double start}) async {
+    if (!AppSettings.instance.flacDlEnabled.value) return false;
+    if (_flacDlFailed.contains(song.id)) return false;
+
+    final stream = await FlacDlService.instance.resolveDownload(song);
+    if (stream == null || generation != _loadGeneration) return false;
+
+    final opened = await _open(
+      () => VideoPlayerController.networkUrl(
+        Uri.parse(stream.url),
+        videoPlayerOptions: _audioOptions,
+        httpHeaders: FlacDlService.cdnHeaders,
+      ),
+      generation,
+      start: start,
+      source: 'FLAC ${FlacDlService.instance.describeQuality(stream)}',
+    );
+    if (opened == _Open.ok) {
+      _playingFlac = true;
+      // Niente SponsorBlock né loudness di YouTube per un FLAC.
+      _prepareExtras(null, generation);
+      _prepareWhatFollows(song, generation);
+      return true;
+    }
+    if (opened == _Open.failed) {
+      // Il file della CDN non si riesce a leggere: niente altri tentativi
+      // per questo brano, la riproduzione prosegue dalle sorgenti abituali.
+      FlacDlService.instance.discard(song.id);
+      _flacDlFailed.add(song.id);
+    }
+    return false;
+  }
+
+  // True mentre quello che suona è un FLAC: la normalizzazione del volume
+  // pensata per YouTube non lo riguarda.
+  bool _playingFlac = false;
+
+  /// Prova ad aprire [song] in FLAC senza perdita da Qobuz, quando la
+  /// funzione è attiva nelle impostazioni. True quando la riproduzione è
+  /// partita da lì; false in ogni altro caso, e il caricamento prosegue —
+  /// identico a sempre — sulla sorgente di YouTube.
+  Future<bool> _tryOpenFlac(Song song, int generation, {required double start}) async {
+    if (!AppSettings.instance.flacEnabled.value) return false;
+    if (_flacFailed.contains(song.id)) return false;
+
+    final stream = await QobuzFlacService.instance.resolve(song);
+    if (stream == null || generation != _loadGeneration) return false;
+
+    final opened = await _open(
+      () => VideoPlayerController.networkUrl(
+        Uri.parse(stream.url),
+        videoPlayerOptions: _audioOptions,
+        httpHeaders: QobuzFlacService.playbackHeaders,
+      ),
+      generation,
+      start: start,
+      source: 'FLAC ${QobuzFlacService.describeQuality(stream)} · Qobuz',
+    );
+    if (opened == _Open.ok) {
+      _playingFlac = true;
+      // Niente SponsorBlock né loudness di YouTube per un FLAC.
+      _prepareExtras(null, generation);
+      _prepareWhatFollows(song, generation);
+      return true;
+    }
+    if (opened == _Open.failed) {
+      // Questo stream non si riesce a leggere: per questo brano si passa a
+      // YouTube e non ci si riprova più.
+      QobuzFlacService.instance.discard(song.id);
+      _flacFailed.add(song.id);
+    }
+    return false;
   }
 }

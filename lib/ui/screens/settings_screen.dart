@@ -171,7 +171,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 SettingLink(
                   icon: AppIcons.playback,
                   title: 'Riproduzione',
-                  subtitle: 'Qualità, normalizzazione, parti da saltare, dissolvenza, coda',
+                  subtitle: 'Qualità e FLAC, normalizzazione, parti da saltare, dissolvenza, coda',
                   onTap: () => SettingsPage.open(context, const PlaybackSettingsScreen()),
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
