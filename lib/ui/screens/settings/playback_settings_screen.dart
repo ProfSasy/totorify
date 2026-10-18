@@ -158,6 +158,14 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
               subtitle: 'Bridge locale: nessun token, sessione mantenuta a casa',
               onChanged: (_) => setState(() {}),
             ),
+            if (settings.flacDlEnabled.value)
+              SettingLink(
+                title: 'Bridge (URL e stato)',
+                subtitle: settings.flacDlBridge.value.trim().isEmpty
+                    ? 'URL mancante: senza, il FLAC dal bridge non può partire'
+                    : settings.flacDlBridge.value.trim(),
+                onTap: () => SettingsPage.open(context, const FlacSettingsScreen()),
+              ),
             SettingSwitch(
               setting: settings.flacEnabled,
               title: 'Riproduci in FLAC quando disponibile',

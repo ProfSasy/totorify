@@ -167,7 +167,13 @@ class FlacDlService {
   /// confidenza non basta o il job fallisce: chi chiama prosegue con le
   /// sorgenti abituali (Qobuz, YouTube) senza rumore.
   Future<FlacDlStream?> resolveDownload(Song song) async {
-    if (_bridgeUrl.isEmpty) return null;
+    if (_bridgeUrl.isEmpty) {
+      PlaybackLogService.instance.log(
+        'FLACDL',
+        'Bridge non configurato: URL vuoto (Impostazioni ▸ Riproduzione ▸ FLAC)',
+      );
+      return null;
+    }
     final now = DateTime.now();
     final hit = _cache[song.id];
     if (hit != null && now.difference(hit.resolvedAt) < _cacheLife) {
