@@ -160,6 +160,49 @@ class FlacDlService {
     }
   }
 
+  /// Varianti di ricerca per titoli con feature: 「Trap Phone (feat. Capo
+  /// Plaza)」 come queryDatum rende poco, il titolo da solo e l'artista col
+  /// titolo pulito reggono meglio.
+  List<String> _extraTerms(QobuzTrackQuery query) {
+    final terms = <String>[];
+    final stripped = query.title
+        .replaceFirst(
+          RegExp(r'\s*\((feat\.?|ft\.?|featuring)\s+.*\)', caseSensitive: false),
+          '',
+        )
+        .trim();
+    if (stripped.isNotEmpty && stripped.toLowerCase() != query.title.toLowerCase()) {
+      final primary = query.artist.split(',').first.trim();
+      terms.add('$primary $stripped'.trim());
+      terms.add(stripped);
+    }
+    return terms;
+  }
+
+  /// Piegatura degli accenti (guÈ/guÉ → gue): i nomi d'artista del catalogo
+  /// sciano le diacritiche e senza piegatura quelle canvas scaturiscono due
+  /// persone distinte. Mapa dei diacritici correnti + via segni combinanti.
+  static const Map<String, String> _accentBase = {
+    'à': 'a', 'á': 'a', 'â': 'a', 'ä': 'a', 'ã': 'a', 'å': 'a', 'æ': 'ae',
+    'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e',
+    'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i', 'ĩ': 'i',
+    'ò': 'o', 'ó': 'o', 'ô': 'o', 'ö': 'o', 'õ': 'o', 'ø': 'o',
+    'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u',
+    'ç': 'c', 'ñ': 'n', 'ý': 'y', 'ÿ': 'y', 'ð': 'd', 'ß': 'ss',
+    'š': 's', 'ž': 'z', 'ć': 'c', 'ń': 'n', 'ş': 's', 'ğ': 'g',
+  };
+
+  String _fold(String value) {
+    final low =
+        value.toLowerCase().replaceAll(RegExp(r'[\u0300-\u036f]'), '');
+    return low
+        .replaceAllMapped(
+          RegExp(r'[\u00C0-\u017F]'),
+          (m) => _accentBase[m[0]] ?? m[0] ?? '',
+        )
+        .trim();
+  }
+
   // ── Risoluzione ───────────────────────────────────────────────────────────
 
   /// Risolve [song] in FLAC: match di confidenza ≥ 0.5 nel catalogo, poi il
@@ -215,17 +258,31 @@ class FlacDlService {
       return null;
     }
 
+    // ── Ricerca + confidenza (catalogo Qobuz, chiavi del sito) ──
+    // Oltre ai termini regolari si provano varianti per titoli con feature
+    // e si evade l'accostamento fra artisti piegando gli accenti: il catalogo
+    // perde le diacritiche ("Guè" diventa "Gue") e senza piegatura un match
+    // perfetto vale 0.00.
     final query = QobuzTrackQuery.of(song);
+    final foldedQuery = QobuzTrackQuery(
+      artist: _fold(query.artist),
+      title: _fold(query.title),
+      isrc: query.isrc,
+      durationMs: query.durationMs,
+    );
+    var candidatesSeen = 0;
     Map<String, dynamic>? best;
     var bestScore = 0.0;
-    for (final term in query.searchTerms()) {
-      for (final item in await _search(term)) {
-        final artistItem = item['performer'];
+    for (final term in <String>[...query.searchTerms(), ..._extraTerms(query)]) {
+      final items = await _search(term);
+      candidatesSeen += items.length;
+      for (final item in items) {
+        final performer = item['performer'];
         final score = QobuzCandidateMatcher.confidence(
-          query: query,
-          candTitle: '${item['title'] ?? ''}',
+          query: foldedQuery,
+          candTitle: _fold('${item['title'] ?? ''}'),
           candArtist:
-              artistItem is Map<String, dynamic> ? '${artistItem['name'] ?? ''}' : '',
+              performer is Map<String, dynamic> ? _fold('${performer['name'] ?? ''}') : '',
           candIsrc: item['isrc']?.toString(),
           candDurationSec:
               item['duration'] is num ? (item['duration'] as num).toInt() : 0,
@@ -242,7 +299,7 @@ class FlacDlService {
       log.log(
         'FLACDL',
         '"${song.title}": nessun match fidato nel catalogo '
-        '(migliore ${bestScore.toStringAsFixed(2)})',
+        '(candidati $candidatesSeen, migliore ${bestScore.toStringAsFixed(2)})',
       );
       return null;
     }
