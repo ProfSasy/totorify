@@ -706,6 +706,15 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     );
   }
 
+  /// The raw label goes to the playback log; for the interface the YouTube
+  /// branches read better as plain "YouTube" ("HLS audio..." is noise).
+  static String _prettySource(String source) {
+    if (source.startsWith('HLS')) return 'YouTube (HLS)';
+    if (source.startsWith('Opus')) return 'YouTube (Opus)';
+    if (source.startsWith('stream')) return 'YouTube';
+    return source;
+  }
+
   /// Creates a player for one source, waits until it can play and makes it
   /// the active one.
   Future<_Open> _open(
@@ -748,7 +757,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       if (generation != _loadGeneration) return _Open.superseded;
       _setPosition(startAt, announce: true);
       _publishCurrentMediaItem();
-      sourceNotifier.value = source;
+      sourceNotifier.value = _prettySource(source);
       _consecutiveFailures = 0;
       log.log(
         'PLAY',
@@ -2056,7 +2065,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       ),
       generation,
       start: start,
-      source: 'FLAC ${FlacDlService.instance.describeQuality(stream)}',
+      source: FlacDlService.instance.describeQuality(stream),
     );
     if (opened == _Open.ok) {
       _playingFlac = true;
@@ -2097,7 +2106,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       ),
       generation,
       start: start,
-      source: 'FLAC ${QobuzFlacService.describeQuality(stream)} · Qobuz',
+      source: '${QobuzFlacService.describeQuality(stream)} · Qobuz',
     );
     if (opened == _Open.ok) {
       _playingFlac = true;
