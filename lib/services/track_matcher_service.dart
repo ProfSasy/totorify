@@ -301,6 +301,35 @@ class TrackMatcherService {
   bool isVideoOf(Song video, Song song) =>
       scoreCandidate(video.copyWith(duration: Duration.zero), song) >= _sameTrackScore;
 
+  // Title and artist agree well enough for a song known only by its name.
+  static const int _foundByNameScore = 3500;
+
+  /// The track of YouTube Music that is [title] by [artist], for a song
+  /// known only by its name (one recognized by Shazam): the studio
+  /// recording, with its cover and length. Null when nothing in the catalog
+  /// has both that title and that artist.
+  Future<Song?> findCatalogSong(String title, String artist) async {
+    final target = Song(
+      id: '',
+      title: title,
+      artist: artist,
+      duration: Duration.zero,
+      thumbnailUrl: '',
+    );
+    final cleanArtist = _canonicalArtist(artist).split(',').first;
+    // The names as given first: the cleaned ones lose the accents and the
+    // brackets, which the catalog's search sometimes needs.
+    for (final query in {'$title $artist', '${_canonicalTitle(title)} $cleanArtist'}) {
+      final best = _bestOf(
+        await YTMusicService.instance.search(query.trim()),
+        target,
+        fromMusicCatalog: true,
+      );
+      if (best != null && best.$2 >= _foundByNameScore) return best.$1;
+    }
+    return null;
+  }
+
   /// One list of tracks out of what the catalog found: its best match, the
   /// songs, then the music videos (a song released only as a video is found
   /// nowhere else). Tracks that carry every word of the query come first:

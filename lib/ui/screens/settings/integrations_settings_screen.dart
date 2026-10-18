@@ -8,6 +8,7 @@ import '../../../services/scrobbler.dart';
 import '../../../services/update_checker.dart';
 import '../../theme/app_tokens.dart';
 import '../../widgets/app_sheet.dart';
+import '../shazam_import_screen.dart';
 import 'settings_kit.dart';
 
 /// Settings > Integrations: scrobbling, artificial intelligence, updates.
@@ -192,6 +193,21 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
                   title: lbUser == null ? 'Collega ListenBrainz' : 'ListenBrainz: $lbUser',
                   subtitle: lbUser == null ? null : 'Tocca per scollegare',
                   onTap: lbUser == null ? _listenBrainz : () => scrobbler.forgetListenBrainz(),
+                ),
+              ],
+            ),
+            SettingsSection(
+              title: 'Shazam',
+              footer:
+                  'Porta in una playlist i brani che hai riconosciuto con Shazam, solo '
+                  'quelli dei mesi che scegli.',
+              children: [
+                SettingLink(
+                  title: 'Importa da Shazam',
+                  onTap: () async {
+                    final created = await ShazamImportScreen.open(context);
+                    if (created != null) _say('"${created.title}" è nella tua libreria');
+                  },
                 ),
               ],
             ),

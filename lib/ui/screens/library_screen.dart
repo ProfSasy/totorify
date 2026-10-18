@@ -23,6 +23,7 @@ import '../widgets/song_tile.dart';
 import '../widgets/top_bar.dart';
 import 'artist_screen.dart';
 import 'playlist_screen.dart';
+import 'shazam_import_screen.dart';
 
 class LibraryScreen extends StatefulWidget {
   final AudioPlayerHandler audioHandler;
@@ -465,7 +466,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     style: AppText.tileTitle(cs).copyWith(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 4),
                 Text(
-                  'Oppure importane una da Spotify o da YouTube Music.',
+                  'Oppure importane una da Spotify, YouTube Music o Shazam.',
                   style: AppText.caption(cs),
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -541,6 +542,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
               if (name == null) return;
               final created = await StorageService.instance.createPlaylist(name);
               if (mounted) _openPlaylist(created);
+            },
+          ),
+          SheetAction(
+            icon: AppIcons.mic,
+            label: 'Importa da Shazam',
+            subtitle: 'I brani che hai riconosciuto, dei mesi che scegli',
+            onTap: () async {
+              Navigator.pop(sheetContext);
+              PlaybackLogService.instance.log('UI', 'library: import da Shazam');
+              final created = await ShazamImportScreen.open(rootContext);
+              if (created != null && mounted) _openPlaylist(created);
             },
           ),
           SheetAction(
