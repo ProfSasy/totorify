@@ -1,5 +1,7 @@
 package com.profsasy.kreate_ios
 
-import io.flutter.embedding.android.FlutterActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 
-class MainActivity : FlutterActivity()
+// AudioServiceActivity shares the Flutter engine with the playback service,
+// so the music goes on when the app leaves the screen.
+class MainActivity : AudioServiceActivity()

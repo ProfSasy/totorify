@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Resources named only from Dart (audio_service looks the notification
+     icon up by name): without this the release build strips them, and the
+     first notification crashes the app. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_stat_totorify" />

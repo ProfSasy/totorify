@@ -122,7 +122,9 @@ Future<void> _startApp() async {
     builder: () => AudioPlayerHandler(),
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'me.knighthat.totorify.channel.audio',
-      androidNotificationChannelName: 'Totorify Music Playback',
+      androidNotificationChannelName: 'Riproduzione',
+      // A white shape: Android shows a colored icon as a white square.
+      androidNotificationIcon: 'drawable/ic_stat_totorify',
       androidNotificationOngoing: true,
       androidStopForegroundOnPause: true,
       // Native lock-screen / Control Center skip buttons.
@@ -227,8 +229,10 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _isAmoled = StorageService.instance.isAmoledTheme;
-    // If already signed in from previous session, skip login screen
-    _isLoggedIn = StorageService.instance.hasSeenLogin;
+    // If already signed in from previous session, skip login screen. Where
+    // there is no Google account to sign in with (Android), there is no
+    // login screen at all.
+    _isLoggedIn = StorageService.instance.hasSeenLogin || !AuthService.isAvailable;
     _wasSignedIn = AuthService.instance.isSignedIn;
     // Signing out from Settings must bring the user back to the login screen.
     AuthService.instance.addListener(_onAuthChanged);

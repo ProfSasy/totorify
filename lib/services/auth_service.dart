@@ -35,9 +35,10 @@ class AuthService extends ChangeNotifier {
 
   GoogleSignInAccount? _currentUser;
 
-  /// Whether signing in with Google exists on this platform: it does on a
-  /// phone, not on a computer. The account is optional everywhere.
-  static bool get isAvailable => !(Platform.isWindows || Platform.isLinux);
+  /// Whether signing in with Google exists on this platform: only on the
+  /// iPhone, whose OAuth client is the one registered (Android would need
+  /// its own, tied to the signing key). The account is optional everywhere.
+  static bool get isAvailable => Platform.isIOS;
 
   bool get isSignedIn => _currentUser != null;
   GoogleSignInAccount? get currentUser => _currentUser;

@@ -106,9 +106,15 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   bool _crossfadeStarting = false;
 
   // Background playback must be allowed explicitly: by default the plugin
-  // pauses its players when the app leaves the foreground.
-  static final VideoPlayerOptions _audioOptions =
-      VideoPlayerOptions(allowBackgroundPlayback: true);
+  // pauses its players when the app leaves the foreground. On Android each
+  // ExoPlayer would also ask for the audio focus on its own, taking it from
+  // the app's audio session (and from the other player of a crossfade):
+  // the session lost it and paused the music as it started. There the
+  // session alone holds the focus, as on iOS.
+  static final VideoPlayerOptions _audioOptions = VideoPlayerOptions(
+    allowBackgroundPlayback: true,
+    mixWithOthers: Platform.isAndroid,
+  );
 
   static const Duration _openTimeout = Duration(seconds: 20);
   static const int _maxSourceAttempts = 3;
