@@ -217,6 +217,12 @@ const server = nodeHttp.createServer(async (req, res) => {
 
     if (url.pathname === "/job" && req.method === "POST") {
       if (!alive()) return json(res, 503, { needHuman: true, error: "session expired — solve the Turnstile on https://flacdownloader.com/it (download a song), then copy localStorage 'fd_sp' and POST /inject" });
+      // Il token `t` vale appena qualche minuto: si rinfresca ad ogni job —
+      // è il flusso del sito (Turnstile → /prepare → coda) e la stessa
+      // rotazione costante mantiene `sp` vivo (il rolling window).
+      if (!(await prepareRenew())) {
+        return json(res, 503, { needHuman: true, error: "sp rifiutato: rifare il Turnstile e re-iniettare su /setup" });
+      }
       const raw = await readBody(req);
       let body = {};
       try { body = JSON.parse(raw); } catch {}
