@@ -31,6 +31,33 @@ const RENEW_CHECK_MS = 4 * 60 * 1000;     // check di rinnovo ogni 4 min
 const RENEW_BEFORE_MS = 8 * 60 * 1000;    // rinnova se mancano < 8 min alla scadenza
 const JOB_TIMEOUT_MS = 260 * 1000;
 
+// ── logger su file ───────────────────────────────────────────────────────────
+// Tutto il console.log/error finisce anche in .flacdl/bridge.log: quando il
+// computer gira con finestra nascosta, è l'unico modo di vedere i rinnov
+// falliti (e il corpo 403/4xx di upstream).
+const LOG_FILE = nodePath.join(STORE_DIR, "bridge.log");
+{
+  const stamp = () => new Date().toISOString();
+  const write = (line) => {
+    try {
+      nodeFs.mkdirSync(STORE_DIR, { recursive: true });
+      nodeFs.appendFileSync(LOG_FILE, `${stamp()} ${line}\n`);
+    } catch {}
+  };
+  const origLog = console.log.bind(console);
+  console.log = (...a) => {
+    const line = a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ");
+    origLog(line);
+    write(line);
+  };
+  const origErr = console.error.bind(console);
+  console.error = (...a) => {
+    const line = a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ");
+    origErr(line);
+    write("[err] " + line);
+  };
+}
+
 // ── session store ────────────────────────────────────────────────────────────
 let session = { sp: "", t: "", updatedAt: 0, expiry: 0 };
 
@@ -94,7 +121,7 @@ async function prepareRenew() {
     console.log(`[prepare] renewed, valid until ${new Date(d.expiry).toISOString()}`);
     return true;
   }
-  console.log(`[prepare] renewal failed (${r.status})`);
+  console.log(`[prepare] renewal failed (${r.status}) body: ${r.text.slice(0, 200)}`);
   return false;
 }
 
