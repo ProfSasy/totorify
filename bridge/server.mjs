@@ -20,6 +20,7 @@ import nodeFs from "node:fs";
 import nodePath from "node:path";
 import nodeOs from "node:os";
 import nodeHttp from "node:http";
+import { pathToFileURL } from "node:url";
 
 const PORT = Number(process.env.FLACDL_PORT || 7491);
 const SITE = "https://flacdownloader.com";
@@ -177,6 +178,25 @@ function readBody(req) {
   });
 }
 
+// ── estensione risolutrice opzionale ─────────────────────────────────────────
+// Se esiste ~/.flacdl/resolver-ext.mjs (file locale, NON nel repo) viene usato
+// come provider di riserva quando flacdl fallisce, o per job senza id Qobuz.
+// Assente → il bridge funziona esattamente come prima.
+const EXT_FILE = nodePath.join(STORE_DIR, "resolver-ext.mjs");
+let _ext; // undefined = da caricare; null = assente/caricamento fallito
+async function loadExt() {
+  if (_ext !== undefined) return _ext;
+  try {
+    _ext = nodeFs.existsSync(EXT_FILE) ? await import(pathToFileURL(EXT_FILE).href) : null;
+    if (_ext?.resolveSong) console.log("[ext] provider di riserva caricato:", EXT_FILE);
+    else _ext = null;
+  } catch (e) {
+    console.error("[ext] errore caricamento:", e.message);
+    _ext = null;
+  }
+  return _ext;
+}
+
 const server = nodeHttp.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.writeHead(204, {
     "Access-Control-Allow-Origin": "*",
@@ -188,13 +208,18 @@ const server = nodeHttp.createServer(async (req, res) => {
   try {
     if (url.pathname === "/health") {
       const d = decodeSp(session.sp);
+      let ext = null;
+      if (_ext?.status) {
+        try { ext = await _ext.status(); } catch {}
+      }
       return json(res, 200, {
         alive: alive(),
         needHuman: !alive(),
         expiry: d.expiry,
         expiresInSec: alive() ? Math.round((d.expiry - Date.now()) / 1000) : 0,
         updatedAt: session.updatedAt,
-        version: 1,
+        version: 2,
+        ext,
       });
     }
 
@@ -216,22 +241,16 @@ const server = nodeHttp.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/job" && req.method === "POST") {
-      if (!alive()) return json(res, 503, { needHuman: true, error: "session expired — solve the Turnstile on https://flacdownloader.com/it (download a song), then copy localStorage 'fd_sp' and POST /inject" });
-      // Il token `t` vale appena qualche minuto: si rinfresca ad ogni job —
-      // è il flusso del sito (Turnstile → /prepare → coda) e la stessa
-      // rotazione costante mantiene `sp` vivo (il rolling window).
-      if (!(await prepareRenew())) {
-        return json(res, 503, { needHuman: true, error: "sp rifiutato: rifare il Turnstile e re-iniettare su /setup" });
-      }
       const raw = await readBody(req);
       let body = {};
       try { body = JSON.parse(raw); } catch {}
       // Mappa flessibile: l'app manda song (title/artist/album/isrc/trackId...) o già
-      // un meta pronto {url,title,artist,...}. Se manca url, usa open.qobuz.com/track/<id>.
+      // un meta pronto {url,title,artist,...}. Se manca url/trackId (job "solo
+      // titolo"), la risoluzione passa direttamente all'estensione di riserva.
       const urlIn = body.url || (body.trackId ? `https://open.qobuz.com/track/${body.trackId}` : "");
-      if (!urlIn) return json(res, 400, { error: "url or trackId required" });
+      if (!urlIn && !(body.title || body.isrc)) return json(res, 400, { error: "url or trackId required" });
       const meta = {
-        url: urlIn,
+        url: urlIn || "",
         title: body.title || "",
         artist: body.artist || "",
         album: body.album || "",
@@ -254,12 +273,72 @@ const server = nodeHttp.createServer(async (req, res) => {
         samplingRate: body.samplingRate ?? 44.1,
         hires: !!body.hires,
       };
-      const q = await queueJob(meta);
-      console.log(`[job] created ${q.id} — "${meta.title}" / ${meta.artist}`);
-      const result = await pollJob(q.id);
-      console.log(`[job] ${q.id} → ${result.status} ${result.name || result.error || ""} (${result.size || 0} B)`);
-      const code = result.status === "done" ? 200 : 502;
-      return json(res, code, { jobId: q.id, ...result });
+
+      // 1) flacdl (primario): rinnovo del token + coda + polling
+      let jobId = null;
+      let flacdl = null;        // esito pollJob (o null)
+      let flacdlDead = false;   // sessione non rinnovabile → serve il Turnstile umano
+      if (urlIn) {
+        // Il token `t` vale appena qualche minuto: si rinfresca ad ogni job —
+        // è il flusso del sito (Turnstile → /prepare → coda) e la stessa
+        // rotazione costante mantiene `sp` vivo (il rolling window).
+        if (!alive()) flacdlDead = true;
+        else if (!(await prepareRenew())) flacdlDead = true;
+        else {
+          try {
+            const q = await queueJob(meta);
+            jobId = q.id;
+            console.log(`[job] created ${q.id} — "${meta.title}" / ${meta.artist}`);
+            flacdl = await pollJob(q.id);
+            console.log(`[job] ${q.id} → ${flacdl.status} ${flacdl.name || flacdl.error || ""} (${flacdl.size || 0} B)`);
+          } catch (e) {
+            console.log(`[job] flacdl errore: ${e.message}`);
+          }
+        }
+      } else {
+        console.log(`[job] senza id Qobuz — risolvo solo con l'estensione ("${meta.title}" / ${meta.artist})`);
+      }
+      if (flacdl?.status === "done") {
+        return json(res, 200, { jobId: jobId ?? "flacdl", ...flacdl });
+      }
+
+      // 2) estensione di riserva (se installata): stesso contratto di risposta.
+      //    Copre: errori di coda/polling flacdl, sessione morta e job solo-titolo.
+      if (flacdl?.status !== "done") {
+        const ex = await loadExt();
+        if (ex?.resolveSong) {
+          try {
+            const r = await Promise.race([
+              ex.resolveSong(meta),
+              new Promise((r2) => setTimeout(() => r2(null), 150 * 1000)),
+            ]);
+            if (r?.url) {
+              console.log(`[ext] risolto: ${r.name} (${r.size || 0} B via ${r.provider}, q=${r.quality})`);
+              return json(res, 200, {
+                jobId: `ext-${Date.now()}`,
+                status: "done",
+                file: r.url,
+                name: r.name,
+                size: r.size || 0,
+                format: "flac",
+                url: r.url,
+              });
+            }
+            console.log("[ext] nessuna risoluzione; comportamento standard");
+          } catch (e) {
+            console.error("[ext]", e.message);
+          }
+        }
+      }
+
+      // 3) risposta "classica" (invariata per il telefono)
+      if (flacdlDead) {
+        return json(res, 503, { needHuman: true, error: "session expired — solve the Turnstile on https://flacdownloader.com/it (download a song), then copy localStorage 'fd_sp' and POST /inject" });
+      }
+      if (flacdl?.status === "error") {
+        return json(res, 502, { jobId: jobId ?? "flacdl", ...flacdl });
+      }
+      return json(res, flacdl ? 502 : 503, { jobId: jobId ?? "flacdl", ...(flacdl || {}), error: flacdl?.error || "job non completato" });
     }
 
     if (url.pathname === "/decode") {
@@ -324,6 +403,7 @@ if (session.sp) {
 } else {
   console.log("[boot] no session — need human Turnstile (see README)");
 }
+loadExt().catch(() => {}); // provider di riserva, se installato
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[bridge] listening on http://0.0.0.0:${PORT}`);
 });
