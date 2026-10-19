@@ -296,12 +296,36 @@ class FlacDlService {
       if (bestScore >= 0.95) break;
     }
     if (best == null || bestScore < QobuzCandidateMatcher.minConfidence) {
+      // ── Risoluzione di riserva: titolo puro al bridge ──
+      // Senza candidato fidato nel catalogo Qobuz il job non partiva e il
+      // brano finiva su YouTube. Ora si chiede comunque al bridge: quello ha
+      // la sua risoluzione di riserva (ricerca lato server, ISRC, durata) e
+      // copre i casi che il matcher locale non afferra. Null → YouTube.
       log.log(
         'FLACDL',
         '"${song.title}": nessun match fidato nel catalogo '
-        '(candidati $candidatesSeen, migliore ${bestScore.toStringAsFixed(2)})',
+        '(candidati $candidatesSeen, migliore ${bestScore.toStringAsFixed(2)}) '
+        '— provo il risolutore di riserva',
       );
-      return null;
+      final done = await _job(<String, Object?>{
+        'title': song.title,
+        'artist': song.artist,
+        'album': song.album ?? '',
+        if (query.durationMs != null) 'durationMs': query.durationMs,
+      });
+      if (done == null) {
+        log.log(
+          'FLACDL',
+          '"${song.title}": anche il risolutore di riserva non ha risolto',
+        );
+        return null;
+      }
+      log.log(
+        'FLACDL',
+        '"${song.title}" → ${done.name} '
+        '(${(done.size / (1024 * 1024)).toStringAsFixed(1)} MB · riserva)',
+      );
+      return done;
     }
     final trackId = best['id'];
     if (trackId == null) return null;

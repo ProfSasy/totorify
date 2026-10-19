@@ -271,6 +271,7 @@ const server = nodeHttp.createServer(async (req, res) => {
         work: body.work || "",
         bitDepth: body.bitDepth ?? 16,
         samplingRate: body.samplingRate ?? 44.1,
+        durationMs: Number(body.durationMs ?? 0),
         hires: !!body.hires,
       };
 
