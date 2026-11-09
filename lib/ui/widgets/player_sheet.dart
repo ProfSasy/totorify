@@ -771,8 +771,10 @@ class _PlayerSheetState extends State<PlayerSheet>
                           },
                           icon: const Icon(AppIcons.previous, color: _ink),
                         ),
+                        // White with a dark icon, as Spotify's: the colour of
+                        // the song stays on the background.
                         PlayButton(
-                          color: palette.accent,
+                          color: _ink,
                           size: 68,
                           playing: isPlaying,
                           loading: isLoading,

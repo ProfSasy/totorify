@@ -103,7 +103,7 @@ class AppIcons {
 
 /// The three glyphs of the tab bar, drawn by hand: thin outlines at rest,
 /// solid and heavier when their tab is the current one.
-enum NavGlyph { home, search, library }
+enum NavGlyph { home, search, library, create }
 
 class NavGlyphIcon extends StatelessWidget {
   const NavGlyphIcon({
@@ -172,6 +172,9 @@ class _NavGlyphPainter extends CustomPainter {
         canvas.drawLine(const Offset(4.6, 3.8), const Offset(4.6, 20.2), stroke);
         canvas.drawLine(const Offset(10.2, 3.8), const Offset(10.2, 20.2), stroke);
         canvas.drawLine(const Offset(15.2, 4.6), const Offset(19.6, 20.2), stroke);
+      case NavGlyph.create:
+        canvas.drawLine(const Offset(12, 4.4), const Offset(12, 19.6), stroke);
+        canvas.drawLine(const Offset(4.4, 12), const Offset(19.6, 12), stroke);
     }
   }
 

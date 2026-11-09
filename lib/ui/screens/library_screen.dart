@@ -30,6 +30,11 @@ class LibraryScreen extends StatefulWidget {
 
   const LibraryScreen({super.key, required this.audioHandler});
 
+  /// Asked by "Crea" in the tab bar: the library opens its menu to create
+  /// or import a playlist.
+  static final ValueNotifier<int> _createRequests = ValueNotifier<int>(0);
+  static void requestCreate() => _createRequests.value++;
+
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
@@ -66,7 +71,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
   bool get _showsSongs => _filter == 'Scaricati' || _filter == 'Preferiti';
 
   @override
+  void initState() {
+    super.initState();
+    LibraryScreen._createRequests.addListener(_onCreateRequest);
+  }
+
+  void _onCreateRequest() {
+    // After the frame: the tab may have just been brought forward.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _showAddMenu();
+    });
+  }
+
+  @override
   void dispose() {
+    LibraryScreen._createRequests.removeListener(_onCreateRequest);
     _barSolid.dispose();
     super.dispose();
   }

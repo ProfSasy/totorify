@@ -26,7 +26,12 @@ class TotorifyNavBar extends StatelessWidget {
     (NavGlyph.home, 'Home'),
     (NavGlyph.search, 'Cerca'),
     (NavGlyph.library, 'La tua libreria'),
+    // Not a tab: it opens the menu to create or import, as Spotify's.
+    (NavGlyph.create, 'Crea'),
   ];
+
+  /// Position of "Crea" among the items.
+  static const int createIndex = 3;
 
   @override
   Widget build(BuildContext context) {

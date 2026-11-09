@@ -21,7 +21,9 @@ import '../widgets/collection_header.dart';
 import '../widgets/play_button.dart';
 import '../widgets/player_sheet.dart';
 import '../widgets/song_options_sheet.dart';
+import '../widgets/filter_pill.dart';
 import '../widgets/song_tile.dart';
+import '../widgets/top_bar.dart';
 import 'settings/settings_kit.dart';
 
 /// Page of a collection of songs: a playlist of the user, a chart, an
@@ -41,7 +43,34 @@ class PlaylistScreen extends StatefulWidget {
   State<PlaylistScreen> createState() => _PlaylistScreenState();
 }
 
+/// How the songs of a collection are listed.
+enum _Order {
+  custom('Ordine della playlist'),
+  recent('Aggiunti di recente'),
+  title('Titolo'),
+  artist('Artista'),
+  album('Album'),
+  duration('Durata');
+
+  const _Order(this.label);
+  final String label;
+}
+
 class _PlaylistScreenState extends State<PlaylistScreen> {
+  // The order chosen for each collection, kept while the app is open.
+  static final Map<String, _Order> _orders = {};
+
+  // Finding inside the list: the words typed and the artist chosen.
+  final TextEditingController _find = TextEditingController();
+  String _query = '';
+  String? _artist;
+
+  // The play button follows the top bar once its row has scrolled under it.
+  final GlobalKey _actionsKey = GlobalKey();
+  final ValueNotifier<bool> _pinPlay = ValueNotifier<bool>(false);
+
+  _Order get _order => _orders[playlist.id] ?? _Order.custom;
+
   // Collections that belong to the app itself and cannot be saved as a
   // playlist of the user.
   static const Set<String> _builtIn = {
@@ -78,7 +107,211 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
   @override
   void dispose() {
     _scrollOffset.dispose();
+    _pinPlay.dispose();
+    _find.dispose();
     super.dispose();
+  }
+
+  static String _mainArtist(Song song) => song.artist.split(',').first.trim();
+
+  /// The songs as listed: found by the words typed and the artist chosen,
+  /// in the order chosen.
+  List<Song> _shown(List<Song> songs) {
+    final words = _query.trim().toLowerCase();
+    var list = songs;
+    if (words.isNotEmpty || _artist != null) {
+      list = [
+        for (final song in songs)
+          if ((_artist == null || _mainArtist(song) == _artist) &&
+              (words.isEmpty ||
+                  '${song.title} ${song.artist} ${song.album ?? ''}'.toLowerCase().contains(words)))
+            song,
+      ];
+    }
+    int byText(String a, String b) => a.toLowerCase().compareTo(b.toLowerCase());
+    return switch (_order) {
+      _Order.custom => list,
+      _Order.recent => list.reversed.toList(),
+      _Order.title => [...list]..sort((a, b) => byText(a.title, b.title)),
+      _Order.artist => [...list]..sort((a, b) => byText(a.artist, b.artist)),
+      _Order.album => [...list]..sort((a, b) => byText(a.album ?? '', b.album ?? '')),
+      _Order.duration => [...list]..sort((a, b) => a.duration.compareTo(b.duration)),
+    };
+  }
+
+  /// The artists with most songs in a long collection, as filters.
+  static List<String> _topArtists(List<Song> songs) {
+    if (songs.length < 20) return const [];
+    final counts = <String, int>{};
+    for (final song in songs) {
+      final artist = _mainArtist(song);
+      if (artist.isNotEmpty) counts[artist] = (counts[artist] ?? 0) + 1;
+    }
+    final ranked = counts.entries.where((e) => e.value >= 2).toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return [for (final e in ranked.take(10)) e.key];
+  }
+
+  // Where the middle of the actions row is in the scrolled content: measured
+  // after a frame, since a scroll notification comes before the new layout.
+  double? _actionsAt;
+
+  void _measureActions() {
+    final box = _actionsKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.attached || !box.hasSize) return;
+    _actionsAt = box.localToGlobal(Offset(0, box.size.height / 2)).dy + _scrollOffset.value;
+    _onScroll(_scrollOffset.value);
+  }
+
+  void _onScroll(double pixels) {
+    _scrollOffset.value = pixels;
+    final at = _actionsAt;
+    if (at == null) return;
+    _pinPlay.value = at - pixels < MediaQuery.paddingOf(context).top + TopBar.height;
+  }
+
+  Future<void> _chooseOrder() {
+    return showAppSheet<void>(
+      context,
+      builder: (sheetContext) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SheetTitle('Ordina per'),
+          for (final order in _Order.values)
+            SheetAction(
+              icon: order == _order ? AppIcons.check : AppIcons.sort,
+              iconColor: order == _order ? Theme.of(context).colorScheme.primary : null,
+              label: order.label,
+              onTap: () {
+                Navigator.pop(sheetContext);
+                PlaybackLogService.instance
+                    .log('UI', 'playlist "${playlist.title}": ordina per ${order.name}');
+                setState(() => _orders[playlist.id] = order);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Search field, order and artist filters above the songs, as Spotify has.
+  Widget _buildTools(List<Song> songs, AmbientPalette palette) {
+    final cs = Theme.of(context).colorScheme;
+    final artists = _topArtists(songs);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.xs, AppSpacing.lg, AppSpacing.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 38,
+                  child: TextField(
+                    controller: _find,
+                    onChanged: (text) => setState(() => _query = text),
+                    textInputAction: TextInputAction.search,
+                    style: AppText.tileSubtitle(cs).copyWith(color: cs.onSurface, fontSize: 14),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText: 'Cerca in questa playlist',
+                      hintStyle: AppText.tileSubtitle(cs).copyWith(fontSize: 14),
+                      prefixIcon: Icon(AppIcons.search, size: 20, color: cs.onSurfaceVariant),
+                      prefixIconConstraints: const BoxConstraints(minWidth: 38),
+                      suffixIcon: _query.isEmpty
+                          ? null
+                          : GestureDetector(
+                              onTap: () => setState(() {
+                                _find.clear();
+                                _query = '';
+                              }),
+                              child: Icon(AppIcons.clear, size: 18, color: cs.onSurfaceVariant),
+                            ),
+                      filled: true,
+                      fillColor: Colors.white.withValues(alpha: 0.10),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 9),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              SizedBox(
+                height: 38,
+                child: TextButton.icon(
+                  onPressed: _chooseOrder,
+                  style: TextButton.styleFrom(
+                    backgroundColor: Colors.white.withValues(alpha: 0.10),
+                    foregroundColor: cs.onSurface,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  ),
+                  icon: const Icon(AppIcons.sort, size: 18),
+                  label: Text(
+                    _order == _Order.custom ? 'Ordina' : _order.label,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (artists.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.sm),
+            SizedBox(
+              height: 34,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: artists.length,
+                separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+                itemBuilder: (context, i) => FilterPill(
+                  label: artists[i],
+                  selected: _artist == artists[i],
+                  onTap: () => setState(() => _artist = _artist == artists[i] ? null : artists[i]),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Play / pause of the whole collection, [queue] in the order shown.
+  Widget _playButton(List<Song> songs, List<Song> queue, AmbientPalette palette) {
+    return ValueListenableBuilder<(String?, bool)>(
+      valueListenable: audioHandler.playbackIndicator,
+      builder: (context, indicator, _) {
+        // The button follows the player while this collection is the one
+        // playing.
+        final current = audioHandler.currentSong?.id;
+        final isCurrent = current != null && songs.any((s) => s.id == current);
+        final playing = isCurrent && indicator.$2;
+        // Always the colour of the app, as Spotify keeps its green.
+        return PlayButton(
+          color: Theme.of(context).colorScheme.primary,
+          playing: playing,
+          onPressed: queue.isEmpty
+              ? null
+              : () {
+                  if (playing) {
+                    PlaybackLogService.instance.log('UI', 'playlist: pausa "${playlist.title}"');
+                    audioHandler.pause();
+                  } else if (isCurrent) {
+                    PlaybackLogService.instance.log('UI', 'playlist: riprendi "${playlist.title}"');
+                    audioHandler.play();
+                  } else {
+                    PlaybackLogService.instance.log('UI', 'playlist: play all "${playlist.title}"');
+                    _play(queue.first, queue);
+                  }
+                },
+        );
+      },
+    );
   }
 
   String _formatTotalDuration(List<Song> songs) {
@@ -171,6 +404,12 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
           final editable = stored != null && !playlist.isSystem;
           final savable = playlist.isSystem && !_builtIn.contains(playlist.id);
           final songs = current.songs;
+          final shown = _shown(songs);
+          // The header may have changed height (a description, a title on
+          // two lines): the row is measured again once laid out.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _measureActions();
+          });
           final coverUrl = playlistCoverUrl(current);
           final duration = _formatTotalDuration(songs);
 
@@ -181,9 +420,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
               children: [
                 NotificationListener<ScrollNotification>(
                   onNotification: (notification) {
-                    if (notification.depth == 0) {
-                      _scrollOffset.value = notification.metrics.pixels;
-                    }
+                    if (notification.depth == 0) _onScroll(notification.metrics.pixels);
                     return false;
                   },
                   child: CustomScrollView(
@@ -199,6 +436,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                             context,
                             current: current,
                             songs: songs,
+                            queue: shown,
                             duration: duration,
                             palette: palette,
                             editable: editable,
@@ -207,6 +445,19 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                           ),
                         ),
                       ),
+                      if (songs.length > 1 && _reordering == null)
+                        SliverToBoxAdapter(child: _buildTools(songs, palette)),
+                      if (songs.isNotEmpty && shown.isEmpty && _reordering == null)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.all(AppSpacing.xl),
+                            child: Text(
+                              'Nessun brano trovato',
+                              textAlign: TextAlign.center,
+                              style: AppText.tileSubtitle(cs),
+                            ),
+                          ),
+                        ),
                       if (songs.isEmpty)
                         const SliverFillRemaining(
                           hasScrollBody: false,
@@ -248,7 +499,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                         SliverList(
                           delegate: SliverChildBuilderDelegate(
                             (context, index) {
-                              final song = songs[index];
+                              final song = shown[index];
                               final on = _selected.contains(index);
                               return ListTile(
                                 leading: Row(
@@ -269,7 +520,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                                 }),
                               );
                             },
-                            childCount: songs.length,
+                            childCount: shown.length,
                           ),
                         )
                       else
@@ -278,12 +529,12 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                           builder: (context, indicator, _) => SliverList(
                             delegate: SliverChildBuilderDelegate(
                               (context, index) {
-                                final song = songs[index];
+                                final song = shown[index];
                                 return SongTile(
                                   song: song,
                                   isPlaying:
                                       indicator.$2 && indicator.$1 == song.id,
-                                  onTap: () => _play(song, songs),
+                                  onTap: () => _play(song, shown),
                                   onRemove: editable
                                       ? () {
                                           PlaybackLogService.instance.log('UI',
@@ -294,7 +545,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                                       : null,
                                 );
                               },
-                              childCount: songs.length,
+                              childCount: shown.length,
                             ),
                           ),
                         ),
@@ -348,7 +599,29 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                     child: _SelectionBar(
                       count: _selected.length,
                       editable: editable,
-                      onAction: (action) => _onSelection(action, songs),
+                      onAction: (action) => _onSelection(action, shown),
+                    ),
+                  ),
+                // The play button stays at hand under the top bar, as Spotify's.
+                if (songs.isNotEmpty && _reordering == null && !_selecting)
+                  Positioned(
+                    top: MediaQuery.paddingOf(context).top + TopBar.height - 8,
+                    right: AppSpacing.lg,
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: _pinPlay,
+                      builder: (context, pinned, child) => IgnorePointer(
+                        ignoring: !pinned,
+                        child: AnimatedScale(
+                          scale: pinned ? 1 : 0.6,
+                          duration: AppMotion.fast,
+                          child: AnimatedOpacity(
+                            opacity: pinned ? 1 : 0,
+                            duration: AppMotion.fast,
+                            child: child,
+                          ),
+                        ),
+                      ),
+                      child: _playButton(songs, shown, palette),
                     ),
                   ),
               ],
@@ -405,6 +678,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     BuildContext context, {
     required Playlist current,
     required List<Song> songs,
+    required List<Song> queue,
     required String duration,
     required AmbientPalette palette,
     required bool editable,
@@ -444,6 +718,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
 
         // ── Actions: download, save, shuffle, play ──────────────────────
         Row(
+          key: _actionsKey,
           children: [
             if (songs.isNotEmpty)
               ValueListenableBuilder<List<Song>>(
@@ -487,41 +762,19 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                 icon: Icon(AppIcons.shuffle, color: cs.onSurfaceVariant, size: 28),
                 tooltip: 'Riproduzione casuale',
                 onPressed: () {
-                  final shuffled = List<Song>.from(songs)..shuffle();
+                  final shuffled = List<Song>.from(queue.isEmpty ? songs : queue)..shuffle();
                   PlaybackLogService.instance
                       .log('UI', 'playlist: shuffle "${playlist.title}"');
                   _play(shuffled.first, shuffled);
                 },
               ),
               const SizedBox(width: AppSpacing.sm),
-              ValueListenableBuilder<(String?, bool)>(
-                valueListenable: audioHandler.playbackIndicator,
-                builder: (context, indicator, _) {
-                  // The button follows the player while this collection is
-                  // the one playing.
-                  final isCurrent = audioHandler.currentSong != null &&
-                      songs.any((s) => s.id == audioHandler.currentSong!.id);
-                  final playing = isCurrent && indicator.$2;
-                  return PlayButton(
-                    color: palette.accent,
-                    playing: playing,
-                    onPressed: () {
-                      if (playing) {
-                        PlaybackLogService.instance
-                            .log('UI', 'playlist: pausa "${playlist.title}"');
-                        audioHandler.pause();
-                      } else if (isCurrent) {
-                        PlaybackLogService.instance
-                            .log('UI', 'playlist: riprendi "${playlist.title}"');
-                        audioHandler.play();
-                      } else {
-                        PlaybackLogService.instance
-                            .log('UI', 'playlist: play all "${playlist.title}"');
-                        _play(songs.first, songs);
-                      }
-                    },
-                  );
-                },
+              // Hidden while its copy is pinned under the top bar.
+              ValueListenableBuilder<bool>(
+                valueListenable: _pinPlay,
+                builder: (context, pinned, child) =>
+                    Opacity(opacity: pinned ? 0 : 1, child: child),
+                child: _playButton(songs, queue, palette),
               ),
             ],
           ],

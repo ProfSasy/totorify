@@ -59,6 +59,13 @@ class _MainShellState extends State<MainShell> {
       );
 
   void _goToTab(int index) {
+    if (index == TotorifyNavBar.createIndex) {
+      // The library makes and keeps what is created: its menu opens there.
+      PlaybackLogService.instance.log('UI', 'tab Crea');
+      if (_currentIndex != 2) _goToTab(2);
+      LibraryScreen.requestCreate();
+      return;
+    }
     if (index == _currentIndex) {
       AppNavigation.backToStart(index);
       return;
