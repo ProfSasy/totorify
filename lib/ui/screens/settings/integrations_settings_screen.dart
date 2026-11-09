@@ -149,7 +149,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
     _say(
       update == null
           ? 'Hai già l\'ultima versione (o GitHub non risponde)'
-          : 'Nuova versione: ${update.behind} modifiche, l\'ultima "${update.message}"',
+          : 'Nuova versione: "${update.message}". Aggiornala da SideStore → My Apps',
     );
   }
 

@@ -30,9 +30,13 @@ jobs:
       - name: Analyze Code
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
+      # The version grows with every build, so SideStore can tell a newer one.
       - name: Build iOS App (No Codesign)
         run: |
-          flutter build ios --release --no-codesign -v --dart-define=GIT_SHA=${GITHUB_SHA::7} || true
+          flutter build ios --release --no-codesign -v \
+            --build-name=1.0.${{ github.run_number }} \
+            --build-number=${{ github.run_number }} \
+            --dart-define=GIT_SHA=${GITHUB_SHA::7} || true
 
       - name: Package into IPA
         run: |
@@ -49,3 +53,72 @@ jobs:
           name: Totorify-iOS-ipa
           path: Totorify-iOS.ipa
           retention-days: 30
+
+      # The IPA and a SideStore source that points to it go to a folder of
+      # the owner's storage whose name is a secret: SideStore reads the
+      # source from there and offers each new build in My Apps. Nothing is
+      # published where the folder name is not known. Skipped without the
+      # storage secrets (a fork).
+      - name: Publish for SideStore
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_SECRET_PATH: ${{ secrets.R2_SECRET_PATH }}
+          R2_BUCKET: totorify
+          PUBLIC_BASE: https://pub-1a01fc3d9ba74df480772097475fa3ce.r2.dev
+          VERSION: 1.0.${{ github.run_number }}
+          BUILD: ${{ github.run_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$R2_SECRET_PATH" ] || [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "Storage secrets missing: nothing published."
+            exit 0
+          fi
+          IPA="Totorify-$VERSION.ipa"
+          export SHA="${GITHUB_SHA::7}"
+          export SIZE=$(stat -f%z Totorify-iOS.ipa)
+          export DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          export IPA_URL="$PUBLIC_BASE/$R2_SECRET_PATH/$IPA"
+          python3 - <<'PY'
+          import json, os
+          env = os.environ
+          source = {
+              "name": "Totorify",
+              "identifier": "com.profsasy.totorify.source",
+              "subtitle": "Gli aggiornamenti di Totorify",
+              "apps": [{
+                  "name": "Totorify",
+                  "bundleIdentifier": "com.profsasy.kreateIos",
+                  "developerName": "ProfSasy",
+                  "subtitle": "La tua musica",
+                  "localizedDescription": "Totorify: la tua musica, con l'interfaccia che conosci.",
+                  "iconURL": f"https://raw.githubusercontent.com/{env['REPO']}/main/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png",
+                  "tintColor": "1ED760",
+                  "versions": [{
+                      "version": env["VERSION"],
+                      "buildVersion": env["BUILD"],
+                      "date": env["DATE"],
+                      "localizedDescription": f"Build {env['SHA']}",
+                      "downloadURL": env["IPA_URL"],
+                      "size": int(env["SIZE"]),
+                      "minOSVersion": "15.0",
+                  }],
+                  "appPermissions": {"entitlements": [], "privacy": {}},
+              }],
+              "news": [],
+          }
+          with open("source.json", "w") as f:
+              json.dump(source, f, indent=2)
+          PY
+          S3="s3://$R2_BUCKET/$R2_SECRET_PATH"
+          # The app first, then the source that points to it.
+          aws s3 cp Totorify-iOS.ipa "$S3/$IPA" --endpoint-url "$R2_ENDPOINT" \
+            --content-type application/octet-stream --only-show-errors
+          aws s3 cp source.json "$S3/source.json" --endpoint-url "$R2_ENDPOINT" \
+            --content-type application/json --cache-control no-cache --only-show-errors
+          # Older builds are removed: only the one in the source is kept.
+          aws s3 rm "$S3/" --recursive --endpoint-url "$R2_ENDPOINT" --only-show-errors \
+            --exclude "*" --include "Totorify-*.ipa" --exclude "$IPA"
+          echo "Published $VERSION ($SHA) for SideStore."

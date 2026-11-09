@@ -356,7 +356,8 @@ class _MainWithErrorListenerState extends State<_MainWithErrorListener> {
         if (update == null || !mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           duration: const Duration(seconds: 6),
-          content: Text('C\'è una nuova versione di Totorify (${update.behind} modifiche)'),
+          // SideStore offers it from the Totorify source once GitHub built it.
+          content: Text('C\'è una nuova versione di Totorify: aggiornala da SideStore → My Apps'),
         ));
       });
     }
