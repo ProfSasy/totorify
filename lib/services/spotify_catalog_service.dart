@@ -167,7 +167,7 @@ class SpotifyCatalogService {
       final spotifyData = await SpotifyService.instance.fetchPlaylist(playlistId);
       if (spotifyData != null && spotifyData.tracks.isNotEmpty) {
         final songs = spotifyData.tracks.map((t) {
-          final cover = SpotifyService.instance.getCachedCover(t.trackId);
+          final cover = t.coverUrl ?? SpotifyService.instance.getCachedCover(t.trackId);
           return Song(
             id: 'spotify_${t.trackId}',
             title: t.title,
@@ -196,8 +196,12 @@ class SpotifyCatalogService {
 
         if (songs.length > firstBatch) {
           unawaited(() async {
-            final remainingIds =
-                spotifyData.tracks.skip(firstBatch).map((t) => t.trackId).toList();
+            // Tracks read from the Web API came with their cover already.
+            final remainingIds = spotifyData.tracks
+                .skip(firstBatch)
+                .where((t) => t.coverUrl == null)
+                .map((t) => t.trackId)
+                .toList();
             // Slowly: nobody is waiting for these, and a burst of requests
             // gets the whole app rate-limited by Spotify.
             final covers =

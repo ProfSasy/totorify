@@ -12,12 +12,22 @@ class PlaylistImporterService {
   static final PlaylistImporterService instance = PlaylistImporterService._internal();
   PlaylistImporterService._internal();
 
+  /// Songs whose YouTube video is looked up right after an import. The rest
+  /// is found when it plays: thousands of searches at once would get the app
+  /// throttled by YouTube.
+  static const int _preResolved = 150;
+
+  /// True when the last Spotify import stopped at the first hundred tracks
+  /// because the rest needs the Spotify login.
+  bool lastImportIncomplete = false;
+
   /// Importa una playlist da link (Spotify o YouTube Music) ad altissima velocità.
   Future<Playlist?> importFromUrl(
     String url, {
     void Function(int current, int total)? onProgress,
   }) async {
     final cleanUrl = url.trim();
+    lastImportIncomplete = false;
 
     if (cleanUrl.contains('spotify.com') || cleanUrl.startsWith('spotify:')) {
       return _importFromSpotifyInstant(cleanUrl, onProgress: onProgress);
@@ -40,6 +50,7 @@ class PlaylistImporterService {
         return null;
       }
 
+      lastImportIncomplete = spotifyData.incomplete;
       onProgress?.call(1, spotifyData.tracks.length);
 
       final songs = <Song>[];
@@ -49,7 +60,7 @@ class PlaylistImporterService {
           title: t.title,
           artist: t.artist,
           duration: Duration(milliseconds: t.durationMs), // Minutaggio ESATTO Spotify!
-          thumbnailUrl: spotifyData.coverUrl ?? '', // Copertina originale Spotify!
+          thumbnailUrl: t.coverUrl ?? spotifyData.coverUrl ?? '', // Copertina originale Spotify!
           spotifyTrackId: t.trackId,
         ));
       }
@@ -94,7 +105,9 @@ class PlaylistImporterService {
         await StorageService.instance.batchUpdateSongsInPlaylist(playlist.id, toApply);
       }
 
-      final flushTimer = Timer.periodic(const Duration(milliseconds: 600), (_) {
+      // Each flush writes the whole playlist: rarer on a long one.
+      final flushEvery = Duration(milliseconds: songsToProcess.length > 300 ? 3000 : 600);
+      final flushTimer = Timer.periodic(flushEvery, (_) {
         unawaited(flushUpdates().catchError((Object e) {
           debugPrint('PlaylistImporterService.flush: $e');
         }));
@@ -108,12 +121,19 @@ class PlaylistImporterService {
           if (trackId == null) continue;
 
           try {
-            // 1. Recupera copertina HD album Spotify
-            final hdCover = await SpotifyService.instance.fetchTrackCoverHD(trackId);
+            // 1. Recupera copertina HD album Spotify (the Web API already
+            // gave it for the tracks after the first hundred).
+            final hasOwnCover =
+                song.thumbnailUrl.isNotEmpty && song.thumbnailUrl != playlist.thumbnailUrl;
+            final hdCover =
+                hasOwnCover ? null : await SpotifyService.instance.fetchTrackCoverHD(trackId);
 
             // 2. Pre-risolve il video YouTube da riprodurre e lo mette in cache
             final ytId = StorageService.instance.getCachedYouTubeMapping(song.id) ??
-                await TrackMatcherService.instance.resolveAndCacheStreamId(song);
+                (i < _preResolved
+                    ? await TrackMatcherService.instance.resolveAndCacheStreamId(song)
+                    : null);
+            if (hdCover == null && ytId == null) continue;
 
             // copyWith keeps the old value when ytId is null (no match).
             final updated = song.copyWith(
@@ -163,7 +183,11 @@ class PlaylistImporterService {
     String url, {
     void Function(int current, int total)? onProgress,
   }) async {
-    final ytPlaylist = await YTMusicService.instance.getPlaylist(url);
+    final ytPlaylist = await YTMusicService.instance.getPlaylist(
+      url,
+      // Total unknown while reading: 0 says so to the sheet.
+      onCount: (count) => onProgress?.call(count, 0),
+    );
     if (ytPlaylist == null) return null;
 
     final created = Playlist(

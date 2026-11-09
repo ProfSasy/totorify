@@ -8,6 +8,8 @@ import '../models/playlist.dart';
 import 'auth_service.dart';
 import 'storage_service.dart';
 import 'app_http.dart';
+import 'playback_log_service.dart';
+import 'ytmusic_catalog_service.dart';
 
 /// Where the audio of a YouTube video can be streamed from, and its length.
 typedef _VideoStreams = ({String? audioUrl, String? hlsManifestUrl, Duration? duration});
@@ -1096,25 +1098,18 @@ class YTMusicService {
         .trim();
   }
 
-  Future<Playlist?> getPlaylist(String urlOrId) async {
+  /// The whole playlist, however long: YouTube hands it over a page at a
+  /// time, and [onCount] hears how many songs have been read so far.
+  Future<Playlist?> getPlaylist(String urlOrId, {void Function(int count)? onCount}) async {
     try {
       final id = PlaylistId.fromString(urlOrId);
       final ytPlaylist = await _yt.playlists.get(id);
-      final videoStream = _yt.playlists.getVideos(id);
-      final songs = <Song>[];
-
-      await for (final video in videoStream.take(100)) {
-        final dur = video.duration ?? Duration.zero;
-        // Skip videos with unknown duration to avoid showing 0:00
-        if (dur == Duration.zero) continue;
-        songs.add(Song(
-          id: video.id.value,
-          title: _cleanTrackTitle(video.title),
-          artist: video.author,
-          duration: dur,
-          thumbnailUrl: video.thumbnails.mediumResUrl,
-        ));
-      }
+      // The tracks come from YouTube Music's pages: the video list of
+      // youtube_explode has come back empty since YouTube changed it (2026).
+      var songs = await YTMusicCatalogService.instance.allPlaylistTracks(id.value, onCount: onCount) ??
+          const <Song>[];
+      if (songs.isEmpty) songs = await _videosOf(id, onCount: onCount);
+      PlaybackLogService.instance.log('YT', 'playlist ${id.value}: ${songs.length} brani');
 
       return Playlist(
         id: ytPlaylist.id.value,
@@ -1127,6 +1122,30 @@ class YTMusicService {
       debugPrint('YTMusic.getPlaylist: $e');
       return null;
     }
+  }
+
+  /// The playlist read as YouTube videos, for when YouTube Music has no page
+  /// for it.
+  Future<List<Song>> _videosOf(PlaylistId id, {void Function(int count)? onCount}) async {
+    final songs = <Song>[];
+    try {
+      await for (final video in _yt.playlists.getVideos(id)) {
+        final dur = video.duration ?? Duration.zero;
+        // Skip videos with unknown duration to avoid showing 0:00
+        if (dur == Duration.zero) continue;
+        if (songs.length % 50 == 0) onCount?.call(songs.length);
+        songs.add(Song(
+          id: video.id.value,
+          title: _cleanTrackTitle(video.title),
+          artist: video.author,
+          duration: dur,
+          thumbnailUrl: video.thumbnails.mediumResUrl,
+        ));
+      }
+    } catch (e) {
+      debugPrint('YTMusic._videosOf: $e');
+    }
+    return songs;
   }
 
   void dispose() {

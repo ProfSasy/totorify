@@ -761,6 +761,59 @@ class YTMusicCatalogService {
     return _albums[album.id] = (full, songs);
   }
 
+  /// Pages of a playlist read at most (100 tracks each): only a guard
+  /// against a token that never ends, no playlist is that long.
+  static const int _maxPlaylistPages = 300;
+
+  /// Every track of a public playlist, however long: YouTube Music gives a
+  /// hundred per page and a token for the next one. [onCount] hears how many
+  /// have been read so far. Null when the playlist cannot be read.
+  Future<List<Song>?> allPlaylistTracks(String playlistId, {void Function(int count)? onCount}) async {
+    final browseId = playlistId.startsWith('VL') ? playlistId : 'VL$playlistId';
+    final data = await _post('browse', {'browseId': browseId});
+    if (data == null) return null;
+    final songs = <Song>[];
+
+    // Adds the rows of a page and returns the token of the next one.
+    String? read(List<dynamic> items) {
+      String? next;
+      for (final item in items) {
+        if (item is! Map) continue;
+        final renderer = item['musicResponsiveListItemRenderer'];
+        if (renderer is Map<String, dynamic>) {
+          final song = _songOf(_row(renderer));
+          if (song != null) songs.add(song);
+        }
+        final token = item['continuationItemRenderer']?['continuationEndpoint']
+            ?['continuationCommand']?['token'];
+        if (token is String) next = token;
+      }
+      return next;
+    }
+
+    final sections = data['contents']?['twoColumnBrowseResultsRenderer']?['secondaryContents']
+            ?['sectionListRenderer']?['contents'] as List<dynamic>? ??
+        const [];
+    String? token;
+    for (final section in sections) {
+      final shelf = section is Map ? section['musicPlaylistShelfRenderer'] : null;
+      if (shelf is Map) token = read(shelf['contents'] as List<dynamic>? ?? const []) ?? token;
+    }
+    for (var page = 1; token != null && page < _maxPlaylistPages; page++) {
+      onCount?.call(songs.length);
+      final more = await _post('browse', {'continuation': token});
+      final actions = more?['onResponseReceivedActions'] as List<dynamic>?;
+      final items = actions == null || actions.isEmpty
+          ? null
+          : actions.first['appendContinuationItemsAction']?['continuationItems'] as List<dynamic>?;
+      // A page that does not come keeps what was read: better a long part
+      // of the playlist than nothing.
+      if (items == null) break;
+      token = read(items);
+    }
+    return songs;
+  }
+
   /// Tracks of a catalog playlist, such as "all songs" of an artist.
   Future<List<Song>> playlistTracks(CatalogMore playlist, {String? fallbackArtist}) async {
     // Without the parameters of the link: with them the page comes in a

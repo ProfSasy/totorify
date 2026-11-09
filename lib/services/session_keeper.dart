@@ -19,9 +19,12 @@ class SessionKeeper {
   static final SessionKeeper instance = SessionKeeper._();
 
   static const String _boxName = 'kreate_session';
-  static const int _maxSongs = 500;
-
   Box? _box;
+
+  /// The queue last written, by its song ids: the position is saved every
+  /// few seconds, the songs only when they change, so a queue of thousands
+  /// is kept whole without rewriting it all the time.
+  int? _savedQueue;
   AudioPlayerHandler? _handler;
   Timer? _debounce;
   Timer? _ticker;
@@ -61,7 +64,10 @@ class SessionKeeper {
   }
 
   void _onSettingChanged() {
-    if (!AppSettings.instance.persistentQueue.value) unawaited(_box?.clear());
+    if (!AppSettings.instance.persistentQueue.value) {
+      _savedQueue = null;
+      unawaited(_box?.clear());
+    }
   }
 
   void _soon() {
@@ -76,26 +82,23 @@ class SessionKeeper {
     if (handler == null || box == null || !AppSettings.instance.persistentQueue.value) return;
     final snapshot = handler.queueSnapshot;
     if (snapshot.songs.isEmpty || snapshot.index < 0) {
+      _savedQueue = null;
       await box.clear();
       return;
     }
-    // A very long queue is kept around the current song.
-    var songs = snapshot.songs;
-    var index = snapshot.index;
-    if (songs.length > _maxSongs) {
-      final from = (index - 50).clamp(0, songs.length - _maxSongs);
-      songs = songs.sublist(from, from + _maxSongs);
-      index -= from;
-    }
+    final songs = snapshot.songs;
+    final queue = Object.hash(songs.length, Object.hashAll(songs.map((song) => song.id)));
     try {
       await box.putAll({
-        'songs': [for (final song in songs) song.toMap()],
-        'index': index,
+        if (queue != _savedQueue) 'songs': [for (final song in songs) song.toMap()],
+        'index': snapshot.index,
         'positionMs': handler.position.inMilliseconds,
         'shuffle': snapshot.shuffle,
         'repeat': snapshot.repeat.name,
       });
+      _savedQueue = queue;
     } catch (e) {
+      _savedQueue = null;
       debugPrint('SessionKeeper.save: $e');
     }
   }

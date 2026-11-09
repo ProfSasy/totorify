@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/song.dart';
+import 'playback_log_service.dart';
 import 'spotify_internal_auth_service.dart';
 
 class SpotifyTrack {
@@ -10,11 +11,16 @@ class SpotifyTrack {
   final String artist;
   final int durationMs;
 
+  /// Album cover, when the source already said it (the Web API does, the
+  /// embed page does not).
+  final String? coverUrl;
+
   const SpotifyTrack({
     required this.trackId,
     required this.title,
     required this.artist,
     required this.durationMs,
+    this.coverUrl,
   });
 }
 
@@ -25,12 +31,17 @@ class SpotifyPlaylistData {
   final String? coverUrl;
   final List<SpotifyTrack> tracks;
 
+  /// True when only the first [SpotifyService.embedLimit] tracks could be
+  /// read: the public page stops there, and the rest needs the Spotify login.
+  final bool incomplete;
+
   const SpotifyPlaylistData({
     required this.id,
     required this.title,
     this.description,
     this.coverUrl,
     required this.tracks,
+    this.incomplete = false,
   });
 }
 
@@ -39,6 +50,11 @@ class SpotifyService {
   SpotifyService._internal();
 
   static const int _maxCacheSize = 300;
+
+  /// Tracks the public embed page lists at most: a longer playlist is cut
+  /// there, and the rest is read with the Web API when logged in.
+  static const int embedLimit = 100;
+  static const int _apiPage = 100;
 
   // Spotify counts requests to its public pages per browser identity, and
   // answers 429 once one has asked too much: the second is tried then.
@@ -193,15 +209,89 @@ class SpotifyService {
         ));
       }
 
+      // The embed page stops at a hundred tracks: the rest of a longer
+      // playlist comes from the Web API, which needs the Spotify login.
+      var incomplete = false;
+      if (rawTracks.length >= embedLimit) {
+        final rest = await _restOfPlaylist(playlistId, from: rawTracks.length);
+        if (rest == null) {
+          incomplete = true;
+        } else {
+          tracks.addAll(rest);
+        }
+        PlaybackLogService.instance.log(
+          'SPOTIFY',
+          'playlist $playlistId: ${tracks.length} brani'
+              '${incomplete ? ' (solo i primi $embedLimit: serve l\'accesso a Spotify)' : ''}',
+        );
+      }
+
       return SpotifyPlaylistData(
         id: playlistId,
         title: title,
         description: description,
         coverUrl: playlistCover,
         tracks: tracks,
+        incomplete: incomplete,
       );
     } catch (e) {
       debugPrint('SpotifyService.fetchPlaylist error: $e');
+      return null;
+    }
+  }
+
+  /// The tracks of a playlist after the first [from], page by page through
+  /// the Web API. Null without the Spotify login or when a page is refused,
+  /// so that a half-read playlist is never taken for a whole one.
+  Future<List<SpotifyTrack>?> _restOfPlaylist(String playlistId, {required int from}) async {
+    final token = await SpotifyInternalAuthService.instance.getInternalAccessToken();
+    if (token == null) return null;
+    final tracks = <SpotifyTrack>[];
+    Uri? next = Uri.parse(
+      'https://api.spotify.com/v1/playlists/$playlistId/tracks?offset=$from&limit=$_apiPage'
+      '&fields=next,items(track(id,name,duration_ms,artists(name),album(images(url,width))))',
+    );
+    try {
+      while (next != null) {
+        final response = await _client.get(next, headers: {
+          'Authorization': 'Bearer $token',
+          'User-Agent': _desktopUa,
+        }).timeout(const Duration(seconds: 10));
+        if (response.statusCode != 200) {
+          PlaybackLogService.instance.log(
+            'SPOTIFY',
+            'playlist $playlistId: HTTP ${response.statusCode} dopo ${from + tracks.length} brani',
+          );
+          return null;
+        }
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        for (final item in data['items'] as List<dynamic>? ?? const []) {
+          final track = (item as Map<String, dynamic>?)?['track'] as Map<String, dynamic>?;
+          final title = track?['name'] as String? ?? '';
+          if (track == null || title.isEmpty) continue;
+          final artist = [
+            for (final a in track['artists'] as List<dynamic>? ?? const [])
+              if ((a as Map<String, dynamic>)['name'] is String && (a['name'] as String).isNotEmpty)
+                a['name'] as String,
+          ].join(', ');
+          // Local files of the owner have no id.
+          final trackId = track['id'] as String? ?? 'sp_${title.hashCode}_${artist.hashCode}';
+          final images = track['album']?['images'] as List<dynamic>? ?? const [];
+          final cover = images.isEmpty ? null : (images.first as Map<String, dynamic>)['url'] as String?;
+          tracks.add(SpotifyTrack(
+            trackId: trackId,
+            title: title,
+            artist: artist,
+            durationMs: (track['duration_ms'] as num?)?.toInt() ?? 0,
+            coverUrl: cover,
+          ));
+        }
+        final link = data['next'] as String?;
+        next = link == null ? null : Uri.parse(link);
+      }
+      return tracks;
+    } catch (e) {
+      PlaybackLogService.instance.log('SPOTIFY', 'playlist $playlistId: lettura interrotta ($e)');
       return null;
     }
   }

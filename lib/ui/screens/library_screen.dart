@@ -589,11 +589,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ));
             return;
           }
-          PlaybackLogService.instance
-              .log('UI', 'library: import ok "${created.title}"');
-          messenger.showSnackBar(
-            SnackBar(content: Text('"${created.title}" importata')),
-          );
+          final incomplete = PlaylistImporterService.instance.lastImportIncomplete;
+          PlaybackLogService.instance.log(
+              'UI', 'library: import ok "${created.title}" (${created.songs.length} brani)');
+          messenger.showSnackBar(SnackBar(
+            content: Text(incomplete
+                ? '"${created.title}" importata, ma solo i primi ${created.songs.length} brani: '
+                    'per averli tutti accedi a Spotify in Impostazioni e importala di nuovo.'
+                : '"${created.title}" importata: ${created.songs.length} brani'),
+            duration: Duration(seconds: incomplete ? 8 : 4),
+          ));
           if (mounted) _openPlaylist(created);
         },
       ),
@@ -682,7 +687,11 @@ class _ImportSheetState extends State<_ImportSheet> {
     final created = await PlaylistImporterService.instance.importFromUrl(
       url,
       onProgress: (current, total) {
-        if (mounted) setState(() => _status = 'Importati $current di $total brani…');
+        if (!mounted) return;
+        // A YouTube playlist is read page by page, with no total yet.
+        setState(() => _status = total == 0
+            ? 'Letti $current brani…'
+            : 'Importati $current di $total brani…');
       },
     );
     if (mounted) Navigator.pop(context);
