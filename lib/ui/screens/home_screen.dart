@@ -133,6 +133,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _shows(String feed) => _feed == null || _feed == feed;
 
+  /// Whether the pill chosen has nothing to show yet.
+  bool _feedIsEmpty() {
+    final storage = StorageService.instance;
+    return switch (_feed) {
+      'Artisti' => storage.followedArtistsNotifier.value.isEmpty,
+      'Playlist' => storage.playlistsNotifier.value.isEmpty &&
+          LibraryExtras.instance.pins.value.isEmpty &&
+          SpotifyCatalogService.instance.featuredPlaylists.isEmpty,
+      'Mix' => _mixArtists.isEmpty &&
+          !AiService.instance.configured.value &&
+          ListeningStats.instance.topSongs(StatsPeriod.month, limit: 3).length < 3,
+      _ => false,
+    };
+  }
+
   /// The avatar opens what the header used to hold, as Spotify's does.
   void _openProfileMenu() {
     PlaybackLogService.instance.log('UI', 'home: menu profilo');
@@ -679,6 +694,21 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
 
                   // ── Songs by category ───────────────────────────────────
+                  if (_feed != null && _feedIsEmpty())
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.all(AppSpacing.xl),
+                        child: Text(
+                          switch (_feed) {
+                            'Artisti' => 'Non segui ancora nessun artista: apri la pagina di un artista e tocca "Segui".',
+                            'Playlist' => 'Nessuna playlist per ora: creane una o importala con "Crea".',
+                            _ => 'I mix arrivano quando hai ascoltato un po\' di musica.',
+                          },
+                          textAlign: TextAlign.center,
+                          style: AppText.caption(cs),
+                        ),
+                      ),
+                    ),
                   if (_feed == null) ...[
                   const SliverToBoxAdapter(child: SectionHeader('Da ascoltare ora')),
                   SliverToBoxAdapter(

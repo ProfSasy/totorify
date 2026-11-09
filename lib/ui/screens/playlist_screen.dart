@@ -198,7 +198,9 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
   /// Search field, order and artist filters above the songs, as Spotify has.
   Widget _buildTools(List<Song> songs, AmbientPalette palette) {
     final cs = Theme.of(context).colorScheme;
-    final artists = _topArtists(songs);
+    final top = _topArtists(songs);
+    // The artist chosen keeps its pill, or the filter could not be removed.
+    final artists = _artist == null || top.contains(_artist) ? top : [_artist!, ...top];
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.xs, AppSpacing.lg, AppSpacing.sm),
       child: Column(
@@ -445,7 +447,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                           ),
                         ),
                       ),
-                      if (songs.length > 1 && _reordering == null)
+                      if (songs.length > 1 && _reordering == null && !_selecting)
                         SliverToBoxAdapter(child: _buildTools(songs, palette)),
                       if (songs.isNotEmpty && shown.isEmpty && _reordering == null)
                         SliverToBoxAdapter(

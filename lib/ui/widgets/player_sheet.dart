@@ -141,6 +141,7 @@ class _PlayerSheetState extends State<PlayerSheet>
         'player: tab=${_tabController.index == 0 ? 'player' : _tabController.index == 1 ? 'testi' : 'coda'}',
       );
       setState(() => _lastTabIndex = _tabController.index);
+      if (_tabController.index != 0) _scrolledToCards.value = false;
     });
 
     final current = widget.audioHandler.currentSong;

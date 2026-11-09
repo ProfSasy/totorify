@@ -613,8 +613,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
               'UI', 'library: import ok "${created.title}" (${created.songs.length} brani)');
           messenger.showSnackBar(SnackBar(
             content: Text(incomplete
-                ? '"${created.title}" importata, ma solo i primi ${created.songs.length} brani: '
-                    'per averli tutti accedi a Spotify in Impostazioni e importala di nuovo.'
+                ? '"${created.title}" importata: ${created.songs.length} brani. Senza accesso '
+                    'Spotify ne dà al massimo 100: se ne ha di più, accedi a Spotify in '
+                    'Impostazioni e importala di nuovo.'
                 : '"${created.title}" importata: ${created.songs.length} brani'),
             duration: Duration(seconds: incomplete ? 8 : 4),
           ));
