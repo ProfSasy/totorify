@@ -25,6 +25,7 @@ import 'devices_sheet.dart';
 import 'favorite_button.dart';
 import 'lyrics_view.dart';
 import 'play_button.dart';
+import 'player_cards.dart';
 import 'song_options_sheet.dart';
 import 'song_tile.dart';
 
@@ -90,6 +91,10 @@ class _PlayerSheetState extends State<PlayerSheet>
 
   // Canvas state
   bool _showCanvas = true;
+
+  // Whether the main tab has been scrolled down to its cards: the Canvas
+  // switch, which floats over the cover, then gets out of the way.
+  final ValueNotifier<bool> _scrolledToCards = ValueNotifier<bool>(false);
   String? _currentCanvasUrl;
   bool _isLoadingCanvas = false;
   int _canvasLoadGeneration = 0;
@@ -159,6 +164,7 @@ class _PlayerSheetState extends State<PlayerSheet>
 
   @override
   void dispose() {
+    _scrolledToCards.dispose();
     CanvasService.instance.isCanvasEnabledNotifier.removeListener(_onCanvasSettingChanged);
     _errorSub?.cancel();
     _infoSub?.cancel();
@@ -391,7 +397,18 @@ class _PlayerSheetState extends State<PlayerSheet>
                       Positioned(
                         top: topInset + 58,
                         right: AppSpacing.md,
-                        child: _buildCanvasToggle(context, palette),
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: _scrolledToCards,
+                          builder: (context, away, child) => IgnorePointer(
+                            ignoring: away,
+                            child: AnimatedOpacity(
+                              opacity: away ? 0 : 1,
+                              duration: AppMotion.fast,
+                              child: child,
+                            ),
+                          ),
+                          child: _buildCanvasToggle(context, palette),
+                        ),
                       ),
                     if (_notice != null)
                       Positioned(
@@ -544,10 +561,8 @@ class _PlayerSheetState extends State<PlayerSheet>
                 playback?.processingState == AudioProcessingState.buffering;
         final quiet = _ink.withValues(alpha: 0.72);
 
-        return GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onHorizontalDragEnd: _handleHorizontalSwipe,
-          child: Column(
+        final song = widget.audioHandler.currentSong;
+        final page = Column(
             children: [
               Expanded(
                 // The cover fades out as the Canvas fades in behind it.
@@ -890,6 +905,44 @@ class _PlayerSheetState extends State<PlayerSheet>
                 ),
               ),
             ],
+          );
+        // As Spotify's: the player fills the screen and scrolls up to the
+        // lyrics, the artist, what plays next and the credits. Pulled down
+        // from the top it closes, as the sheet does.
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragEnd: _handleHorizontalSwipe,
+          child: PullToClose(
+            onClose: () => Navigator.maybePop(context),
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (notification.depth == 0) {
+                  _scrolledToCards.value = notification.metrics.pixels > 24;
+                }
+                return false;
+              },
+              child: CustomScrollView(
+              physics: const ClampingScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(
+                  child: SizedBox(height: constraints.maxHeight, child: page),
+                ),
+                if (song != null)
+                  SliverToBoxAdapter(
+                    child: PlayerCards(
+                      audioHandler: widget.audioHandler,
+                      song: song,
+                      palette: palette,
+                      onLyrics: () => _tabController.animateTo(1),
+                      onQueue: () => _tabController.animateTo(2),
+                      onArtist: _openArtist,
+                      onDetails: () => showTrackDetails(context, widget.audioHandler),
+                    ),
+                  ),
+                SliverToBoxAdapter(child: SizedBox(height: bottomInset + AppSpacing.xxl)),
+              ],
+            ),
+            ),
           ),
         );
       },
@@ -1035,17 +1088,137 @@ class _PlayerSheetState extends State<PlayerSheet>
           );
         }
 
+        // As Spotify's: the song playing on top, then what comes next. The
+        // songs already played stay behind the "previous" button.
+        final playingAt = widget.audioHandler.queueSnapshot.index
+            .clamp(0, playlist.length - 1);
+        final base = playingAt + 1;
+        final upcoming = playlist.length - base;
+
+        Widget sectionTitle(String text) => Padding(
+              padding: const EdgeInsets.fromLTRB(AppSpacing.xl, AppSpacing.lg, AppSpacing.xl, AppSpacing.xs),
+              child: Text(
+                text,
+                style: const TextStyle(color: _ink, fontSize: 16, fontWeight: FontWeight.w800),
+              ),
+            );
+
+        Widget row(int index, {required bool reorderable}) {
+          final song = playlist[index];
+          final isCurrent = index == playingAt;
+          final content = Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              onTap: () {
+                PlaybackLogService.instance.log('UI', 'coda: tap "${song.title}"');
+                // By position: the queue stays as it is, and a song queued
+                // twice plays the copy that was tapped.
+                widget.audioHandler.skipToQueueItem(index);
+              },
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                    AppSpacing.xl, 7, reorderable ? AppSpacing.sm : AppSpacing.xl, 7),
+                child: Row(
+                  children: [
+                    Stack(
+                      children: [
+                        AppCover(url: song.thumbnailUrl, size: 46),
+                        if (isCurrent)
+                          Positioned.fill(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.55),
+                                borderRadius: AppRadius.cover,
+                              ),
+                              child: isPlaying
+                                  ? PlayingBars(color: palette.accent, height: 16)
+                                  : Icon(AppIcons.pause, color: palette.accent, size: 22),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            song.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: isCurrent ? palette.accent : _ink,
+                              fontSize: 15,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            song.artist,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: quiet, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Added by Smart Shuffle, not by the user.
+                    if (suggestedIds.contains(song.id))
+                      Padding(
+                        padding: const EdgeInsets.only(left: AppSpacing.sm),
+                        child: Icon(AppIcons.smart, color: palette.accent, size: 16),
+                      ),
+                    if (reorderable)
+                      ReorderableDragStartListener(
+                        index: index - base,
+                        child: Padding(
+                          padding: const EdgeInsets.all(AppSpacing.md),
+                          child: Icon(AppIcons.dragHandle, color: quiet, size: 24),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          );
+          if (!reorderable) return content;
+          return Dismissible(
+            key: ValueKey('queue_${song.id}_$index'),
+            direction: DismissDirection.endToStart,
+            background: Container(
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.only(right: AppSpacing.xl),
+              color: Theme.of(context).colorScheme.error,
+              child: const Icon(AppIcons.trash, color: Colors.white),
+            ),
+            onDismissed: (_) {
+              PlaybackLogService.instance.log('UI', 'coda: rimuovo indice $index');
+              widget.audioHandler.removeFromQueue(index);
+            },
+            child: content,
+          );
+        }
+
         return ReorderableListView.builder(
           // Extra bottom padding keeps the last queue item clear of the home
           // indicator now that the root no longer applies the bottom safe area.
           padding: EdgeInsets.only(top: AppSpacing.sm, bottom: bottomInset + AppSpacing.xl),
-          itemCount: playlist.length,
+          itemCount: upcoming,
           // Rows are moved by their handle; a long press is not needed.
           buildDefaultDragHandles: false,
-          header: _QueueActions(
-            audioHandler: widget.audioHandler,
-            ink: _ink,
-            notify: _showNotice,
+          header: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _QueueActions(
+                audioHandler: widget.audioHandler,
+                ink: _ink,
+                notify: _showNotice,
+              ),
+              sectionTitle('In riproduzione'),
+              row(playingAt, reorderable: false),
+              if (upcoming > 0) sectionTitle('Prossimi in coda'),
+            ],
           ),
           // Recommended next tracks, reloaded when the song or queue changes.
           footer: _QueueSuggestions(
@@ -1061,106 +1234,13 @@ class _PlayerSheetState extends State<PlayerSheet>
           ),
           onReorder: (oldIndex, newIndex) {
             PlaybackLogService.instance
-                .log('UI', 'coda: riordino $oldIndex -> $newIndex');
-            widget.audioHandler.reorderQueue(oldIndex, newIndex);
+                .log('UI', 'coda: riordino ${base + oldIndex} -> ${base + newIndex}');
+            widget.audioHandler.reorderQueue(base + oldIndex, base + newIndex);
           },
-          itemBuilder: (context, index) {
-            final song = playlist[index];
-            final isCurrent = song.id == currentSong?.id;
-
-            return Dismissible(
-              key: ValueKey('queue_${song.id}_$index'),
-              direction: DismissDirection.endToStart,
-              background: Container(
-                alignment: Alignment.centerRight,
-                padding: const EdgeInsets.only(right: AppSpacing.xl),
-                color: Theme.of(context).colorScheme.error,
-                child: const Icon(AppIcons.trash, color: Colors.white),
-              ),
-              onDismissed: (_) {
-                PlaybackLogService.instance
-                    .log('UI', 'coda: rimuovo indice $index');
-                widget.audioHandler.removeFromQueue(index);
-              },
-              child: Material(
-                type: MaterialType.transparency,
-                child: InkWell(
-                  onTap: () {
-                    PlaybackLogService.instance
-                        .log('UI', 'coda: tap "${song.title}"');
-                    // By position: the queue stays as it is, and a song queued
-                    // twice plays the copy that was tapped.
-                    widget.audioHandler.skipToQueueItem(index);
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(AppSpacing.xl, 7, AppSpacing.sm, 7),
-                    child: Row(
-                      children: [
-                        Stack(
-                          children: [
-                            AppCover(url: song.thumbnailUrl, size: 46),
-                            if (isCurrent)
-                              Positioned.fill(
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.55),
-                                    borderRadius: AppRadius.cover,
-                                  ),
-                                  child: isPlaying
-                                      ? PlayingBars(color: palette.accent, height: 16)
-                                      : Icon(AppIcons.pause,
-                                          color: palette.accent, size: 22),
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(width: AppSpacing.md),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                song.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: isCurrent ? palette.accent : _ink,
-                                  fontSize: 15,
-                                ),
-                              ),
-                              const SizedBox(height: 3),
-                              Text(
-                                song.artist,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: quiet, fontSize: 13),
-                              ),
-                            ],
-                          ),
-                        ),
-                        // Added by Smart Shuffle, not by the user.
-                        if (suggestedIds.contains(song.id))
-                          Padding(
-                            padding: const EdgeInsets.only(left: AppSpacing.sm),
-                            child: Icon(AppIcons.smart,
-                                color: palette.accent, size: 16),
-                          ),
-                        ReorderableDragStartListener(
-                          index: index,
-                          child: Padding(
-                            padding: const EdgeInsets.all(AppSpacing.md),
-                            child: Icon(AppIcons.dragHandle, color: quiet, size: 24),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            );
-          },
+          itemBuilder: (context, i) => KeyedSubtree(
+            key: ValueKey('queue_row_${playlist[base + i].id}_${base + i}'),
+            child: row(base + i, reorderable: true),
+          ),
         );
       },
     );

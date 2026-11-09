@@ -18,6 +18,7 @@ import '../theme/app_icons.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/app_cover.dart';
+import '../widgets/app_sheet.dart';
 import '../widgets/app_skeleton.dart';
 import '../widgets/bounce_button.dart';
 import '../widgets/cover_card.dart';
@@ -123,6 +124,51 @@ class _HomeScreenState extends State<HomeScreen> {
         content: Text('$what non raggiungibile. Riprova tra poco.'),
         duration: const Duration(seconds: 2),
       ),
+    );
+  }
+
+  /// The pill chosen on top of the page: null shows everything.
+  String? _feed;
+  static const List<String> _feeds = ['Mix', 'Playlist', 'Artisti'];
+
+  bool _shows(String feed) => _feed == null || _feed == feed;
+
+  /// The avatar opens what the header used to hold, as Spotify's does.
+  void _openProfileMenu() {
+    PlaybackLogService.instance.log('UI', 'home: menu profilo');
+    showAppSheet<void>(
+      context,
+      builder: (sheetContext) {
+        void go(VoidCallback action) {
+          Navigator.pop(sheetContext);
+          action();
+        }
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SheetTitle(_firstName().isEmpty ? _greeting() : '${_greeting()}, ${_firstName()}'),
+            SheetAction(
+              icon: AppIcons.stats,
+              label: 'Le tue statistiche',
+              subtitle: 'Tempo di ascolto, brani e artisti più ascoltati',
+              onTap: () => go(_openStats),
+            ),
+            SheetAction(
+              icon: AppIcons.history,
+              label: 'Cronologia',
+              subtitle: 'Quello che hai ascoltato, giorno per giorno',
+              onTap: () => go(_openHistoryScreen),
+            ),
+            SheetAction(
+              icon: AppIcons.settings,
+              label: 'Impostazioni',
+              onTap: () => go(() => ProfileButton.openSettings(context)),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -347,6 +393,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   SliverToBoxAdapter(child: SizedBox(height: topInset + AppSpacing.sm)),
 
                   // ── Quick access: favourites, recents, charts ───────────
+                  if (_feed == null)
                   SliverPadding(
                     padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
                     sliver: ListenableBuilder(
@@ -359,6 +406,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
 
                   // ── What the user pinned ────────────────────────────────
+                  if (_shows('Playlist'))
                   SliverToBoxAdapter(
                     child: ValueListenableBuilder<List<Pin>>(
                       valueListenable: LibraryExtras.instance.pins,
@@ -400,6 +448,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
 
                   // ── A mix made by the AI, when the user set it up ───────
+                  if (_shows('Mix'))
                   SliverToBoxAdapter(
                     child: ValueListenableBuilder<bool>(
                       valueListenable: AiService.instance.configured,
@@ -432,7 +481,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
 
                   // ── Mixes built on the listening history ────────────────
-                  if (_mixArtists.isNotEmpty) ...[
+                  if (_mixArtists.isNotEmpty && _shows('Mix')) ...[
                     const SliverToBoxAdapter(child: SectionHeader('Mix per te')),
                     SliverToBoxAdapter(
                       child: _CardRow(
@@ -457,6 +506,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
 
                   // ── Recently played ─────────────────────────────────────
+                  if (_feed == null)
                   SliverToBoxAdapter(
                     child: ValueListenableBuilder<List<Song>>(
                       valueListenable: storage.historyNotifier,
@@ -496,6 +546,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   // ── From the statistics: the month's most played, and the
                   //    liked songs not heard for a while ─────────────────────
+                  if (_shows('Mix'))
                   SliverToBoxAdapter(
                     child: ValueListenableBuilder<int>(
                       valueListenable: ListeningStats.instance.changes,
@@ -528,6 +579,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
 
                   // ── Followed artists ────────────────────────────────────
+                  if (_shows('Artisti'))
                   SliverToBoxAdapter(
                     child: ValueListenableBuilder<List<Artist>>(
                       valueListenable: storage.followedArtistsNotifier,
@@ -561,6 +613,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
 
                   // ── The user's playlists ────────────────────────────────
+                  if (_shows('Playlist'))
                   SliverToBoxAdapter(
                     child: ValueListenableBuilder<List<Playlist>>(
                       valueListenable: storage.playlistsNotifier,
@@ -599,8 +652,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
 
                   // ── Charts and new releases ─────────────────────────────
+                  if (_shows('Playlist'))
                   const SliverToBoxAdapter(
                       child: SectionHeader('Classifiche e novità')),
+                  if (_shows('Playlist'))
                   SliverToBoxAdapter(
                     child: _CardRow(
                       height: CoverCard.heightFor(150, subtitleLines: 2),
@@ -624,6 +679,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
 
                   // ── Songs by category ───────────────────────────────────
+                  if (_feed == null) ...[
                   const SliverToBoxAdapter(child: SectionHeader('Da ascoltare ora')),
                   SliverToBoxAdapter(
                     child: SizedBox(
@@ -688,6 +744,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         );
                       },
                     ),
+                  ],
                   const SliverToBoxAdapter(
                       child: SizedBox(height: AppSpacing.bottomContentInset)),
                 ],
@@ -705,35 +762,36 @@ class _HomeScreenState extends State<HomeScreen> {
               backdrop: backdrop,
               child: Row(
                 children: [
-                  const ProfileButton(),
-                  const SizedBox(width: AppSpacing.md),
-                  Expanded(
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        _firstName().isEmpty
-                            ? _greeting()
-                            : '${_greeting()}, ${_firstName()}',
-                        maxLines: 1,
-                        style: AppText.screenTitle(cs).copyWith(fontSize: 22),
-                      ),
+                  Semantics(
+                    button: true,
+                    label: 'Profilo',
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _openProfileMenu,
+                      child: const AbsorbPointer(child: ProfileButton()),
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Le tue statistiche',
-                    icon: const Icon(AppIcons.stats, size: 25),
-                    onPressed: _openStats,
-                  ),
-                  IconButton(
-                    tooltip: 'Cronologia',
-                    icon: const Icon(AppIcons.history, size: 26),
-                    onPressed: _openHistoryScreen,
-                  ),
-                  IconButton(
-                    tooltip: 'Impostazioni',
-                    icon: const Icon(AppIcons.settings, size: 25),
-                    onPressed: () => ProfileButton.openSettings(context),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: SizedBox(
+                      height: 34,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _feeds.length + 1,
+                        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+                        itemBuilder: (context, index) {
+                          final feed = index == 0 ? null : _feeds[index - 1];
+                          return FilterPill(
+                            label: feed ?? 'Tutti',
+                            selected: _feed == feed,
+                            onTap: () {
+                              PlaybackLogService.instance.log('UI', 'home: filtro ${feed ?? 'tutti'}');
+                              setState(() => _feed = feed);
+                            },
+                          );
+                        },
+                      ),
+                    ),
                   ),
                 ],
               ),
