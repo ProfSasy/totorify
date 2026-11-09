@@ -609,15 +609,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
             return;
           }
           final incomplete = PlaylistImporterService.instance.lastImportIncomplete;
+          final continues = PlaylistImporterService.instance.lastImportContinues;
           PlaybackLogService.instance.log(
               'UI', 'library: import ok "${created.title}" (${created.songs.length} brani)');
           messenger.showSnackBar(SnackBar(
-            content: Text(incomplete
-                ? '"${created.title}" importata: ${created.songs.length} brani. Senza accesso '
-                    'Spotify ne dà al massimo 100: se ne ha di più, accedi a Spotify in '
-                    'Impostazioni e importala di nuovo.'
-                : '"${created.title}" importata: ${created.songs.length} brani'),
-            duration: Duration(seconds: incomplete ? 8 : 4),
+            content: Text(continues
+                ? '"${created.title}": i primi ${created.songs.length} brani sono già qui, '
+                    'gli altri si aggiungono da soli nei prossimi minuti. Tieni Totorify aperta.'
+                : incomplete
+                    ? '"${created.title}" importata: ${created.songs.length} brani. Senza accesso '
+                        'Spotify ne dà al massimo 100: se ne ha di più, accedi a Spotify in '
+                        'Impostazioni e importala di nuovo.'
+                    : '"${created.title}" importata: ${created.songs.length} brani'),
+            duration: Duration(seconds: incomplete || continues ? 8 : 4),
           ));
           if (mounted) _openPlaylist(created);
         },

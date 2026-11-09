@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../models/playlist.dart';
 import '../models/song.dart';
 import 'cover_art_service.dart';
+import 'spotify_internal_auth_service.dart';
 import 'spotify_service.dart';
 import 'storage_service.dart';
 import 'ytmusic_service.dart';
@@ -21,6 +22,10 @@ class PlaylistImporterService {
   /// because the rest needs the Spotify login.
   bool lastImportIncomplete = false;
 
+  /// True when the last Spotify import is still adding the tracks after the
+  /// first hundred, in the background.
+  bool lastImportContinues = false;
+
   /// Importa una playlist da link (Spotify o YouTube Music) ad altissima velocità.
   Future<Playlist?> importFromUrl(
     String url, {
@@ -28,6 +33,7 @@ class PlaylistImporterService {
   }) async {
     final cleanUrl = url.trim();
     lastImportIncomplete = false;
+    lastImportContinues = false;
 
     if (cleanUrl.contains('spotify.com') || cleanUrl.startsWith('spotify:')) {
       return _importFromSpotifyInstant(cleanUrl, onProgress: onProgress);
@@ -50,7 +56,9 @@ class PlaylistImporterService {
         return null;
       }
 
-      lastImportIncomplete = spotifyData.incomplete;
+      final hasLogin = SpotifyInternalAuthService.instance.hasSpDcCookie;
+      lastImportIncomplete = spotifyData.mayHaveMore && !hasLogin;
+      lastImportContinues = spotifyData.mayHaveMore && hasLogin;
       onProgress?.call(1, spotifyData.tracks.length);
 
       final songs = <Song>[];
@@ -79,6 +87,9 @@ class PlaylistImporterService {
 
       // Avvia in background il perfezionamento HD delle copertine e il pre-caching dello streaming
       _refinePlaylistInBackground(playlist);
+      if (lastImportContinues) {
+        _appendRestInBackground(playlist, spotifyData.id, from: spotifyData.embedCount);
+      }
 
       return playlist;
     } catch (e) {
@@ -154,6 +165,43 @@ class PlaylistImporterService {
       await Future.wait(futures);
       flushTimer.cancel();
       await flushUpdates();
+    }());
+  }
+
+  /// The tracks after the first hundred, added to the saved playlist as they
+  /// are read: it can be opened and played meanwhile. Stops if the playlist
+  /// is deleted.
+  void _appendRestInBackground(Playlist playlist, String spotifyId, {required int from}) {
+    unawaited(() async {
+      try {
+        await SpotifyService.instance.readRestOfPlaylist(
+          spotifyId,
+          from: from,
+          onBatch: (batch, total) async {
+            final stored = StorageService.instance
+                .getPlaylists()
+                .where((p) => p.id == playlist.id)
+                .firstOrNull;
+            if (stored == null) return false;
+            final more = [
+              for (final t in batch)
+                Song(
+                  id: 'spotify_${t.trackId}',
+                  title: t.title,
+                  artist: t.artist,
+                  duration: Duration(milliseconds: t.durationMs),
+                  thumbnailUrl: t.coverUrl ?? playlist.thumbnailUrl ?? '',
+                  spotifyTrackId: t.trackId,
+                ),
+            ];
+            await StorageService.instance
+                .savePlaylist(stored.copyWith(songs: [...stored.songs, ...more]));
+            return true;
+          },
+        );
+      } catch (e) {
+        debugPrint('PlaylistImporterService._appendRestInBackground: $e');
+      }
     }());
   }
 
