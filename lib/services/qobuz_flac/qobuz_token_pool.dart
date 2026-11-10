@@ -138,6 +138,9 @@ class QobuzTokenPool {
   /// Quanti token contiene il pool.
   int get length => _poolEntries().length;
 
+  /// Quanti token non sono nel cooldown dei morti, adesso.
+  int get aliveCount => _poolEntries().where((e) => !_isDead(e.token)).length;
+
   /// I token del pool, in ordine.
   List<QobuzPoolEntry> get entries => _poolEntries();
 

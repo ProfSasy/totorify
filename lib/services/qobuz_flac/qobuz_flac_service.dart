@@ -7,6 +7,7 @@ import '../../models/song.dart';
 import '../app_settings.dart';
 import '../playback_log_service.dart';
 import 'qobuz_api_client.dart';
+import 'qobuz_app_keys.dart';
 import 'qobuz_candidate_matcher.dart';
 import 'qobuz_models.dart';
 import 'qobuz_token_pool.dart';
@@ -68,16 +69,31 @@ class QobuzFlacService {
   String _storedPool = '';
   Future<void>? _loading;
 
+  /// Le chiavi ricavate dal client web di Qobuz, quando ci sono: valgono più
+  /// delle costanti (che invecchiano) e meno di una coppia scritta a mano
+  /// dall'utente (che è la sua scelta esplicita).
+  QobuzAppKeys? _liveKeys;
+  bool _refreshingKeys = false;
+
   /// True quando c'è almeno un token nel pool (le impostazioni lo mostrano).
   final ValueNotifier<bool> configuredNotifier = ValueNotifier(false);
 
   /// Quanti token contiene il pool.
   final ValueNotifier<int> poolCountNotifier = ValueNotifier(0);
 
-  String get appId => _storedAppId.isEmpty ? defaultAppId : _storedAppId;
-  String get appSecret => _storedAppSecret.isEmpty ? defaultAppSecret : _storedAppSecret;
+  bool get _hasCustomKeys => _storedAppId.isNotEmpty || _storedAppSecret.isNotEmpty;
+
+  String get appId =>
+      _storedAppId.isNotEmpty ? _storedAppId : (_liveKeys?.appId ?? defaultAppId);
+  String get appSecret => _storedAppSecret.isNotEmpty
+      ? _storedAppSecret
+      : (_liveKeys?.appSecret ?? defaultAppSecret);
   bool get appIdIsDefault => _storedAppId.isEmpty;
   bool get appSecretIsDefault => _storedAppSecret.isEmpty;
+
+  /// True quando la coppia in uso è stata sincronizzata dal client Qobuz.
+  bool get appKeysFromBundle => !_hasCustomKeys && _liveKeys != null;
+
   String get tokenPool => _storedPool;
   int get poolTokenCount => _pool.length;
 
@@ -94,7 +110,41 @@ class QobuzFlacService {
     } catch (e) {
       debugPrint('QobuzFlacService: credenziali non leggibili ($e)');
     }
+    // L'ultima coppia scoperta dal client Qobuz: usarla subito evita di
+    // aspettare la rete al primo brano.
+    try {
+      _liveKeys = await QobuzAppKeys.loadCached();
+    } catch (e) {
+      debugPrint('QobuzFlacService: chiavi app non leggibili ($e)');
+    }
     _applyPool();
+  }
+
+  /// Ricava le chiavi dal client web di Qobuz e le prova: serve quando la
+  /// firma viene rifiutata (Qobuz le ha ruotate) o su richiesta dalle
+  /// impostazioni. Non tocca una coppia scritta a mano dall'utente.
+  Future<bool> refreshAppKeys() async {
+    await _ensureLoaded();
+    if (_hasCustomKeys || _refreshingKeys) return false;
+    _refreshingKeys = true;
+    final log = PlaybackLogService.instance;
+    try {
+      final keys = await QobuzAppKeys.discover(_api);
+      if (keys == null) {
+        log.log('FLAC', 'chiavi app: aggiornamento non riuscito, resto con le attuali');
+        return false;
+      }
+      _liveKeys = keys;
+      _applyPool();
+      await QobuzAppKeys.saveCached(keys);
+      log.log('FLAC', 'chiavi app aggiornate dal client Qobuz (app_id ${keys.appId})');
+      return true;
+    } catch (e) {
+      log.log('FLAC', 'chiavi app: aggiornamento fallito ($e)');
+      return false;
+    } finally {
+      _refreshingKeys = false;
+    }
   }
 
   void _applyPool() {
@@ -254,7 +304,16 @@ class QobuzFlacService {
     final query = QobuzTrackQuery.of(song);
     log.log('FLAC', 'cerco "${query.title}" - ${query.artist} (formato $format)');
     try {
-      final stream = await _resolveInternal(query, format).timeout(_resolveTimeout);
+      QobuzStream? stream;
+      try {
+        stream = await _resolveInternal(query, format).timeout(_resolveTimeout);
+      } on QobuzSignatureException {
+        // Qobuz ha ruotato le chiavi del client web: si ricavano di nuovo,
+        // si riprova UNA volta, poi eventualmente si ripiega su YouTube.
+        log.log('FLAC', 'firma rifiutata da Qobuz: aggiorno le chiavi dell\'app');
+        if (!await refreshAppKeys()) rethrow;
+        stream = await _resolveInternal(query, format).timeout(_resolveTimeout);
+      }
       if (stream == null) {
         log.log('FLAC', 'nessun risultato per "${song.title}": riproduco da YouTube');
         return null;
@@ -275,6 +334,12 @@ class QobuzFlacService {
       log.log(
         'FLAC',
         'risoluzione oltre il tempo massimo per "${song.title}": riproduco da YouTube',
+      );
+      return null;
+    } on QobuzSignatureException {
+      log.log(
+        'FLAC',
+        'chiavi dell\'app rifiutate anche dopo l\'aggiornamento: riproduco da YouTube',
       );
       return null;
     } catch (e, stack) {
@@ -458,13 +523,21 @@ class QobuzFlacService {
     return seconds == null ? null : seconds * 1000;
   }
 
-  // ── Verifica dei token (per le impostazioni) ───────────────────────────
+  // ── Verifica e diagnostica (per le impostazioni) ───────────────────────
 
   /// Prova ogni token del pool con una ricerca: dice quali rispondono e
   /// quali vanno rifatti. Non prova la qualità piena (che richiede un
   /// abbonamento attivo): solo che l'account autentichi.
   Future<String> verifyPool() async {
     await _ensureLoaded();
+
+    // Se le chiavi non sono più accettate la ricerca funziona lo stesso ma
+    // lo streaming no: meglio allinearle prima di dire che è tutto a posto.
+    if (!_hasCustomKeys &&
+        !await _api.probeSignature(appId: appId, appSecret: appSecret)) {
+      await refreshAppKeys();
+    }
+
     final entries = _pool.entries;
     if (entries.isEmpty) return 'Nessun token nel pool.';
 
@@ -493,6 +566,51 @@ class QobuzFlacService {
       lines.add('… e altri ${entries.length - 20} token');
     }
     return lines.join('\n');
+  }
+
+  /// Fotografia del servizio, per capire cosa manca quando il FLAC non
+  /// parte: API raggiungibile, chiavi accettate, token vivi.
+  Future<String> diagnose() async {
+    await _ensureLoaded();
+    final log = PlaybackLogService.instance;
+    final lines = <String>[];
+
+    final status = await _api.ping(appId: appId);
+    if (status == null) {
+      lines.add('API Qobuz: NON raggiungibile dalla rete attuale.');
+    } else if (status == 401) {
+      lines.add('API Qobuz: raggiungibile (chiede l\'account, come deve).');
+    } else {
+      lines.add('API Qobuz: raggiungibile (HTTP $status).');
+    }
+
+    var keysOk = await _api.probeSignature(appId: appId, appSecret: appSecret);
+    if (!keysOk && !_hasCustomKeys) {
+      lines.add('Chiavi dell\'app: rifiutate, provo ad aggiornarle…');
+      if (await refreshAppKeys()) {
+        keysOk = await _api.probeSignature(appId: appId, appSecret: appSecret);
+      }
+    }
+    lines.add(keysOk
+        ? 'Chiavi dell\'app: valide (firma accettata da Qobuz).'
+        : 'Chiavi dell\'app: NON valide: se hai scritto App ID/Secret a mano, '
+            'controllali.');
+
+    final total = _pool.length;
+    final alive = _pool.aliveCount;
+    if (total == 0) {
+      lines.add('Token: nessuno nel pool.');
+      lines.add('→ Il FLAC resta spento: incolla il token del tuo account Qobuz.');
+    } else {
+      lines.add('Token nel pool: $total · vivi adesso: $alive.');
+      lines.add(alive > 0
+          ? '→ Pronto: i brani disponibili possono partire in FLAC.'
+          : '→ Nessun token risponde (rifiutati o in cooldown): incollane uno nuovo.');
+    }
+
+    final report = lines.join('\n');
+    log.log('FLAC', 'diagnostica: ${lines.join(' | ')}');
+    return report;
   }
 
   /// "••••" più la coda del token: riconoscibile senza mostrarlo.

@@ -18,6 +18,7 @@ class FlacSettingsScreen extends StatefulWidget {
 
 class _FlacSettingsScreenState extends State<FlacSettingsScreen> {
   bool _verifying = false;
+  bool _diagnosing = false;
   bool _bridgeChecking = false;
 
   @override
@@ -78,6 +79,26 @@ class _FlacSettingsScreenState extends State<FlacSettingsScreen> {
       context: context,
       builder: (ctx) => CupertinoAlertDialog(
         title: const Text('Verifica dei token'),
+        content: Text(report),
+        actions: [
+          CupertinoDialogAction(
+            child: const Text('Chiudi'),
+            onPressed: () => Navigator.pop(ctx),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _diagnose() async {
+    setState(() => _diagnosing = true);
+    final report = await QobuzFlacService.instance.diagnose();
+    if (!mounted) return;
+    setState(() => _diagnosing = false);
+    await showCupertinoDialog<void>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Stato del servizio FLAC'),
         content: Text(report),
         actions: [
           CupertinoDialogAction(
@@ -212,6 +233,13 @@ class _FlacSettingsScreenState extends State<FlacSettingsScreen> {
               'Formato: token,token:paese,token:paese:appId',
           children: [
             SettingLink(
+              title: 'Prova il servizio',
+              subtitle: _diagnosing
+                  ? 'Controllo in corso…'
+                  : 'API, chiavi dell\'app e token: dice cosa manca',
+              onTap: _diagnosing ? null : _diagnose,
+            ),
+            SettingLink(
               title: 'Token Qobuz',
               subtitle: tokens == 0
                   ? 'Nessun token: il FLAC resta spento'
@@ -240,21 +268,25 @@ class _FlacSettingsScreenState extends State<FlacSettingsScreen> {
           title: 'App Qobuz (avanzato)',
           footer: 'Con questa coppia si firma ogni richiesta: Qobuz restituisce '
               'FLAC a piena qualità solo se il segreto è quello dell\'app con '
-              'cui è nato il token. Il predefinito è la coppia pubblica del '
-              'client usato dal progetto di riferimento: di norma non serve '
-              'cambiarla.',
+              'cui è nato il token. Totorify la tiene allineata da sola al '
+              'client web di Qobuz (che la cambia con le sue versioni); qui '
+              'puoi forzarne una tua. Di norma non serve toccarla.',
           children: [
             SettingLink(
               title: 'App ID',
               subtitle: service.appIdIsDefault
-                  ? 'Predefinito · ${QobuzFlacService.defaultAppId}'
+                  ? service.appKeysFromBundle
+                      ? 'Predefinito · sincronizzato dal client Qobuz'
+                      : 'Predefinito · ${QobuzFlacService.defaultAppId}'
                   : _mask(service.appId),
               onTap: _editAppId,
             ),
             SettingLink(
               title: 'App Secret',
               subtitle: service.appSecretIsDefault
-                  ? 'Predefinito'
+                  ? service.appKeysFromBundle
+                      ? 'Predefinito · sincronizzato dal client Qobuz'
+                      : 'Predefinito'
                   : _mask(service.appSecret),
               onTap: _editAppSecret,
             ),
