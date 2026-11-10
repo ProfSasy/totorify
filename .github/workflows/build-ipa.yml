@@ -13,11 +13,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Load Qobuz submodule
-        run: |
-          git config --global url."https://oauth2:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
-          git submodule update --init lib/services/qobuz_flac
+        with:
+          token: ${{ secrets.GH_PAT }}
+          submodules: 'recursive'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
