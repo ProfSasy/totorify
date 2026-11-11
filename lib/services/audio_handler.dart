@@ -17,6 +17,7 @@ import 'download_service.dart';
 import 'lyrics_service.dart';
 import 'playback_log_service.dart';
 import 'playback_queue.dart';
+import 'qobuz_flac/arcod_bridge_service.dart';
 import 'qobuz_flac/qobuz_flac_service.dart';
 import 'flacdl/flacdl_service.dart';
 import 'recommendation_service.dart';
@@ -583,9 +584,9 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         if (opened != _Open.failed) return;
       }
 
-      // FLAC: prima il bridge (flacdownloader, nessun token richiesto),
-      // poi la sorgente Qobuz con i token dell'utente; se nessuna riesce,
-      // il caricamento prosegue da YouTube come sempre.
+      // FLAC: bridge remoto (arcod) → bridge locale (flacdownloader) →
+      // Qobuz con token utente; se nessuna riesce, prosegue da YouTube.
+      if (await _tryOpenArcod(song, generation, start: start)) return;
       if (await _tryOpenFlacDl(song, generation, start: start)) return;
       if (await _tryOpenFlac(song, generation, start: start)) return;
 
@@ -2046,6 +2047,40 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   /// I brani per i quali il bridge FLAC (flacdownloader) non è riuscito:
   /// finché il brano suona, non si ritenta.
   final Set<String> _flacDlFailed = {};
+
+  /// I brani per i quali il bridge arcod non è riuscito.
+  final Set<String> _arcodFailed = {};
+
+  /// Prova ad aprire [song] in FLAC dal bridge arcod remoto.
+  Future<bool> _tryOpenArcod(Song song, int generation, {required double start}) async {
+    if (!AppSettings.instance.extBridgeEnabled.value) return false;
+    if (_arcodFailed.contains(song.id)) return false;
+
+    final stream = await ArcodBridgeService.instance.resolve(song);
+    if (stream == null || generation != _loadGeneration) return false;
+
+    final opened = await _open(
+      () => VideoPlayerController.networkUrl(
+        Uri.parse(stream.url),
+        videoPlayerOptions: _audioOptions,
+        httpHeaders: ArcodBridgeService.playbackHeaders,
+      ),
+      generation,
+      start: start,
+      source: 'FLAC · ${stream.provider}',
+    );
+    if (opened == _Open.ok) {
+      _playingFlac = true;
+      _prepareExtras(null, generation);
+      _prepareWhatFollows(song, generation);
+      return true;
+    }
+    if (opened == _Open.failed) {
+      ArcodBridgeService.instance.discard(song.id);
+      _arcodFailed.add(song.id);
+    }
+    return false;
+  }
 
   /// Prova ad aprire [song] in FLAC dal bridge locale, quando l'impostazione
   /// è attiva e il bridge ha sessione. True quando la riproduzione è
