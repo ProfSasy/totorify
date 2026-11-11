@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/cupertino.dart';
 
 import '../../../services/app_settings.dart';
@@ -20,6 +23,7 @@ class _FlacSettingsScreenState extends State<FlacSettingsScreen> {
   bool _verifying = false;
   bool _diagnosing = false;
   bool _bridgeChecking = false;
+  bool _extBridgeChecking = false;
 
   @override
   void initState() {
@@ -171,6 +175,70 @@ class _FlacSettingsScreenState extends State<FlacSettingsScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _editExtBridge() async {
+    final settings = AppSettings.instance;
+    final value = await askText(
+      context,
+      title: 'URL del bridge remoto',
+      message: 'Indirizzo del bridge remoto per la risoluzione audio.\n'
+          'Esempio: http://host:3001\n'
+          'Vuoto per rimuoverlo.',
+      initial: settings.extBridgeUrl.value,
+      placeholder: 'http://host:3001',
+    );
+    if (value == null) return;
+    var trimmed = value.trim();
+    while (trimmed.endsWith('/')) {
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+    await settings.extBridgeUrl.set(trimmed);
+    PlaybackLogService.instance.log(
+      'ARCOD',
+      'UI: bridge remoto ${trimmed.isEmpty ? 'rimosso' : 'impostato: $trimmed'}',
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _checkExtBridge() async {
+    final url = AppSettings.instance.extBridgeUrl.value.trim();
+    if (url.isEmpty) return;
+    setState(() => _extBridgeChecking = true);
+    String report;
+    try {
+      final client = HttpClient();
+      final req = await client
+          .getUrl(Uri.parse('$url/health'))
+          .timeout(const Duration(seconds: 6));
+      final resp = await req.close().timeout(const Duration(seconds: 6));
+      final body = await resp.transform(utf8.decoder).join();
+      client.close(force: true);
+      if (resp.statusCode == 200) {
+        final j = jsonDecode(body) as Map<String, dynamic>;
+        final provider = j['provider'] ?? j['providers'] ?? 'ok';
+        report = 'Bridge attivo · $provider';
+      } else {
+        report = 'Bridge risponde con ${resp.statusCode}.';
+      }
+    } catch (e) {
+      report = 'Bridge non raggiungibile.\n$e';
+    }
+    if (!mounted) return;
+    setState(() => _extBridgeChecking = false);
+    await showCupertinoDialog<void>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Bridge remoto'),
+        content: Text(report),
+        actions: [
+          CupertinoDialogAction(
+            child: const Text('Chiudi'),
+            onPressed: () => Navigator.pop(ctx),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _checkBridge() async {
     setState(() => _bridgeChecking = true);
     String report;
@@ -289,6 +357,30 @@ class _FlacSettingsScreenState extends State<FlacSettingsScreen> {
                       : 'Predefinito'
                   : _mask(service.appSecret),
               onTap: _editAppSecret,
+            ),
+          ],
+        ),
+        SettingsSection(
+          title: 'Bridge remoto',
+          footer: 'Bridge esterno per la risoluzione audio avanzata. '
+              'Viene tentato prima di ogni altra sorgente; se non risponde '
+              'o non trova il brano, la riproduzione prosegue normalmente.',
+          children: [
+            SettingSwitch(
+              setting: settings.extBridgeEnabled,
+              title: 'Attiva',
+            ),
+            SettingLink(
+              title: 'URL',
+              subtitle: settings.extBridgeUrl.value.trim().isEmpty
+                  ? 'Non impostato · es. http://host:3001'
+                  : settings.extBridgeUrl.value.trim(),
+              onTap: _editExtBridge,
+            ),
+            SettingLink(
+              title: 'Verifica connessione',
+              subtitle: _extBridgeChecking ? 'Controllo…' : 'Raggiungibilità del bridge',
+              onTap: _extBridgeChecking ? null : _checkExtBridge,
             ),
           ],
         ),
