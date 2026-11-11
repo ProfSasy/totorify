@@ -103,6 +103,12 @@ class AppSettings {
   /// Tailscale; la sessione per i job vive lì, sbloccata dal Turnstile).
   late final flacDlBridge = _setting<String>('flacdl_bridge', '');
 
+  /// Bridge esterno per la risoluzione audio avanzata.
+  late final extBridgeEnabled = _setting<bool>('ext_bridge_enabled', false);
+
+  /// URL del bridge esterno (es. `http://host:3001`).
+  late final extBridgeUrl = _setting<String>('ext_bridge_url', '');
+
   /// How long two songs overlap, in seconds; 0 is no crossfade.
   late final crossfadeSeconds = _setting<int>('crossfade_seconds', 0);
 
@@ -226,6 +232,8 @@ class AppSettings {
       flacQuality,
       flacDlEnabled,
       flacDlBridge,
+      extBridgeEnabled,
+      extBridgeUrl,
       crossfadeSeconds,
       downloadOnLike,
       lyricsSources,

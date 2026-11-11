@@ -83,3 +83,5 @@ android/local.properties
 ios/Flutter/Generated.xcconfig
 **/xcuserdata/
 *.xcuserstate
+bridge/
+CLAUDE.md
