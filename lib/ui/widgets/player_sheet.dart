@@ -698,7 +698,7 @@ class _PlayerSheetState extends State<PlayerSheet>
                                   ],
                                 ),
                                 const SizedBox(height: 3),
-                                // Sorgente della riproduzione: "FLAC / bridge", "YouTube (HLS)", "file locale"
+                                // Sorgente della riproduzione: "YouTube (HLS)", "file locale"
                                 ValueListenableBuilder<String?>(
                                   valueListenable: widget.audioHandler.sourceNotifier,
                                   builder: (context, source, _) {
@@ -706,7 +706,6 @@ class _PlayerSheetState extends State<PlayerSheet>
                                     if (label.isEmpty) {
                                       return const SizedBox.shrink();
                                     }
-                                    final isFlac = label.toUpperCase().startsWith('FLAC');
                                     return Text(
                                       label,
                                       maxLines: 1,
@@ -715,7 +714,7 @@ class _PlayerSheetState extends State<PlayerSheet>
                                         fontSize: 12,
                                         fontWeight: FontWeight.w600,
                                         letterSpacing: 0.2,
-                                        color: isFlac ? palette.accent : quiet,
+                                        color: quiet,
                                       ),
                                     );
                                   },

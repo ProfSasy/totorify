@@ -10,7 +10,6 @@ import 'playback_log_service.dart';
 import 'storage_service.dart';
 import 'track_matcher_service.dart';
 import 'ytmusic_service.dart';
-import 'flacdl/flacdl_service.dart';
 
 /// Outcome of fetching one audio file: [failure] is null when it worked,
 /// and [mode] says how the bytes came down.
@@ -112,14 +111,6 @@ class DownloadService {
       await _ensureDownloadDir();
       _updateProgress(song.id, 0.05);
 
-      // FLAC dal bridge: quando attivo, prima il file già pronto del bridge
-      // (qualità senza perdita, nessun token da gestire); se non va,
-      // si prosegue esattamente come sempre.
-      if (await _tryDownloadFlacDl(song)) {
-        _removeProgress(song.id);
-        return true;
-      }
-
       // The source is resolved exactly like playback does (scored matching,
       // remembered choices), so a download is never a different recording
       // from the one that plays.
@@ -191,71 +182,8 @@ class DownloadService {
     return false;
   }
 
-  /// FLAC dal bridge: un solo file dalla CDN del bridge, già pronto dal job
-  /// (Range a blocchi come i download abituali, UA da browser normale).
-  /// False quando manca il bridge, la sessione o il brano: il flusso YouTube
-  /// poi prosegue identico a sempre.
-  Future<bool> _tryDownloadFlacDl(Song song) async {
-    if (!AppSettings.instance.flacDlEnabled.value) return false;
-    final log = PlaybackLogService.instance;
-
-    final stream = await FlacDlService.instance.resolveDownload(song);
-    if (stream == null) {
-      log.log('DOWNLOAD', '"${song.title}": flacdl non disponibile, YouTube segue');
-      return false;
-    }
-
-    final filePath =
-        '${StorageService.instance.downloadsPath}/${song.id}.flac';
-    final tempFile = File('$filePath.tmp');
-    final finalFile = File(filePath);
-    final watch = Stopwatch()..start();
-    try {
-      if (await tempFile.exists()) await tempFile.delete();
-
-      final fetched = await _fetchAudio(
-        song,
-        Uri.parse(stream.url),
-        tempFile,
-        headers: FlacDlService.cdnHeaders,
-      );
-      if (fetched.failure != null) {
-        log.log(
-          'DOWNLOAD',
-          '"${song.title}": FLAC dal bridge non riuscito '
-          '(${fetched.failure})',
-        );
-        FlacDlService.instance.discard(song.id);
-        return false;
-      }
-
-      final bytes = await tempFile.length();
-      if (await finalFile.exists()) await finalFile.delete();
-      await tempFile.rename(filePath);
-      _updateProgress(song.id, 1.0);
-      await StorageService.instance.saveDownloadedSong(song);
-      await StorageService.instance.saveDownloadDuration(song.id, song.duration);
-      final seconds = watch.elapsedMilliseconds / 1000;
-      log.log(
-        'DOWNLOAD',
-        '"${song.title}" FLAC dal bridge: '
-        '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB in '
-        '${seconds.toStringAsFixed(1)}s, ${fetched.mode}, ${stream.name}',
-      );
-      unawaited(saveExtras(song));
-      return true;
-    } catch (e, stack) {
-      log.error('DOWNLOAD', '"${song.title}": FLAC dal bridge fallito: $e', stack);
-      try {
-        if (await tempFile.exists()) await tempFile.delete();
-      } catch (_) {}
-      return false;
-    }
-  }
-
   /// Brings the audio at [uri] down into [tempFile] and checks its size.
-  /// [headers] ridefinisce la UA: i file della CDN del bridge preferiscono
-  /// un UA da browser normale (FlacDlService.cdnHeaders).
+  /// [headers], when given, replaces the default request headers.
   Future<_Fetch> _fetchAudio(
     Song song,
     Uri uri,
@@ -524,8 +452,7 @@ class DownloadService {
 
   Future<void> deleteDownloadedSong(String songId) async {
     try {
-      // I FLAC dal bridge e i download abituali hanno estensioni diverse:
-      // si puliscono entrambe.
+      // Old builds also saved some songs as .flac: both are cleaned.
       for (final path in [
         '${StorageService.instance.downloadsPath}/$songId.m4a',
         '${StorageService.instance.downloadsPath}/$songId.flac',

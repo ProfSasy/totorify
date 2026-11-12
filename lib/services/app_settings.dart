@@ -85,33 +85,6 @@ class AppSettings {
   /// On a mobile connection the lighter stream is played.
   late final saveDataOnCellular = _setting<bool>('save_data_on_cellular', false);
 
-  // ── FLAC senza perdita (Qobuz) ──────────────────────────────────────────
-
-  /// I brani provano a suonare in FLAC senza perdita (da Qobuz): se un brano
-  /// non è disponibile, la riproduzione prosegue da YouTube come sempre.
-  late final flacEnabled = _setting<bool>('flac_enabled', false);
-
-  /// La qualità FLAC richiesta: format_id Qobuz 6 (CD), 7 (Hi-Res),
-  /// 27 (Max 24/192).
-  late final flacQuality = _setting<int>('flac_quality', 27);
-
-  /// FLAC senza token dal bridge locale (flacdownloader): quando attivo,
-  /// la riproduzione e i download provano prima da lì.
-  late final flacDlEnabled = _setting<bool>('flacdl_enabled', false);
-
-  /// Dove parla il bridge: `http://pc-casa:7491` (PC/NAS di casa, anche via
-  /// Tailscale; la sessione per i job vive lì, sbloccata dal Turnstile).
-  late final flacDlBridge = _setting<String>('flacdl_bridge', '');
-
-  /// Bridge esterno per la risoluzione audio avanzata (arcod).
-  late final extBridgeEnabled = _setting<bool>('ext_bridge_enabled', false);
-
-  /// URL del bridge esterno (es. `http://host:3001`).
-  late final extBridgeUrl = _setting<String>('ext_bridge_url', '');
-
-  /// Usa il bridge remoto per risolvere FLAC da Deezer (endpoint /deezer).
-  late final deezerEnabled = _setting<bool>('deezer_enabled', false);
-
   /// How long two songs overlap, in seconds; 0 is no crossfade.
   late final crossfadeSeconds = _setting<int>('crossfade_seconds', 0);
 
@@ -231,13 +204,6 @@ class AppSettings {
       permanentShuffle,
       skipUnplayable,
       saveDataOnCellular,
-      flacEnabled,
-      flacQuality,
-      flacDlEnabled,
-      flacDlBridge,
-      extBridgeEnabled,
-      extBridgeUrl,
-      deezerEnabled,
       crossfadeSeconds,
       downloadOnLike,
       lyricsSources,

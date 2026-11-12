@@ -1,3 +1,0 @@
-[submodule "lib/services/qobuz_flac"]
-	path = lib/services/qobuz_flac
-	url = https://github.com/ProfSasy/totorify-qobuz.git

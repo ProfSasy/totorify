@@ -742,7 +742,7 @@ class StorageService {
   String get downloadsPath => '$_documentsPath/downloads';
 
   Future<String> getLocalAudioPath(String songId) async {
-    // I FLAC dal bridge finiscono come .flac; le sorgenti abituali .m4a.
+    // Old builds saved some songs as .flac; they keep playing offline.
     final flac = '$downloadsPath/$songId.flac';
     if (await File(flac).exists()) return flac;
     return '$downloadsPath/$songId.m4a';
