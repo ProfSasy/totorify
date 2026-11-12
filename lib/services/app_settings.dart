@@ -103,11 +103,14 @@ class AppSettings {
   /// Tailscale; la sessione per i job vive lì, sbloccata dal Turnstile).
   late final flacDlBridge = _setting<String>('flacdl_bridge', '');
 
-  /// Bridge esterno per la risoluzione audio avanzata.
+  /// Bridge esterno per la risoluzione audio avanzata (arcod).
   late final extBridgeEnabled = _setting<bool>('ext_bridge_enabled', false);
 
   /// URL del bridge esterno (es. `http://host:3001`).
   late final extBridgeUrl = _setting<String>('ext_bridge_url', '');
+
+  /// Usa il bridge remoto per risolvere FLAC da Deezer (endpoint /deezer).
+  late final deezerEnabled = _setting<bool>('deezer_enabled', false);
 
   /// How long two songs overlap, in seconds; 0 is no crossfade.
   late final crossfadeSeconds = _setting<int>('crossfade_seconds', 0);
@@ -234,6 +237,7 @@ class AppSettings {
       flacDlBridge,
       extBridgeEnabled,
       extBridgeUrl,
+      deezerEnabled,
       crossfadeSeconds,
       downloadOnLike,
       lyricsSources,

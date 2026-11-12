@@ -361,9 +361,23 @@ class _FlacSettingsScreenState extends State<FlacSettingsScreen> {
           ],
         ),
         SettingsSection(
-          title: 'Bridge remoto',
+          title: 'Deezer FLAC (via bridge)',
+          footer: 'Usa il bridge remoto per risolvere i brani in FLAC da '
+              'Deezer. Richiede che il bridge abbia DEEZER_ARL configurato '
+              'nel suo file di servizio. L\'ARL si ottiene dal cookie "arl" '
+              'di www.deezer.com dopo il login. Viene tentato per primo, '
+              'prima di arcod e Qobuz.',
+          children: [
+            SettingSwitch(
+              setting: settings.deezerEnabled,
+              title: 'Attiva',
+            ),
+          ],
+        ),
+        SettingsSection(
+          title: 'Bridge remoto (arcod)',
           footer: 'Bridge esterno per la risoluzione audio avanzata. '
-              'Viene tentato prima di ogni altra sorgente; se non risponde '
+              'Viene tentato dopo Deezer; se non risponde '
               'o non trova il brano, la riproduzione prosegue normalmente.',
           children: [
             SettingSwitch(
