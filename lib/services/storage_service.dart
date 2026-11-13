@@ -12,6 +12,8 @@ import 'playback_log_service.dart';
 import 'storage/canvas_answer_store.dart';
 import 'storage/cover_store.dart';
 import 'storage/device_settings_store.dart';
+import 'storage/library_ops_log.dart';
+import 'storage/library_stores.dart';
 import 'storage/lyrics_store.dart';
 import 'storage/source_mapping_store.dart';
 
@@ -31,21 +33,28 @@ class StorageService {
   static const String _lyricsBoxName = 'kreate_lyrics';
   static const String _guestBoxName = 'kreate_guest_library';
 
-  late Box _favoritesBox;
-  late Box _playlistsBox;
-  late Box _historyBox;
+  late FavoritesStore _favorites;
+  Box get _favoritesBox => _favorites.box;
+  late PlaylistStore _playlists;
+  Box get _playlistsBox => _playlists.box;
+  late HistoryStore _history;
+  Box get _historyBox => _history.box;
   late DeviceSettingsStore _settings;
   Box get _settingsBox => _settings.box;
-  late Box _downloadsBox;
+  late DownloadStore _downloads;
+  Box get _downloadsBox => _downloads.box;
   late SourceMappingStore _sources;
   Box get _ytMappingBox => _sources.box;
   late CoverStore _covers;
   Box get _coversBox => _covers.box;
-  late Box _artistsBox;
+  late ArtistStore _artists;
+  Box get _artistsBox => _artists.box;
   late CanvasAnswerStore _canvasAnswers;
   late LyricsStore _lyrics;
   Box get _lyricsBox => _lyrics.box;
-  late Box _guestBox;
+  late GuestLibraryStore _guest;
+  Box get _guestBox => _guest.box;
+  late LibraryOpsLog _ops;
 
   // The Documents folder moves when iOS reinstalls the app: paths are built
   // from it at every start and never stored.
@@ -53,24 +62,21 @@ class StorageService {
   // Songs whose Canvas video is saved next to their audio.
   final Set<String> _localCanvasIds = {};
 
-  // In-memory caches to eliminate repeated Hive disk deserializations
-  final List<Song> _cachedFavorites = [];
-  final Set<String> _favoriteIds = {};
-
-  final List<Playlist> _cachedPlaylists = [];
-
-  final List<Song> _cachedHistory = [];
-
-  final List<Song> _cachedDownloads = [];
-  final Set<String> _downloadedIds = {};
-  final List<Artist> _cachedArtists = [];
+  // What the boxes hold, kept in memory by their stores.
+  List<Song> get _cachedFavorites => _favorites.songs;
+  Set<String> get _favoriteIds => _favorites.ids;
+  List<Playlist> get _cachedPlaylists => _playlists.playlists;
+  List<Song> get _cachedHistory => _history.songs;
+  List<Song> get _cachedDownloads => _downloads.songs;
+  Set<String> get _downloadedIds => _downloads.ids;
+  List<Artist> get _cachedArtists => _artists.artists;
 
   // The library of a phone, shown beside this device's own (see
   // "A PHONE'S LIBRARY BESIDE THIS DEVICE'S OWN" below). Empty on a phone.
-  final List<Song> _guestFavorites = [];
-  final List<Playlist> _guestPlaylists = [];
-  final List<Song> _guestHistory = [];
-  final List<Artist> _guestArtists = [];
+  List<Song> get _guestFavorites => _guest.favorites;
+  List<Playlist> get _guestPlaylists => _guest.playlists;
+  List<Song> get _guestHistory => _guest.history;
+  List<Artist> get _guestArtists => _guest.artists;
 
   final ValueNotifier<List<Song>> favoritesNotifier = ValueNotifier<List<Song>>([]);
   final ValueNotifier<List<Playlist>> playlistsNotifier = ValueNotifier<List<Playlist>>([]);
@@ -86,23 +92,29 @@ class StorageService {
     await Hive.initFlutter(appDir.path);
 
     // A corrupted box must never prevent the app from starting: recreate it.
-    _favoritesBox = await _openBoxSafe(_favoritesBoxName);
-    _playlistsBox = await _openBoxSafe(_playlistsBoxName);
-    _historyBox = await _openBoxSafe(_historyBoxName);
+    _favorites = FavoritesStore(await _openBoxSafe(_favoritesBoxName));
+    _playlists = PlaylistStore(await _openBoxSafe(_playlistsBoxName));
+    _history = HistoryStore(await _openBoxSafe(_historyBoxName));
     _settings = DeviceSettingsStore(
       await _openBoxSafe(_settingsBoxName),
       isSearchHistoryPaused: () => AppSettings.instance.pauseSearchHistory.value,
     );
-    _downloadsBox = await _openBoxSafe(_downloadsBoxName);
+    _downloads = DownloadStore(await _openBoxSafe(_downloadsBoxName));
     _sources = SourceMappingStore(await _openBoxSafe(_ytMappingBoxName));
     _covers = CoverStore(await _openBoxSafe(_coversBoxName));
-    _artistsBox = await _openBoxSafe(_artistsBoxName);
+    _artists = ArtistStore(await _openBoxSafe(_artistsBoxName));
     _canvasAnswers = CanvasAnswerStore(await _openBoxSafe(_canvasBoxName));
     _lyrics = LyricsStore(
       await _openBoxSafe(_lyricsBoxName),
       isDownloaded: _downloadedIds.contains,
     );
-    _guestBox = await _openBoxSafe(_guestBoxName);
+    _guest = GuestLibraryStore(await _openBoxSafe(_guestBoxName));
+    _ops = LibraryOpsLog(
+      box: _settingsBox,
+      ownerId: () => libraryOwner?.id,
+      isReplaying: () => _replayingOps > 0,
+      notifier: libraryOpsNotifier,
+    );
     await AppSettings.instance.init();
     await LibraryExtras.instance.init();
 
@@ -204,90 +216,13 @@ class StorageService {
   }
 
   void _loadInitialData() {
-    // 1. Favorites, most recently added first. A box gives its values in
-    // the order of their keys, not of their arrival: the moment each one
-    // was added is stored with it. Those saved before it was (no moment)
-    // keep the order they always had, after the others.
-    _cachedFavorites.clear();
-    _favoriteIds.clear();
-    final favorites = <(int, int, Song)>[];
-    for (final raw in _favoritesBox.values) {
-      if (raw != null) {
-        try {
-          final map = Map<String, dynamic>.from(raw as Map);
-          final song = Song.fromMap(map);
-          favorites.add((map[_favoritedAtKey] as int? ?? 0, favorites.length, song));
-          _favoriteIds.add(song.id);
-        } catch (e) {
-          debugPrint('StorageService._loadFavorites: $e');
-        }
-      }
-    }
-    favorites.sort((a, b) => a.$1 != b.$1 ? b.$1.compareTo(a.$1) : b.$2.compareTo(a.$2));
-    _cachedFavorites.addAll(favorites.map((entry) => entry.$3));
-
-    // 2. Playlists
-    _cachedPlaylists.clear();
-    for (final raw in _playlistsBox.values) {
-      if (raw != null) {
-        try {
-          final map = Map<String, dynamic>.from(raw as Map);
-          _cachedPlaylists.add(Playlist.fromMap(map));
-        } catch (e) {
-          debugPrint('StorageService._loadPlaylists: $e');
-        }
-      }
-    }
-
-    // 3. History
-    _cachedHistory.clear();
-    final rawHistory =
-        _historyBox.get('recent_songs', defaultValue: <dynamic>[]);
-    final rawList = rawHistory is List ? rawHistory : const <dynamic>[];
-    for (final raw in rawList) {
-      try {
-        final map = Map<String, dynamic>.from(raw as Map);
-        _cachedHistory.add(Song.fromMap(map));
-      } catch (e) {
-        debugPrint('StorageService._loadHistory: $e');
-      }
-    }
-
-    // 4. Downloads
-    _cachedDownloads.clear();
-    _downloadedIds.clear();
-    for (final raw in _downloadsBox.values) {
-      if (raw != null) {
-        try {
-          final map = Map<String, dynamic>.from(raw as Map);
-          final song = Song.fromMap(map);
-          _cachedDownloads.add(song);
-          _downloadedIds.add(song.id);
-        } catch (e) {
-          debugPrint('StorageService._loadDownloads: $e');
-        }
-      }
-    }
-
-    // 5. YouTube Mappings
+    _favorites.load();
+    _playlists.load();
+    _history.load();
+    _downloads.load();
     _sources.reload();
-
-    // 6. Followed artists (most recently followed first)
-    _cachedArtists.clear();
-    final followed = <(int, Artist)>[];
-    for (final raw in _artistsBox.values) {
-      if (raw == null) continue;
-      try {
-        final map = Map<String, dynamic>.from(raw as Map);
-        followed.add((map['followedAt'] as int? ?? 0, Artist.fromMap(map)));
-      } catch (e) {
-        debugPrint('StorageService._loadArtists: $e');
-      }
-    }
-    followed.sort((a, b) => b.$1.compareTo(a.$1));
-    _cachedArtists.addAll(followed.map((entry) => entry.$2));
-
-    _loadGuestLibrary();
+    _artists.load();
+    _guest.load();
     _syncNotifiers();
   }
 
@@ -318,7 +253,7 @@ class StorageService {
       followedArtistsNotifier.value = _both(_guestArtists, _cachedArtists, (a) => a.id);
 
   // --- FAVORITES ---
-  static const String _favoritedAtKey = 'favoritedAt';
+  static const String _favoritedAtKey = FavoritesStore.favoritedAtKey;
 
   List<Song> getFavorites() => favoritesNotifier.value;
 
@@ -958,10 +893,10 @@ class StorageService {
   // when another phone connects, and never touches the TV's own. The
   // library travels in sections, so that a change to one does not send the
   // others again.
-  static const String sectionFavorites = 'favorites';
-  static const String sectionPlaylists = 'playlists';
-  static const String sectionArtists = 'artists';
-  static const String sectionHistory = 'history';
+  static const String sectionFavorites = GuestLibraryStore.sectionFavorites;
+  static const String sectionPlaylists = GuestLibraryStore.sectionPlaylists;
+  static const String sectionArtists = GuestLibraryStore.sectionArtists;
+  static const String sectionHistory = GuestLibraryStore.sectionHistory;
   static const String sectionExtras = 'extras';
   static const List<String> librarySections = [
     sectionFavorites,
@@ -990,51 +925,7 @@ class StorageService {
         : {};
   }
 
-  void _loadGuestLibrary() {
-    List<T> read<T>(String section, T Function(Map<String, dynamic> map) make) {
-      final raw = _guestBox.get(section);
-      final made = <T>[];
-      for (final item in raw is List ? raw : const <dynamic>[]) {
-        try {
-          made.add(make(Map<String, dynamic>.from(item as Map)));
-        } catch (e) {
-          debugPrint('StorageService._loadGuestLibrary $section: $e');
-        }
-      }
-      return made;
-    }
-
-    _guestFavorites
-      ..clear()
-      ..addAll(read(sectionFavorites, Song.fromMap));
-    _guestPlaylists
-      ..clear()
-      ..addAll(read(sectionPlaylists, Playlist.fromMap));
-    _guestArtists
-      ..clear()
-      ..addAll(read(sectionArtists, Artist.fromMap));
-    _guestHistory
-      ..clear()
-      ..addAll(read(sectionHistory, Song.fromMap));
-  }
-
-  Future<void> _saveGuest(String section) async {
-    final List<Map<String, dynamic>> data;
-    switch (section) {
-      case sectionFavorites:
-        data = [for (final song in _guestFavorites) song.toMap()];
-      case sectionPlaylists:
-        data = [for (final playlist in _guestPlaylists) playlist.toMap()];
-      case sectionArtists:
-        data = [for (final artist in _guestArtists) artist.toMap()];
-      case sectionHistory:
-        data = [for (final song in _guestHistory) song.toMap()];
-      default:
-        return;
-    }
-    if (data.isEmpty && !_guestBox.containsKey(section)) return;
-    await _guestBox.put(section, data);
-  }
+  Future<void> _saveGuest(String section) => _guest.save(section);
 
   /// The phone's library is not shown here any more; this device's own is
   /// untouched. What was changed in it and that phone has not taken yet is
@@ -1241,7 +1132,7 @@ class StorageService {
   static const String opPlayed = 'played';
   // A playlist renamed or (`on` false) removed; with its songs when it is
   // one the phone does not have.
-  static const String opPlaylist = 'playlist';
+  static const String opPlaylist = LibraryOpsLog.opPlaylist;
   // A song put in a playlist or taken out of it.
   static const String opPlaylistSong = 'playlistSong';
   static const Map<String, String> _sectionOfOp = {
@@ -1258,98 +1149,24 @@ class StorageService {
 
   /// What every version that takes changes knows, said or not.
   static const Set<String> firstLibraryOpKinds = {opFavorite, opFollow, opPlayed};
-  static const int _maxLibraryOps = 300;
 
   /// Number of the last change recorded: it moves when there is one to send.
   final ValueNotifier<int> libraryOpsNotifier = ValueNotifier<int>(0);
   int _replayingOps = 0;
 
-  // Each phone has its own: what was changed in the library of one waits
-  // for it while another one's is shown.
-  String? get _libraryOpsKey {
-    final owner = libraryOwner;
-    return owner == null ? null : 'library_ops_${owner.id}';
-  }
-
   /// The changes made here that the phone whose library is shown has not
-  /// taken yet, oldest first.
-  List<Map<String, dynamic>> get pendingLibraryOps {
-    final key = _libraryOpsKey;
-    final raw = key == null ? null : _settingsBox.get(key);
-    return [
-      for (final item in raw is List ? raw : const <dynamic>[])
-        if (item is Map) Map<String, dynamic>.from(item),
-    ];
-  }
+  /// taken yet, oldest first (see [LibraryOpsLog]).
+  List<Map<String, dynamic>> get pendingLibraryOps => _ops.pending;
 
-  /// Keeps a change to [subject] (a song, an artist) for the phone whose
-  /// library it was made in. A later change of the same kind to the same
-  /// subject replaces the earlier.
-  void _recordLibraryOp(String kind, String subject, Map<String, dynamic> data) {
-    final key = _libraryOpsKey;
-    if (_replayingOps > 0 || key == null) return;
-    final ops = pendingLibraryOps
-      ..removeWhere((op) => op['op'] == kind && op['subject'] == subject);
-    final n = _nextLibraryOpNumber();
-    ops.add({'n': n, 'op': kind, 'subject': subject, ...data});
-    if (ops.length > _maxLibraryOps) ops.removeRange(0, ops.length - _maxLibraryOps);
-    unawaited(_settingsBox.put(key, ops));
-    libraryOpsNotifier.value = n;
-  }
+  void _recordLibraryOp(String kind, String subject, Map<String, dynamic> data) =>
+      _ops.record(kind, subject, data);
 
-  int _nextLibraryOpNumber() {
-    final n = (_settingsBox.get('library_op_count') as int? ?? 0) + 1;
-    unawaited(_settingsBox.put('library_op_count', n));
-    return n;
-  }
-
-  /// A playlist of the phone was renamed here, or saved whole: with
-  /// [withSongs] the change carries its songs.
-  void _recordPlaylistOp(Playlist playlist, {bool withSongs = false}) {
-    final key = _libraryOpsKey;
-    if (_replayingOps > 0 || key == null) return;
-    final ops = pendingLibraryOps;
-    final at = ops.indexWhere(
-      (op) => op['op'] == opPlaylist && op['subject'] == playlist.id && op['on'] == true,
-    );
-    final data = <String, dynamic>{
-      'on': true,
-      'playlist': {
-        'title': playlist.title,
-        'description': playlist.description,
-        'thumbnailUrl': playlist.thumbnailUrl,
-      },
-      if (withSongs)
-        'songs': [for (final song in playlist.songs) song.toMap()]
-      // The change the phone has not taken yet may be the one with the songs.
-      else if (at != -1 && ops[at]['songs'] != null)
-        'songs': ops[at]['songs'],
-    };
-    if (at == -1) {
-      _recordLibraryOp(opPlaylist, playlist.id, data);
-      return;
-    }
-    // An earlier change to it is still waiting, and the songs put in it
-    // since come after that one: this takes its place, not the last. It
-    // takes a new number, so that a phone that already had the old one does
-    // not make this one forgotten with it.
-    final n = _nextLibraryOpNumber();
-    ops[at] = {'n': n, 'op': opPlaylist, 'subject': playlist.id, ...data};
-    unawaited(_settingsBox.put(key, ops));
-    libraryOpsNotifier.value = n;
-  }
+  void _recordPlaylistOp(Playlist playlist, {bool withSongs = false}) =>
+      _ops.recordPlaylist(playlist, withSongs: withSongs);
 
   /// The phone applied the changes numbered up to [upTo], of the [kinds] it
   /// knows (all of them when null).
-  Future<void> forgetLibraryOps(int upTo, {Set<String>? kinds}) async {
-    final key = _libraryOpsKey;
-    if (key == null) return;
-    final ops = pendingLibraryOps
-      ..removeWhere(
-        (op) => (op['n'] as int? ?? 0) <= upTo && (kinds == null || kinds.contains(op['op'])),
-      );
-    await _settingsBox.put(key, ops);
-  }
+  Future<void> forgetLibraryOps(int upTo, {Set<String>? kinds}) => _ops.forget(upTo, kinds: kinds);
 
   /// Makes a change another device recorded ([pendingLibraryOps] there).
   /// Applying one twice changes nothing.
