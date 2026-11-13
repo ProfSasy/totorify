@@ -25,7 +25,10 @@ import 'services/storage_service.dart';
 import 'services/update_checker.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/main_shell.dart';
+import 'services/font_library.dart';
 import 'ui/theme/app_theme.dart';
+import 'ui/theme/app_tokens.dart';
+import 'ui/theme/dynamic_color.dart';
 import 'ui/widgets/connect_request_prompt.dart';
 import 'ui/widgets/player_sheet.dart';
 
@@ -101,6 +104,8 @@ Future<void> _startApp() async {
     final others = [for (final (_, color) in colors) if (color != current) color];
     await StorageService.instance.setAccentColor(others[Random().nextInt(others.length)]);
   }
+  // The fonts the user brought in, before the first frame is drawn with one.
+  await FontLibrary.instance.init();
   // Canvas videos kept from earlier listens; nothing waits for them.
   unawaited(CanvasFileCache.instance.init());
 
@@ -132,6 +137,9 @@ Future<void> _startApp() async {
       rewindInterval: Duration(seconds: 15),
     ),
   );
+
+  // The colors of the cover of what plays, for who wants the app to follow.
+  DynamicColor.instance.follow(audioHandler.mediaItem);
 
   // Other devices running Totorify can play instead of this one.
   // The queue of the last session comes back, paused.
@@ -286,20 +294,46 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<Color>(
-      valueListenable: StorageService.instance.accentColorNotifier,
-      builder: (context, accentColor, _) {
+    final settings = AppSettings.instance;
+    // Everything the look of the app depends on: when one changes, the
+    // theme is made again and the app crosses over to it.
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        StorageService.instance.accentColorNotifier,
+        settings.fontFamily,
+        settings.textScale,
+        settings.dynamicColor,
+        settings.cornerStyle,
+        DynamicColor.instance.palette,
+      ]),
+      builder: (context, _) {
+        final accentColor = StorageService.instance.accentColorNotifier.value;
+        // The colors of the cover of what is playing, when the user wants
+        // the app to follow the music.
+        final dynamicLevel = settings.dynamicColor.value;
+        final palette = dynamicLevel > 0 ? DynamicColor.instance.palette.value : null;
         return MaterialApp(
           title: 'Totorify',
           debugShowCheckedModeBanner: false,
-          // Keep the dense player/list layouts intact even with large
-          // accessibility text sizes.
-          builder: (context, child) => MediaQuery.withClampedTextScaling(
-            minScaleFactor: 0.9,
-            maxScaleFactor: 1.2,
-            child: child!,
+          // The size chosen in iOS is kept within what the dense player and
+          // list layouts can take; the size chosen in the app goes on top.
+          builder: (context, child) {
+            final system = MediaQuery.textScalerOf(context).scale(1).clamp(0.9, 1.2);
+            final chosen = settings.textScale.value.clamp(0.8, 1.4);
+            return MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(system * chosen),
+              ),
+              child: child!,
+            );
+          },
+          theme: AppTheme.getTheme(
+            isAmoled: _isAmoled,
+            customAccent: palette?.accent ?? accentColor,
+            fontFamily: settings.fontFamily.value,
+            tint: dynamicLevel == 2 ? palette?.surface : null,
+            cornerScale: AppRadius.scales[settings.cornerStyle.value.clamp(0, 3)],
           ),
-          theme: AppTheme.getTheme(isAmoled: _isAmoled, customAccent: accentColor),
           // Listen to audio handler errors and show snackbars
           home: _isLoggedIn
               ? _MainWithErrorListener(

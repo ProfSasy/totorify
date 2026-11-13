@@ -163,6 +163,38 @@ class AppSettings {
   /// A different color of the app at every launch.
   late final randomAccent = _setting<bool>('random_accent', false);
 
+  /// The font of the whole app: empty for the system's, the name of one of
+  /// the system's families, or of a font the user imported (`FontLibrary`).
+  late final fontFamily = _setting<String>('font_family', '');
+
+  /// How large the text is, on top of the size chosen in iOS (1 = as is).
+  late final textScale = _setting<double>('text_scale', 1.0);
+
+  /// Where the colors of the app come from: 0 the color chosen, 1 the cover
+  /// of what is playing for buttons and selections, 2 the cover for the
+  /// backgrounds too.
+  late final dynamicColor = _setting<int>('dynamic_color', 0);
+
+  /// How round covers and cards are: 0 square, 1 as designed, 2 rounder,
+  /// 3 roundest.
+  late final cornerStyle = _setting<int>('corner_style', 1);
+
+  /// The cover in the player: 0 as designed, 1 a disc, 2 smaller.
+  late final playerCoverStyle = _setting<int>('player_cover_style', 0);
+
+  /// Title and artist in the middle of the player instead of on the left.
+  late final playerTitleCentered = _setting<bool>('player_title_centered', false);
+
+  /// Where the song plays from ("YouTube (HLS)") under the artist.
+  late final playerShowSource = _setting<bool>('player_show_source', true);
+
+  /// The buttons under the transport that are hidden, by name: `devices`,
+  /// `sources`, `lyrics`, `queue`.
+  late final playerHiddenActions = _setting<List<String>>('player_hidden_actions', const []);
+
+  /// Shuffle and repeat beside the transport buttons.
+  late final playerShowModes = _setting<bool>('player_show_modes', true);
+
   // ── Listening together ──────────────────────────────────────────────────
 
   /// Who listens along may also play, pause, skip and propose songs.
@@ -225,6 +257,15 @@ class AppSettings {
       showCodec,
       haptics,
       randomAccent,
+      fontFamily,
+      textScale,
+      dynamicColor,
+      cornerStyle,
+      playerCoverStyle,
+      playerTitleCentered,
+      playerShowSource,
+      playerHiddenActions,
+      playerShowModes,
       togetherGuestsControl,
       pauseListenHistory,
       pauseSearchHistory,

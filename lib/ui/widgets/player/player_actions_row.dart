@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../services/app_settings.dart';
 import '../../../services/audio_handler.dart';
 import '../../theme/app_ambience.dart';
 import '../../theme/app_icons.dart';
@@ -25,22 +26,39 @@ class PlayerActionsRow extends StatelessWidget {
   final VoidCallback onLyrics;
   final VoidCallback onQueue;
 
+  /// The names the buttons are hidden by (`AppSettings.playerHiddenActions`).
+  static const String devices = 'devices';
+  static const String sources = 'sources';
+  static const String lyrics = 'lyrics';
+  static const String queue = 'queue';
+
   @override
   Widget build(BuildContext context) {
+    // Redrawn when the user shows or hides a button.
+    return ValueListenableBuilder<List<String>>(
+      valueListenable: AppSettings.instance.playerHiddenActions,
+      builder: (context, hidden, _) => _row(context, hidden.toSet()),
+    );
+  }
+
+  Widget _row(BuildContext context, Set<String> hidden) {
     final quiet = playerInk.withValues(alpha: 0.72);
     return Row(
       children: [
         // Where the music plays: here, or on another device
-        // (its name then takes the room there is).
+        // (its name then takes the room there is). Hidden, it still keeps
+        // the other buttons on the right.
         Expanded(
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: DevicesButton(
-              remoteName: audioHandler.remoteNameNotifier,
-              accent: palette.accent,
-              idle: quiet,
-            ),
-          ),
+          child: hidden.contains(devices)
+              ? const SizedBox(height: 48)
+              : Align(
+                  alignment: Alignment.centerLeft,
+                  child: DevicesButton(
+                    remoteName: audioHandler.remoteNameNotifier,
+                    accent: palette.accent,
+                    idle: quiet,
+                  ),
+                ),
         ),
         ValueListenableBuilder<String?>(
           valueListenable: audioHandler.sleepTimerNotifier,
@@ -68,16 +86,19 @@ class PlayerActionsRow extends StatelessWidget {
             );
           },
         ),
+        if (!hidden.contains(sources))
         IconButton(
           tooltip: 'Fonti audio alternative',
           onPressed: onSources,
           icon: Icon(AppIcons.sources, color: quiet, size: 23),
         ),
+        if (!hidden.contains(lyrics))
         IconButton(
           tooltip: 'Testo',
           onPressed: onLyrics,
           icon: Icon(AppIcons.lyrics, color: quiet, size: 23),
         ),
+        if (!hidden.contains(queue))
         IconButton(
           tooltip: 'Coda',
           padding: EdgeInsets.zero,

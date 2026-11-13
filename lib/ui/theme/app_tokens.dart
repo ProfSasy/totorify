@@ -26,9 +26,17 @@ class AppRadius {
   static const double xl = 16;
   static const double pill = 999;
 
-  static BorderRadius get cover => BorderRadius.circular(xs);
-  static BorderRadius get card => BorderRadius.circular(md);
-  static BorderRadius get floating => BorderRadius.circular(md);
+  /// How round the user wants covers and cards: 0 square, 1 as designed,
+  /// more for rounder. Set with the theme (see `AppTheme.getTheme`), which
+  /// is rebuilt when it changes.
+  static double scale = 1.0;
+
+  /// The values of [scale] the user can choose from, by `cornerStyle`.
+  static const List<double> scales = [0.0, 1.0, 2.0, 3.5];
+
+  static BorderRadius get cover => BorderRadius.circular(xs * scale);
+  static BorderRadius get card => BorderRadius.circular(md * scale);
+  static BorderRadius get floating => BorderRadius.circular(md * scale);
   static BorderRadius get chip => BorderRadius.circular(pill);
   static BorderRadius get sheet =>
       const BorderRadius.vertical(top: Radius.circular(xl));

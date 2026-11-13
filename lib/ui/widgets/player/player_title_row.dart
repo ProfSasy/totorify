@@ -2,6 +2,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../../models/song.dart';
+import '../../../services/app_settings.dart';
 import '../../../services/audio_handler.dart';
 import '../../../services/storage_service.dart';
 import '../../theme/app_ambience.dart';
@@ -28,9 +29,25 @@ class PlayerTitleRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final settings = AppSettings.instance;
+    // Redrawn when the user changes how the title is shown.
+    return ListenableBuilder(
+      listenable: Listenable.merge([settings.playerTitleCentered, settings.playerShowSource]),
+      builder: (context, _) => _row(
+        context,
+        centered: settings.playerTitleCentered.value,
+        showSource: settings.playerShowSource.value,
+      ),
+    );
+  }
+
+  Widget _row(BuildContext context, {required bool centered, required bool showSource}) {
     final quiet = playerInk.withValues(alpha: 0.72);
     return Row(
       children: [
+        // As wide as the heart on the other side: the title stays in the
+        // middle of the screen.
+        if (centered) const SizedBox(width: AppSpacing.sm + 44),
         Expanded(
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 280),
@@ -38,7 +55,7 @@ class PlayerTitleRow extends StatelessWidget {
             switchOutCurve: Curves.easeInCubic,
             layoutBuilder: (currentChild, previousChildren) =>
                 Stack(
-              alignment: Alignment.centerLeft,
+              alignment: centered ? Alignment.center : Alignment.centerLeft,
               children: [
                 ...previousChildren,
                 ?currentChild,
@@ -46,7 +63,8 @@ class PlayerTitleRow extends StatelessWidget {
             ),
             child: Column(
               key: ValueKey('player_title_${mediaItem.id}'),
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+                  centered ? CrossAxisAlignment.center : CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
@@ -62,6 +80,8 @@ class PlayerTitleRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Row(
+                  mainAxisAlignment:
+                      centered ? MainAxisAlignment.center : MainAxisAlignment.start,
                   children: [
                     ValueListenableBuilder<List<Song>>(
                       valueListenable:
@@ -96,7 +116,7 @@ class PlayerTitleRow extends StatelessWidget {
                 ValueListenableBuilder<String?>(
                   valueListenable: audioHandler.sourceNotifier,
                   builder: (context, source, _) {
-                    final label = source?.trim() ?? '';
+                    final label = showSource ? (source?.trim() ?? '') : '';
                     if (label.isEmpty) {
                       return const SizedBox.shrink();
                     }

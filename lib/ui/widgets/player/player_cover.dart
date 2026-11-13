@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
+import '../../../services/app_settings.dart';
 import '../../theme/app_tokens.dart';
 import '../app_cover.dart';
 import 'player_style.dart';
@@ -26,6 +27,16 @@ class PlayerCover extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Redrawn when the user changes the shape of the cover.
+    return ValueListenableBuilder<int>(
+      valueListenable: AppSettings.instance.playerCoverStyle,
+      builder: (context, style, _) => _cover(context, style),
+    );
+  }
+
+  /// [style] is 0 as designed, 1 a disc, 2 smaller.
+  Widget _cover(BuildContext context, int style) {
+    final disc = style == 1;
     return AnimatedSwitcher(
       duration: playerCanvasFade,
       layoutBuilder: (currentChild, previousChildren) => Stack(
@@ -44,9 +55,9 @@ class PlayerCover extends StatelessWidget {
             ),
             child: LayoutBuilder(
               builder: (context, cover) {
-                final dimension =
-                    math.min(cover.maxWidth, cover.maxHeight);
-                if (dimension < 120) return const SizedBox.shrink();
+                final room = math.min(cover.maxWidth, cover.maxHeight);
+                if (room < 120) return const SizedBox.shrink();
+                final dimension = style == 2 ? room * 0.76 : room;
                 return Center(
                   child: AnimatedScale(
                     scale: isPlaying ? 1 : 0.93,
@@ -59,6 +70,7 @@ class PlayerCover extends StatelessWidget {
                       child: DecoratedBox(
                         key: ValueKey('player_cover_${mediaItem.id}'),
                         decoration: BoxDecoration(
+                          shape: disc ? BoxShape.circle : BoxShape.rectangle,
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black.withValues(alpha: 0.45),
@@ -71,6 +83,7 @@ class PlayerCover extends StatelessWidget {
                           url: mediaItem.artUri?.toString(),
                           size: dimension,
                           radius: AppRadius.md,
+                          circle: disc,
                         ),
                       ),
                     ),

@@ -17,6 +17,7 @@ import 'settings/integrations_settings_screen.dart';
 import 'settings/library_settings_screen.dart';
 import 'settings/lyrics_settings_screen.dart';
 import 'settings/playback_settings_screen.dart';
+import 'settings/appearance_settings_screen.dart';
 import 'settings/player_settings_screen.dart';
 import 'settings/privacy_settings_screen.dart';
 import 'settings/settings_kit.dart';
@@ -278,8 +279,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
                 SettingLink(
+                  title: 'Personalizzazione',
+                  subtitle: 'Font, dimensione del testo, colori dinamici, forme',
+                  onTap: () => SettingsPage.open(context, const AppearanceSettingsScreen()),
+                ),
+                const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),
+                SettingLink(
                   title: 'Player',
-                  subtitle: 'Sfondo, barra di avanzamento, formato audio, vibrazione',
+                  subtitle: 'Copertina, titolo, pulsanti, sfondo, barra di avanzamento',
                   onTap: () => SettingsPage.open(context, const PlayerSettingsScreen()),
                 ),
                 const Divider(height: 1, indent: AppSpacing.lg, endIndent: AppSpacing.lg),

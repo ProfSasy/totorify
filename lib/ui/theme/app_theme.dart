@@ -71,12 +71,24 @@ class AppTheme {
       Color.lerp(color, Colors.white, amount)!;
 
   /// Builds the full Material color scheme for the current settings.
-  static ColorScheme schemeFor({required bool isAmoled, Color? customAccent}) {
+  ///
+  /// With [tint] (the dark shade of a cover) the backgrounds lean towards
+  /// it, and stay as dark as they were: text is as readable as without.
+  static ColorScheme schemeFor({required bool isAmoled, Color? customAccent, Color? tint}) {
     final primary = customAccent ?? accentColor;
-    final bg = isAmoled ? amoledBg : darkBg;
-    final surface = isAmoled ? amoledSurface : darkSurface;
-    final surfaceHigh = isAmoled ? amoledSurfaceHigh : darkSurfaceHigh;
-    final surfaceHighest = isAmoled ? amoledSurfaceHighest : darkSurfaceHighest;
+    Color tinted(Color base, double amount) {
+      if (tint == null) return base;
+      final mixed = HSLColor.fromColor(Color.lerp(base, tint, amount)!);
+      // Never lighter than the surface it replaces by more than a touch.
+      final ceiling = HSLColor.fromColor(base).lightness + 0.05;
+      return mixed.withLightness(mixed.lightness.clamp(0.0, ceiling)).toColor();
+    }
+
+    // Pure black stays pure black: that is what "Nero assoluto" is for.
+    final bg = isAmoled ? amoledBg : tinted(darkBg, 0.5);
+    final surface = tinted(isAmoled ? amoledSurface : darkSurface, 0.45);
+    final surfaceHigh = tinted(isAmoled ? amoledSurfaceHigh : darkSurfaceHigh, 0.4);
+    final surfaceHighest = tinted(isAmoled ? amoledSurfaceHighest : darkSurfaceHighest, 0.4);
     final secondary = Color.lerp(primary, const Color(0xFF7C6BFF), 0.35)!;
     final tertiary = Color.lerp(primary, const Color(0xFF3ED6C4), 0.45)!;
 
@@ -117,16 +129,25 @@ class AppTheme {
     );
   }
 
-  static ThemeData getTheme({bool isAmoled = false, Color? customAccent}) {
-    final cs = schemeFor(isAmoled: isAmoled, customAccent: customAccent);
+  /// [fontFamily] is the font of the whole app (the platform's when null
+  /// or empty); [tint] colors the backgrounds (see [schemeFor]);
+  /// [cornerScale] is how round covers and cards are (see [AppRadius.scale]).
+  static ThemeData getTheme({
+    bool isAmoled = false,
+    Color? customAccent,
+    String? fontFamily,
+    Color? tint,
+    double cornerScale = 1.0,
+  }) {
+    final cs = schemeFor(isAmoled: isAmoled, customAccent: customAccent, tint: tint);
     final bg = cs.surfaceDim;
+    AppRadius.scale = cornerScale;
+    final chosenFont = (fontFamily == null || fontFamily.isEmpty) ? null : fontFamily;
     // The text styles given to components below replace the ones of the
-    // theme instead of building on them: they are given the platform's font
-    // here, like every other text.
-    final fontFamily = Typography.material2021(platform: defaultTargetPlatform)
-        .white
-        .labelLarge
-        ?.fontFamily;
+    // theme instead of building on them: they are given the font here, like
+    // every other text.
+    fontFamily = chosenFont ??
+        Typography.material2021(platform: defaultTargetPlatform).white.labelLarge?.fontFamily;
     TextStyle label(double size) => TextStyle(
           fontFamily: fontFamily,
           fontSize: size,
@@ -137,6 +158,10 @@ class AppTheme {
       useMaterial3: true,
       brightness: Brightness.dark,
       colorScheme: cs,
+      fontFamily: chosenFont,
+      // Part of the theme, so that what is drawn with it is drawn again
+      // when it changes.
+      extensions: [AppShape(cornerScale)],
       scaffoldBackgroundColor: bg,
       canvasColor: bg,
       // Touches answer with a quiet highlight, never with a ripple.
@@ -338,4 +363,23 @@ class AppTheme {
         labelLarge: AppText.tileTitle(cs),
         labelSmall: AppText.overline(cs),
       );
+}
+
+/// How round covers and cards are, as part of the theme.
+class AppShape extends ThemeExtension<AppShape> {
+  const AppShape(this.cornerScale);
+
+  final double cornerScale;
+
+  @override
+  AppShape copyWith({double? cornerScale}) => AppShape(cornerScale ?? this.cornerScale);
+
+  @override
+  AppShape lerp(AppShape? other, double t) => t < 0.5 ? this : (other ?? this);
+
+  @override
+  bool operator ==(Object other) => other is AppShape && other.cornerScale == cornerScale;
+
+  @override
+  int get hashCode => cornerScale.hashCode;
 }

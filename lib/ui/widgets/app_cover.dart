@@ -72,6 +72,9 @@ class AppCover extends StatelessWidget {
 
     return circle
         ? ClipOval(child: image)
-        : ClipRRect(borderRadius: BorderRadius.circular(radius), child: image);
+        : ClipRRect(
+            borderRadius: BorderRadius.circular(radius * AppRadius.scale),
+            child: image,
+          );
   }
 }

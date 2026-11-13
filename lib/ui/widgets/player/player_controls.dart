@@ -1,6 +1,7 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../../services/app_settings.dart';
 import '../../../services/audio_handler.dart';
 import '../../../services/playback_log_service.dart';
 import '../../theme/app_ambience.dart';
@@ -31,9 +32,19 @@ class PlayerTransportControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Redrawn when the user shows or hides shuffle and repeat.
+    return ValueListenableBuilder<bool>(
+      valueListenable: AppSettings.instance.playerShowModes,
+      builder: (context, showModes, _) => _row(context, showModes),
+    );
+  }
+
+  Widget _row(BuildContext context, bool showModes) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      mainAxisAlignment:
+          showModes ? MainAxisAlignment.spaceBetween : MainAxisAlignment.spaceEvenly,
       children: [
+        if (showModes)
         ValueListenableBuilder<bool>(
           valueListenable: audioHandler.smartShuffleNotifier,
           builder: (context, smart, _) {
@@ -104,6 +115,7 @@ class PlayerTransportControls extends StatelessWidget {
           },
           icon: const Icon(AppIcons.next, color: playerInk),
         ),
+        if (showModes)
         Builder(
           builder: (context) {
             final mode =
