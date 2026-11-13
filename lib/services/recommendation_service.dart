@@ -231,7 +231,7 @@ class RecommendationService {
   Future<List<Song>> _fromYouTube(String videoId) async {
     try {
       final related = await YTMusicService.instance.getRelatedSongs(videoId);
-      return CoverArtService.instance.withOriginalCovers(related);
+      return await CoverArtService.instance.withOriginalCovers(related);
     } catch (e) {
       debugPrint('RecommendationService._fromYouTube: $e');
       return [];
