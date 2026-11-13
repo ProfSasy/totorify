@@ -15,6 +15,8 @@ import 'cover_art_service.dart';
 import 'download_service.dart';
 import 'lyrics_service.dart';
 import 'playback_log_service.dart';
+import 'playback/crossfade.dart';
+import 'playback/loudness.dart';
 import 'playback/player_backend.dart';
 import 'playback_queue.dart';
 import 'recommendation_service.dart';
@@ -68,7 +70,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   AudioPlayerHandler({PlayerBackendFactory? createPlayer})
       : _createPlayer = createPlayer ?? VideoPlayerBackend.new {
-    AppSettings.instance.normalizeVolume.addListener(_onNormalizeChanged);
+    AppSettings.instance.normalizeVolume.addListener(_loudness.onSettingChanged);
   }
 
   // SponsorBlock: the parts of the video playing to jump over, and which of
@@ -78,7 +80,22 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   final Set<int> _segmentsPassed = {};
 
   // How much the current track is lowered to sound as loud as the others.
-  double _gain = 1.0;
+  late final LoudnessNormalizer _loudness = LoudnessNormalizer(
+    isEnabled: () => AppSettings.instance.normalizeVolume.value,
+    knownLoudness: (videoId) {
+      final known = YTMusicService.instance.streamDetails(videoId);
+      return known == null ? null : (loudnessDb: known.loudnessDb);
+    },
+    fetchLoudness: YTMusicService.instance.loudnessOf,
+    currentGeneration: () => _loadGeneration,
+    currentVideoId: () =>
+        _currentStreamId ?? (currentSong == null ? null : _videoIdOf(currentSong!)),
+    onGainChanged: () {
+      final player = _player;
+      if (player != null) unawaited(player.setVolume(_playerVolume).catchError((_) {}));
+    },
+  );
+  double get _gain => _loudness.gain;
 
   // Songs that could not be played one after the other: past a few, the
   // queue is not skipped through any further.
@@ -95,16 +112,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   /// How much the current track is lowered by the normalization (1 = not).
   double get normalizationGain => _gain;
 
-  // Crossfade: the player of the song fading out while the next one fades
-  // in, how loud it was when it started to fade, and the level of the one
-  // coming in (0 to 1).
-  PlayerBackend? _fadingOut;
-  double _fadingOutVolume = 0;
-  double _fadeIn = 1.0;
-  Timer? _fadeTimer;
-  // True while the load of the song coming in is being started by the
-  // crossfade itself: any other load ends the crossfade at once.
-  bool _crossfadeStarting = false;
+  late final CrossfadeController _crossfade = CrossfadeController(_CrossfadeHost(this));
 
   // Makes the player of a source: the native one, or a fake in the tests.
   final PlayerBackendFactory _createPlayer;
@@ -333,7 +341,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         if (position == null || !identical(player, _player) || _loading || _seeking) return;
         _setPosition(position);
         _skipSegmentAt(position);
-        _maybeCrossfade(position);
+        _crossfade.maybeStart(position);
         // The end is called here, a moment early, rather than left to the
         // player: it can believe the track is twice as long, and once it has
         // stopped by itself it is busy parking at the end, which gets in the
@@ -518,11 +526,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       _sendLoad(Duration(milliseconds: (from * 1000).round()));
       return;
     }
-    if (_crossfadeStarting) {
-      _crossfadeStarting = false;
-    } else {
-      _finishCrossfade();
-    }
+    _crossfade.onLoadStarting();
     final generation = ++_loadGeneration;
     _endGateOpen = true;
     _userPaused = false;
@@ -755,7 +759,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         if (generation != _loadGeneration) return _Open.superseded;
         await controller.play();
         _starting = false;
-        if (_fadingOut != null) _startFadeRamp();
+        if (_crossfade.isFading) _crossfade.startRamp();
         // What it reported while starting was skipped: publish where it is.
         _onPlayerValue(controller);
       }
@@ -818,70 +822,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _userStopped = true;
     _loading = false;
     _publish(processing: AudioProcessingState.idle, playing: false);
-    _finishCrossfade();
+    _crossfade.finish();
     _skipAfterFailure();
-  }
-
-  // ── Crossfade ───────────────────────────────────────────────────────────
-
-  /// Near the end of the track, with crossfade on, the next one starts
-  /// while this one goes on: this one fades out as the other fades in.
-  void _maybeCrossfade(Duration position) {
-    final seconds = AppSettings.instance.crossfadeSeconds.value;
-    if (seconds <= 0 || _fadingOut != null || _remote != null || !_endGateOpen) return;
-    // A short track would be all fade.
-    if (_trackDuration < Duration(seconds: seconds * 3)) return;
-    if (position < _trackDuration - Duration(seconds: seconds)) return;
-    if (_queue.repeat == PlaybackRepeat.one || _sleepTimerEndOfTrack || _userPaused) return;
-    final next = _queue.peekNext();
-    final old = _player;
-    if (next == null || old == null) return;
-
-    PlaybackLogService.instance.log('FADE', 'dissolvenza di ${seconds}s verso il prossimo brano');
-    _endGateOpen = false;
-    _fadingOutVolume = _playerVolume;
-    _fadingOut = old;
-    // The song fading out is no longer the player: what it reports is not
-    // published, and the next load does not silence it.
-    _player = null;
-    _fadeIn = 0.0;
-    _crossfadeStarting = true;
-    unawaited(_playIndex(next));
-  }
-
-  void _startFadeRamp() {
-    final total = AppSettings.instance.crossfadeSeconds.value * 1000;
-    final started = DateTime.now();
-    final old = _fadingOut;
-    _fadeTimer?.cancel();
-    _fadeTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      final level = total <= 0
-          ? 1.0
-          : (DateTime.now().difference(started).inMilliseconds / total).clamp(0.0, 1.0);
-      _fadeIn = level;
-      final player = _player;
-      if (player != null) unawaited(player.setVolume(_playerVolume).catchError((_) {}));
-      if (old != null) {
-        unawaited(old.setVolume(_fadingOutVolume * (1 - level)).catchError((_) {}));
-      }
-      if (level >= 1) _finishCrossfade();
-    });
-  }
-
-  /// Ends a crossfade at once: the song fading out stops, the one coming in
-  /// plays at its full volume.
-  void _finishCrossfade() {
-    _fadeTimer?.cancel();
-    _fadeTimer = null;
-    final old = _fadingOut;
-    _fadingOut = null;
-    _crossfadeStarting = false;
-    if (_fadeIn != 1.0) {
-      _fadeIn = 1.0;
-      final player = _player;
-      if (player != null) unawaited(player.setVolume(_playerVolume).catchError((_) {}));
-    }
-    if (old != null) unawaited(_disposeQuietly(old));
   }
 
   /// A song that cannot be played is passed over, when the user wants it:
@@ -916,7 +858,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   /// it is.
   void _prepareExtras(String? videoId, int generation) {
     if (videoId == null || videoId.isEmpty) {
-      _setGain(1.0);
+      _loudness.setGain(1.0);
       return;
     }
     unawaited(() async {
@@ -925,45 +867,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       _segments = segments;
       PlaybackLogService.instance.log('SKIP', 'SponsorBlock $videoId: ${segments.join(', ')}');
     }());
-    unawaited(_applyLoudness(videoId, generation));
+    unawaited(_loudness.apply(videoId, generation));
   }
 
-  Future<void> _applyLoudness(String videoId, int generation) async {
-    if (!AppSettings.instance.normalizeVolume.value) {
-      _setGain(1.0);
-      return;
-    }
-    final known = YTMusicService.instance.streamDetails(videoId);
-    // Known already (the streams were just looked up): set before playing.
-    if (known != null) {
-      _setGain(gainFor(known.loudnessDb));
-      return;
-    }
-    final db = await YTMusicService.instance.loudnessOf(videoId);
-    if (generation != _loadGeneration) return;
-    _setGain(gainFor(db));
-  }
-
-  /// How much a track [loudnessDb] louder than YouTube's reference is
-  /// lowered. Quieter ones are left as they are: the player cannot go above
-  /// full volume.
-  static double gainFor(double? loudnessDb) {
-    if (loudnessDb == null || loudnessDb <= 0) return 1.0;
-    return pow(10, -loudnessDb / 20).toDouble().clamp(0.2, 1.0);
-  }
-
-  void _setGain(double gain) {
-    if (gain == _gain) return;
-    _gain = gain;
-    final player = _player;
-    if (player != null) unawaited(player.setVolume(_playerVolume).catchError((_) {}));
-  }
-
-  void _onNormalizeChanged() {
-    final videoId = _currentStreamId ?? (currentSong == null ? null : _videoIdOf(currentSong!));
-    if (videoId == null) return;
-    unawaited(_applyLoudness(videoId, _loadGeneration));
-  }
+  /// See [LoudnessNormalizer.gainFor].
+  static double gainFor(double? loudnessDb) => LoudnessNormalizer.gainFor(loudnessDb);
 
   /// Jumps over the marked part [position] is in, once per load. A part
   /// that runs to the end of the track ends it.
@@ -1172,7 +1080,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       _expectFromRemote(playing: false);
       return;
     }
-    _finishCrossfade();
+    _crossfade.finish();
     if (_loading) {
       // No player events arrive during a load: show the pause ourselves.
       _publish(processing: AudioProcessingState.buffering, playing: false);
@@ -1189,7 +1097,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       _expectFromRemote(playing: false);
       return;
     }
-    _finishCrossfade();
+    _crossfade.finish();
     _userStopped = true;
     _loading = false;
     _starting = false;
@@ -1688,7 +1596,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   // Squared: what is heard follows the slider far better than with the
   // plain value, which leaves nearly all the change in its lower third.
-  double get _playerVolume => _volume * _outputVolume * _outputVolume * _gain * _fadeIn;
+  double get _playerVolume => _volume * _outputVolume * _outputVolume * _gain * _crossfade.fadeIn;
 
   /// Sets how loud the app plays, from 0 to 1, within the volume of the
   /// device: here, or on the device that is playing instead of this one.
@@ -1794,7 +1702,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     );
 
     // Nothing plays here any more; a load in progress is dropped.
-    _finishCrossfade();
+    _crossfade.finish();
     _loadGeneration++;
     _loading = false;
     _starting = false;
@@ -2010,4 +1918,51 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _syncSuggestionsWithQueue();
     _updateQueueBroadcast();
   }
+}
+
+class _CrossfadeHost implements CrossfadeHost {
+  _CrossfadeHost(this._handler);
+
+  final AudioPlayerHandler _handler;
+
+  @override
+  int get crossfadeSeconds => AppSettings.instance.crossfadeSeconds.value;
+
+  @override
+  bool get mayFadeToNext =>
+      _handler._remote == null &&
+      _handler._endGateOpen &&
+      _handler._queue.repeat != PlaybackRepeat.one &&
+      !_handler._sleepTimerEndOfTrack &&
+      !_handler._userPaused;
+
+  @override
+  Duration get trackDuration => _handler._trackDuration;
+
+  @override
+  int? peekNext() => _handler._queue.peekNext();
+
+  @override
+  PlayerBackend? get player => _handler._player;
+
+  @override
+  double get playerVolume => _handler._playerVolume;
+
+  @override
+  void releasePlayerToFade() {
+    _handler._endGateOpen = false;
+    _handler._player = null;
+  }
+
+  @override
+  void applyPlayerVolume() {
+    final player = _handler._player;
+    if (player != null) unawaited(player.setVolume(_handler._playerVolume).catchError((_) {}));
+  }
+
+  @override
+  void playIndex(int index) => unawaited(_handler._playIndex(index));
+
+  @override
+  void disposePlayer(PlayerBackend player) => unawaited(_handler._disposeQuietly(player));
 }
