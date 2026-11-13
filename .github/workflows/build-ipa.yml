@@ -6,7 +6,37 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Analysis and tests first, on a cheaper machine: the IPA is built only
+  # when they pass.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Print Flutter version
+        run: flutter --version
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      # Errors and warnings fail the build; infos pass.
+      - name: Analyze Code
+        run: flutter analyze --no-fatal-infos
+
+      - name: Unit tests
+        run: flutter test test/unit
+
   build-ipa:
+    needs: test
     runs-on: macos-15
     timeout-minutes: 45
 
@@ -25,13 +55,6 @@ jobs:
 
       - name: Install Dependencies
         run: flutter pub get
-
-      # Fails the build on analyzer errors only; infos and warnings pass.
-      - name: Analyze Code
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
-
-      - name: Unit tests
-        run: flutter test test/unit
 
       # The version grows with every build, so SideStore can tell a newer one.
       - name: Build iOS App (No Codesign)
