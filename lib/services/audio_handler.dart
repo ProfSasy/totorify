@@ -5,7 +5,6 @@ import 'dart:math';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
-import 'package:video_player/video_player.dart';
 
 import '../models/song.dart';
 import 'app_settings.dart';
@@ -16,6 +15,7 @@ import 'cover_art_service.dart';
 import 'download_service.dart';
 import 'lyrics_service.dart';
 import 'playback_log_service.dart';
+import 'playback/player_backend.dart';
 import 'playback_queue.dart';
 import 'recommendation_service.dart';
 import 'sponsor_block_service.dart';
@@ -37,7 +37,7 @@ enum _Open {
 
 /// Bridge between the UI, audio_service and the native player.
 ///
-/// Audio is played by AVPlayer (through [VideoPlayerController]) from one of
+/// Audio is played by AVPlayer (through a [PlayerBackend]) from one of
 /// these sources, tried in this order:
 /// 1. the downloaded file, for songs saved offline;
 /// 2. the audio-only HLS playlist of the matched YouTube video;
@@ -66,7 +66,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   final _infoController = StreamController<String>.broadcast();
   Stream<String> get infoStream => _infoController.stream;
 
-  AudioPlayerHandler() {
+  AudioPlayerHandler({PlayerBackendFactory? createPlayer})
+      : _createPlayer = createPlayer ?? VideoPlayerBackend.new {
     AppSettings.instance.normalizeVolume.addListener(_onNormalizeChanged);
   }
 
@@ -97,7 +98,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   // Crossfade: the player of the song fading out while the next one fades
   // in, how loud it was when it started to fade, and the level of the one
   // coming in (0 to 1).
-  VideoPlayerController? _fadingOut;
+  PlayerBackend? _fadingOut;
   double _fadingOutVolume = 0;
   double _fadeIn = 1.0;
   Timer? _fadeTimer;
@@ -105,16 +106,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   // crossfade itself: any other load ends the crossfade at once.
   bool _crossfadeStarting = false;
 
-  // Background playback must be allowed explicitly: by default the plugin
-  // pauses its players when the app leaves the foreground. On Android each
-  // ExoPlayer would also ask for the audio focus on its own, taking it from
-  // the app's audio session (and from the other player of a crossfade):
-  // the session lost it and paused the music as it started. There the
-  // session alone holds the focus, as on iOS.
-  static final VideoPlayerOptions _audioOptions = VideoPlayerOptions(
-    allowBackgroundPlayback: true,
-    mixWithOthers: Platform.isAndroid,
-  );
+  // Makes the player of a source: the native one, or a fake in the tests.
+  final PlayerBackendFactory _createPlayer;
 
   static const Duration _openTimeout = Duration(seconds: 20);
   static const int _maxSourceAttempts = 3;
@@ -122,7 +115,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   // How close to the end a track counts as finished.
   static const Duration _endMargin = Duration(milliseconds: 250);
 
-  VideoPlayerController? _player;
+  PlayerBackend? _player;
   // Lowered for a moment while another app speaks.
   double _volume = 1.0;
   // How loud this app plays, as set by the devices that control it.
@@ -215,7 +208,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   // --- Player events ---
 
-  void _onPlayerValue(VideoPlayerController controller) {
+  void _onPlayerValue(PlayerBackend controller) {
     if (!identical(controller, _player) || _loading) return;
     final value = controller.value;
 
@@ -229,7 +222,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     if (value.isCompleted) unawaited(_onTrackEnded());
   }
 
-  AudioProcessingState _processingStateOf(VideoPlayerValue value) {
+  AudioProcessingState _processingStateOf(PlayerValue value) {
     if (value.hasError || !value.isInitialized) return AudioProcessingState.idle;
     if (value.isCompleted) return AudioProcessingState.completed;
     if (value.isBuffering) return AudioProcessingState.buffering;
@@ -564,7 +557,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         final path = await StorageService.instance.getLocalAudioPath(song.id);
         _prepareExtras(_videoIdOf(song), generation);
         final opened = await _open(
-          () => VideoPlayerController.file(File(path), videoPlayerOptions: _audioOptions),
+          () => _createPlayer(PlayerSource.file(path)),
           generation,
           start: start,
           source: 'file locale',
@@ -625,12 +618,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     final log = PlaybackLogService.instance;
     const superseded = (result: _Open.superseded, unavailable: false);
 
-    Future<_Open> openUrl(String url, String label, {VideoFormat? format}) => _open(
-          () => VideoPlayerController.networkUrl(
-            Uri.parse(url),
-            formatHint: format,
-            videoPlayerOptions: _audioOptions,
-          ),
+    Future<_Open> openUrl(String url, String label, {bool hls = false}) => _open(
+          () => _createPlayer(PlayerSource.network(url, isHls: hls)),
           generation,
           start: start,
           source: '$label $videoId',
@@ -650,7 +639,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       hlsAudio = await yt.getHlsAudioUrl(videoId, force: freshUrl);
       if (generation != _loadGeneration) return superseded;
       if (hlsAudio != null) {
-        final opened = await openUrl(hlsAudio, 'HLS audio', format: VideoFormat.hls);
+        final opened = await openUrl(hlsAudio, 'HLS audio', hls: true);
         if (opened != _Open.failed) return (result: opened, unavailable: false);
       }
     }
@@ -680,7 +669,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       hlsAudio = await yt.getHlsAudioUrl(videoId);
       if (generation != _loadGeneration) return superseded;
       if (hlsAudio != null) {
-        final opened = await openUrl(hlsAudio, 'HLS audio', format: VideoFormat.hls);
+        final opened = await openUrl(hlsAudio, 'HLS audio', hls: true);
         if (opened != _Open.failed) return (result: opened, unavailable: false);
       }
     }
@@ -688,7 +677,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     final hls = await yt.getHlsUrl(videoId);
     if (generation != _loadGeneration) return superseded;
     if (hls != null) {
-      final opened = await openUrl(hls, 'HLS completo', format: VideoFormat.hls);
+      final opened = await openUrl(hls, 'HLS completo', hls: true);
       if (opened != _Open.failed) return (result: opened, unavailable: false);
     }
     return (
@@ -709,7 +698,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   /// Creates a player for one source, waits until it can play and makes it
   /// the active one.
   Future<_Open> _open(
-    VideoPlayerController Function() create,
+    PlayerBackend Function() create,
     int generation, {
     required double start,
     required String source,
@@ -802,7 +791,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     }
   }
 
-  Future<void> _pauseQuietly(VideoPlayerController? controller) async {
+  Future<void> _pauseQuietly(PlayerBackend? controller) async {
     try {
       await controller?.pause();
     } catch (_) {
@@ -810,7 +799,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     }
   }
 
-  Future<void> _disposeQuietly(VideoPlayerController? controller) async {
+  Future<void> _disposeQuietly(PlayerBackend? controller) async {
     if (controller == null) return;
     await _pauseQuietly(controller);
     try {
