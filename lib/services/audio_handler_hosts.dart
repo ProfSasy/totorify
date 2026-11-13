@@ -182,3 +182,110 @@ class _StreamOpenerHost implements StreamOpenerHost {
   @override
   Future<void> skipToNext() => _handler.skipToNext();
 }
+
+class _RemoteControlHost implements RemoteControlHost {
+  _RemoteControlHost(this._handler);
+
+  final AudioPlayerHandler _handler;
+
+  @override
+  PlaybackQueue get queue => _handler._queue;
+
+  @override
+  String? knownSourceOf(Song song) =>
+      (song.id == _handler.currentSong?.id ? _handler._currentStreamId : null) ??
+      StorageService.instance.getCachedYouTubeMapping(song.id);
+
+  @override
+  ValueNotifier<Duration> get positionNotifier => _handler.positionNotifier;
+
+  @override
+  ValueNotifier<double> get outputVolumeNotifier => _handler.outputVolumeNotifier;
+
+  @override
+  double get outputVolume => _handler._outputVolume;
+
+  @override
+  double get speed => _handler._speed;
+
+  @override
+  Duration get trackDuration => _handler._trackDuration;
+
+  @override
+  set trackDuration(Duration value) => _handler._trackDuration = value;
+
+  @override
+  set userPaused(bool value) => _handler._userPaused = value;
+
+  @override
+  set userStopped(bool value) => _handler._userStopped = value;
+
+  @override
+  set resumeAt(Duration? value) => _handler._resumeAt = value;
+
+  @override
+  bool get isPlaying => _handler.playbackState.value.playing;
+
+  @override
+  AudioProcessingState get processingState => _handler.playbackState.value.processingState;
+
+  @override
+  Duration? get shownDuration => _handler.mediaItem.value?.duration;
+
+  @override
+  void publish({
+    required AudioProcessingState processing,
+    required bool playing,
+    bool pollPosition = true,
+  }) =>
+      _handler._publish(processing: processing, playing: playing, pollPosition: pollPosition);
+
+  @override
+  Future<void> stopLocalPlayback() async {
+    _handler._crossfade.finish();
+    _handler._loadGeneration++;
+    _handler._loading = false;
+    _handler._starting = false;
+    _handler._seeking = false;
+    _handler._pendingSeek = null;
+    _handler._resumeAt = null;
+    _handler._stopPositionTimer();
+    final player = _handler._player;
+    _handler._player = null;
+    await _handler._disposeQuietly(player);
+  }
+
+  @override
+  void showSong(Song song) => _handler.mediaItem.add(song.toMediaItem());
+
+  @override
+  void onSongStarted(Song song) {
+    StorageService.instance.addToHistory(song);
+    _handler._preloader.warmCanvasForCurrent();
+  }
+
+  @override
+  void publishCurrentMediaItem() => _handler._publishCurrentMediaItem();
+
+  @override
+  void syncSuggestions() => _handler._suggestions.syncWithQueue();
+
+  @override
+  void broadcastQueue() => _handler._updateQueueBroadcast();
+
+  @override
+  Future<void> setShuffle(bool enabled) => _handler.setShuffleMode(
+        enabled ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
+      );
+
+  @override
+  Future<void> setRepeat(String mode) => _handler.setRepeatMode(switch (mode) {
+        'one' => AudioServiceRepeatMode.one,
+        'all' => AudioServiceRepeatMode.all,
+        _ => AudioServiceRepeatMode.none,
+      });
+
+  @override
+  Future<void> loadAndPlayCurrent({double? startSeconds}) =>
+      _handler._loadAndPlayCurrent(startSeconds: startSeconds);
+}
