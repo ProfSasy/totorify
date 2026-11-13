@@ -18,6 +18,7 @@ import 'playback_log_service.dart';
 import 'playback/crossfade.dart';
 import 'playback/loudness.dart';
 import 'playback/player_backend.dart';
+import 'playback/suggestions.dart';
 import 'playback_queue.dart';
 import 'recommendation_service.dart';
 import 'sponsor_block_service.dart';
@@ -475,7 +476,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     var target = _queue.peekNext();
 
     if (target == null && currentSong != null) {
-      final related = (await _freshSuggestions(currentSong!)).take(20);
+      final related = (await _suggestions.fresh(currentSong!)).take(20);
       final firstNew = _queue.items.length;
       if (_queue.appendUnique(related) > 0) {
         _updateQueueBroadcast();
@@ -500,8 +501,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     StorageService.instance.addToHistory(song);
     _warmCanvasForCurrent();
     _upgradeCoversAround();
-    _pendingSuggestions.remove(song.id);
-    unawaited(_topUpSuggestions());
+    _suggestions.markPlayed(song.id);
+    unawaited(_suggestions.topUp());
     _userStopped = false;
     await _loadAndPlayCurrent();
   }
@@ -991,7 +992,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _queue.replace((queue != null && queue.isNotEmpty) ? queue : [song], song);
     _failedStreams.remove(song.id);
     _errorReloads.remove(song.id);
-    _syncSuggestionsWithQueue();
+    _suggestions.syncWithQueue();
     // Another device, if it is the one playing, gets the queue with the
     // order to play it.
     _updateQueueBroadcast(sync: false);
@@ -1001,8 +1002,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _warmCanvasForCurrent();
     _upgradeCoversAround();
     if (smartShuffleNotifier.value) {
-      _resetSuggestionBudget();
-      unawaited(_topUpSuggestions());
+      _suggestions.resetBudget();
+      unawaited(_suggestions.topUp());
     }
 
     _userStopped = false;
@@ -1251,19 +1252,19 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   // --- Recommendations & Smart Shuffle ---
 
+  late final SuggestionManager _suggestions = SuggestionManager(
+    queue: _queue,
+    recommend: RecommendationService.instance.forSong,
+    youtubeSeedFor: _youtubeSeedFor,
+    enableShuffle: () => setShuffleMode(AudioServiceShuffleMode.all),
+    onQueueChanged: _updateQueueBroadcast,
+  );
+
   /// Smart Shuffle: shuffle plus recommended tracks mixed into the queue.
-  final ValueNotifier<bool> smartShuffleNotifier = ValueNotifier<bool>(false);
+  ValueNotifier<bool> get smartShuffleNotifier => _suggestions.smartShuffleNotifier;
 
   /// Ids of the queued songs that were added as recommendations.
-  final ValueNotifier<Set<String>> suggestedIdsNotifier =
-      ValueNotifier<Set<String>>(const {});
-
-  // Recommendations queued but not played yet, and how many more may still
-  // be added to the current queue.
-  final Set<String> _pendingSuggestions = {};
-  int _suggestionBudget = 0;
-  bool _toppingUp = false;
-  static const int _suggestionsAhead = 3;
+  ValueNotifier<Set<String>> get suggestedIdsNotifier => _suggestions.suggestedIdsNotifier;
 
   /// YouTube video to seed recommendations from when the catalog has no
   /// match for [song].
@@ -1272,108 +1273,11 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     return TrackMatcherService.needsResolution(song.id) ? song.youtubeVideoId : song.id;
   }
 
-  /// Recommendations for [seed] that are not already in the queue.
-  Future<List<Song>> _freshSuggestions(Song seed) async {
-    final recommended = await RecommendationService.instance
-        .forSong(seed, youtubeSeedId: _youtubeSeedFor(seed));
-    final queuedIds = {for (final s in _queue.items) s.id};
-    final queuedKeys = {for (final s in _queue.items) RecommendationService.songKey(s)};
-    return [
-      for (final song in recommended)
-        if (!queuedIds.contains(song.id) &&
-            queuedKeys.add(RecommendationService.songKey(song)))
-          song,
-    ];
-  }
-
   /// Recommended next tracks for the song playing now, for the queue view.
-  Future<List<Song>> suggestionsForCurrent({int limit = 6}) async {
-    final seed = currentSong;
-    if (seed == null) return [];
-    return (await _freshSuggestions(seed)).take(limit).toList();
-  }
+  Future<List<Song>> suggestionsForCurrent({int limit = 6}) =>
+      _suggestions.forCurrent(limit: limit);
 
-  Future<void> setSmartShuffle(bool enabled) async {
-    if (smartShuffleNotifier.value == enabled) return;
-    smartShuffleNotifier.value = enabled;
-    PlaybackLogService.instance.log('CMD', enabled ? 'smart shuffle on' : 'smart shuffle off');
-
-    if (enabled) {
-      await setShuffleMode(AudioServiceShuffleMode.all);
-      _resetSuggestionBudget();
-      await _topUpSuggestions();
-      return;
-    }
-
-    // Drop the recommendations that have not played yet.
-    final items = _queue.items;
-    for (var i = items.length - 1; i >= 0; i--) {
-      if (i != _queue.index && _pendingSuggestions.contains(items[i].id)) {
-        _queue.removeAt(i);
-      }
-    }
-    _syncSuggestionsWithQueue();
-    _updateQueueBroadcast();
-  }
-
-  void _resetSuggestionBudget() {
-    // About one recommendation every three tracks of the user's own queue.
-    final suggested = suggestedIdsNotifier.value;
-    final own = _queue.items.where((s) => !suggested.contains(s.id)).length;
-    _suggestionBudget = (own / 3).ceil().clamp(3, 30);
-  }
-
-  /// Forgets the recommendations that are no longer in the queue.
-  void _syncSuggestionsWithQueue() {
-    final queuedIds = {for (final s in _queue.items) s.id};
-    _pendingSuggestions.retainAll(queuedIds);
-    final kept = suggestedIdsNotifier.value.intersection(queuedIds);
-    if (kept.length != suggestedIdsNotifier.value.length) {
-      suggestedIdsNotifier.value = kept;
-    }
-  }
-
-  /// Keeps a few recommendations queued ahead while Smart Shuffle is on.
-  Future<void> _topUpSuggestions() async {
-    if (!smartShuffleNotifier.value || _toppingUp) return;
-    final seed = currentSong;
-    if (seed == null ||
-        _suggestionBudget <= 0 ||
-        _pendingSuggestions.length >= _suggestionsAhead) {
-      return;
-    }
-
-    _toppingUp = true;
-    try {
-      final picks = await _freshSuggestions(seed);
-      // The track or the mode changed while loading: the next change retries.
-      if (!smartShuffleNotifier.value || currentSong?.id != seed.id) return;
-
-      var added = 0;
-      for (final song in picks) {
-        if (_suggestionBudget <= 0 ||
-            _pendingSuggestions.length >= _suggestionsAhead) {
-          break;
-        }
-        // Spread them after the current track: +2, +5, +8.
-        _queue.insertAt(_queue.index + 2 + added * 3, song);
-        _pendingSuggestions.add(song.id);
-        _suggestionBudget--;
-        added++;
-      }
-      if (added > 0) {
-        suggestedIdsNotifier.value = {
-          ...suggestedIdsNotifier.value,
-          ..._pendingSuggestions,
-        };
-        _updateQueueBroadcast();
-      }
-    } catch (e) {
-      debugPrint('AudioPlayerHandler._topUpSuggestions: $e');
-    } finally {
-      _toppingUp = false;
-    }
-  }
+  Future<void> setSmartShuffle(bool enabled) => _suggestions.setSmartShuffle(enabled);
 
   // --- Sleep timer logic ---
   void setSleepTimer(Duration? duration, {bool endOfTrack = false}) {
@@ -1420,7 +1324,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   void removeFromQueue(int index) {
     final wasCurrent = _queue.removeAt(index);
-    _syncSuggestionsWithQueue();
+    _suggestions.syncWithQueue();
     _updateQueueBroadcast();
     if (!wasCurrent) return;
 
@@ -1451,7 +1355,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   void clearQueue() {
     PlaybackLogService.instance.log('CMD', 'svuota coda');
     _queue.keepOnlyCurrent();
-    _syncSuggestionsWithQueue();
+    _suggestions.syncWithQueue();
     _updateQueueBroadcast();
   }
 
@@ -1468,7 +1372,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     PlaybackLogService.instance.log('CMD', 'radio da "${seed.title}"');
     final playing = playSong(seed, queue: [seed]);
     try {
-      final related = await _freshSuggestions(seed);
+      final related = await _suggestions.fresh(seed);
       if (currentSong?.id == seed.id && _queue.appendUnique(related.take(40)) > 0) {
         _updateQueueBroadcast();
       }
@@ -1841,7 +1745,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     if (same) return;
     final hadCurrent = currentSong?.id;
     _queue.adopt(songs, currentId: currentId ?? hadCurrent);
-    _syncSuggestionsWithQueue();
+    _suggestions.syncWithQueue();
     _followingRemote = true;
     try {
       _updateQueueBroadcast();
@@ -1898,7 +1802,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _queue.replace(songs, start);
     _failedStreams.remove(start.id);
     _errorReloads.remove(start.id);
-    _syncSuggestionsWithQueue();
+    _suggestions.syncWithQueue();
     _updateQueueBroadcast();
     mediaItem.add(start.toMediaItem());
     StorageService.instance.addToHistory(start);
@@ -1915,7 +1819,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   /// A controller changed the queue: the current song goes on playing.
   void adoptQueue(List<Song> songs, {String? currentId}) {
     _queue.adopt(songs, currentId: currentId);
-    _syncSuggestionsWithQueue();
+    _suggestions.syncWithQueue();
     _updateQueueBroadcast();
   }
 }
