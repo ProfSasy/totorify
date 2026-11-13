@@ -174,10 +174,9 @@ void main() {
         if (line.words.isEmpty) continue;
         expect(line.words.map((w) => w.text).join(), line.text);
       }
-    },
-        skip: 'BUG: in un TTML indentato ogni a-capo/spazio dopo l\'ultima parola '
-            '(anche attorno ai cori x-bg) aggiunge uno spazio a quella parola: '
-            '"world  " invece di "world", e le parole unite non ridanno la riga.');
+      expect([for (final w in Lyrics.fromTtml(ttml)!.syncedLyrics.last.words) w.text],
+          ['Hello ', 'world']);
+    });
 
     test('backing vocals (x-bg) are left out', () {
       final lyrics = Lyrics.fromTtml(ttml)!;

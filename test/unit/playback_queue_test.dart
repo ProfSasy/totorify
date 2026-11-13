@@ -95,10 +95,19 @@ void main() {
       final queue = PlaybackQueue()..replace(songs(3), song('s1'));
       queue.adopt([song('a'), song('b')]);
       expect(queue.peekNext(), 0);
-    },
-        skip: 'BUG: adopt() documenta "the next move starts from the top", ma '
-            'peekNext() restituisce null quando non c\'è un brano corrente: '
-            'la coda adottata resta ferma.');
+      expect(queue.peekPrevious(), isNull);
+      queue.moveTo(0);
+      expect(queue.current!.id, 'a');
+    });
+
+    test('with shuffle on, the move after the current song is gone draws a song', () {
+      final queue = PlaybackQueue(random: Random(4))..replace(songs(3), song('s1'));
+      queue.setShuffle(true);
+      queue.adopt([song('a'), song('b'), song('c')]);
+      final visited = walk(queue);
+      expect(visited.toSet(), {'a', 'b', 'c'});
+      expect(visited, hasLength(3));
+    });
 
     test('drops the removed songs from the way back', () {
       final queue = PlaybackQueue()..replace(songs(3), song('s0'));

@@ -171,10 +171,13 @@ class PlaybackQueue {
 
   /// Index the next track moves to, or null at the end of the queue.
   /// Manual skip rules: repeat-one does not affect this; the caller handles
-  /// natural track end by restarting the current song.
+  /// natural track end by restarting the current song. When nothing is
+  /// current (the current song was taken out of the queue) the move starts
+  /// from the top.
   int? peekNext() {
-    if (current == null) return null;
+    if (_items.isEmpty) return null;
     if (_shuffle) return _pickShuffled();
+    if (current == null) return 0;
     if (_index < _items.length - 1) return _index + 1;
     return _repeat == PlaybackRepeat.all ? 0 : null;
   }

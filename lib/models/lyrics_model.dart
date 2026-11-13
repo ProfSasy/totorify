@@ -243,8 +243,9 @@ class Lyrics {
                 text: value,
               ),
             );
-          } else if (words.isNotEmpty && value.trim().isEmpty) {
-            // The space between two words belongs to the first.
+          } else if (words.isNotEmpty && value.trim().isEmpty && !words.last.text.endsWith(' ')) {
+            // The space between two words belongs to the first. One space,
+            // however the markup is indented.
             final last = words.removeLast();
             words.add(LyricWord(start: last.start, end: last.end, text: '${last.text} '));
           }
@@ -266,6 +267,11 @@ class Lyrics {
       }
       final line = text.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
       if (line.isEmpty) continue;
+      // No space after the last word: the line ends there.
+      if (words.isNotEmpty && words.last.text.trimRight() != words.last.text) {
+        final last = words.removeLast();
+        words.add(LyricWord(start: last.start, end: last.end, text: last.text.trimRight()));
+      }
       lines.add(LyricLine(time: begin, text: line, words: words));
     }
     if (lines.isEmpty) return null;

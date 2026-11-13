@@ -113,10 +113,8 @@ void main() {
       final leftBehind = track('Left Behind', 'Band');
       final other = track('Left Outside Alone', 'Band');
       expect(score(other, leftBehind), lessThan(score(track('Left Behind', 'Band'), leftBehind)));
-    },
-        skip: 'BUG: _featRegex (\\s*(feat|ft)...) non richiede uno spazio prima: '
-            '"Left Behind" diventa "le", quindi titoli diversi che iniziano con '
-            '"Left ", "Gift ", "Drift "… risultano identici.');
+      expect(score(track('Gift Shop', 'Band'), track('Gift Card', 'Band')), lessThan(9000));
+    });
   });
 
   group('feat. and artists', () {

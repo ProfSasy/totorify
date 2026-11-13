@@ -27,7 +27,8 @@ class TrackMatcherService {
   static final TrackMatcherService instance = TrackMatcherService._internal();
 
   static final RegExp _parentheticalRegex = RegExp(r'\s*[\(\[][^\)\]]*[\)\]]');
-  static final RegExp _featRegex = RegExp(r'\s*(feat\.?|ft\.?|featuring)\s+.*', caseSensitive: false);
+  // A space before, so that "ft" inside a word ("Left Behind") is not a credit.
+  static final RegExp _featRegex = RegExp(r'\s+(feat\.?|ft\.?|featuring)\s+.*', caseSensitive: false);
   // Unicode classes on purpose: \w is ASCII-only in Dart, so it erased
   // every non-Latin title down to an empty string.
   static final RegExp _nonAlphaNumRegex = RegExp(r'[^\p{L}\p{N}\s]', unicode: true);
