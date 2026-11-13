@@ -8,17 +8,16 @@ import 'package:flutter/foundation.dart';
 
 import '../models/song.dart';
 import 'app_settings.dart';
-import 'canvas_service.dart';
-import 'canvas_video_pool.dart';
 import 'connect/connect_protocol.dart';
-import 'cover_art_service.dart';
 import 'download_service.dart';
-import 'lyrics_service.dart';
 import 'playback_log_service.dart';
 import 'playback/crossfade.dart';
 import 'playback/loudness.dart';
 import 'playback/app_playback_sources.dart';
 import 'playback/player_backend.dart';
+import 'playback/preloader.dart';
+import 'playback/segment_skipper.dart';
+import 'playback/sleep_timer.dart';
 import 'playback/stream_opener.dart';
 import 'playback/suggestions.dart';
 import 'playback_queue.dart';
@@ -66,11 +65,16 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     AppSettings.instance.normalizeVolume.addListener(_loudness.onSettingChanged);
   }
 
-  // SponsorBlock: the parts of the video playing to jump over, and which of
-  // them were already jumped (or entered on purpose by the user) in this
-  // load.
-  List<SkipSegment> _segments = const [];
-  final Set<int> _segmentsPassed = {};
+  // SponsorBlock: jumps over the parts of the video that are not music.
+  late final SegmentSkipper _skipper = SegmentSkipper(
+    fetchSegments: SponsorBlockService.instance.segmentsFor,
+    currentGeneration: () => _loadGeneration,
+    canSkip: () => !_seeking && !_loading && _remote == null,
+    trackDuration: () => _trackDuration,
+    seek: seek,
+    endTrack: () => unawaited(_onTrackEnded()),
+    reportInfo: _infoController.add,
+  );
 
   // How much the current track is lowered to sound as loud as the others.
   late final LoudnessNormalizer _loudness = LoudnessNormalizer(
@@ -185,14 +189,13 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   (AudioProcessingState, bool, int)? _lastPublished;
 
-  // Sleep timer state
-  Timer? _sleepTimer;
-  bool _sleepTimerEndOfTrack = false;
-  final ValueNotifier<String?> sleepTimerNotifier = ValueNotifier<String?>(null);
+  late final SleepTimerController _sleep = SleepTimerController(onElapsed: pause);
+  bool get _sleepTimerEndOfTrack => _sleep.endOfTrack;
+  ValueNotifier<String?> get sleepTimerNotifier => _sleep.notifier;
 
   final ValueNotifier<(String?, bool)> playbackIndicator = ValueNotifier<(String?, bool)>((null, false));
 
-  bool get isSleepTimerActive => _sleepTimer != null || _sleepTimerEndOfTrack;
+  bool get isSleepTimerActive => _sleep.isActive;
 
   Song? get currentSong => _queue.current;
 
@@ -300,7 +303,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
         final position = await player.position;
         if (position == null || !identical(player, _player) || _loading || _seeking) return;
         _setPosition(position);
-        _skipSegmentAt(position);
+        _skipper.skipAt(position);
         _crossfade.maybeStart(position);
         // The end is called here, a moment early, rather than left to the
         // player: it can believe the track is twice as long, and once it has
@@ -457,8 +460,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _opener.forgetFailures(song.id);
     mediaItem.add(song.toMediaItem());
     StorageService.instance.addToHistory(song);
-    _warmCanvasForCurrent();
-    _upgradeCoversAround();
+    _preloader.warmCanvasForCurrent();
+    _preloader.upgradeCoversAround();
     _suggestions.markPlayed(song.id);
     unawaited(_suggestions.topUp());
     _userStopped = false;
@@ -519,82 +522,21 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       _loudness.setGain(1.0);
       return;
     }
-    unawaited(() async {
-      final segments = await SponsorBlockService.instance.segmentsFor(videoId);
-      if (generation != _loadGeneration || segments.isEmpty) return;
-      _segments = segments;
-      PlaybackLogService.instance.log('SKIP', 'SponsorBlock $videoId: ${segments.join(', ')}');
-    }());
+    unawaited(_skipper.load(videoId, generation));
     unawaited(_loudness.apply(videoId, generation));
   }
 
   /// See [LoudnessNormalizer.gainFor].
   static double gainFor(double? loudnessDb) => LoudnessNormalizer.gainFor(loudnessDb);
 
-  /// Jumps over the marked part [position] is in, once per load. A part
-  /// that runs to the end of the track ends it.
-  void _skipSegmentAt(Duration position) {
-    if (_segments.isEmpty || _seeking || _loading || _remote != null) return;
-    for (var i = 0; i < _segments.length; i++) {
-      final segment = _segments[i];
-      if (_segmentsPassed.contains(i) || !segment.contains(position)) continue;
-      _segmentsPassed.add(i);
-      PlaybackLogService.instance.log('SKIP', 'salto $segment');
-      final toEnd = _trackDuration > Duration.zero &&
-          segment.end >= _trackDuration - const Duration(seconds: 2);
-      if (toEnd) {
-        unawaited(_onTrackEnded());
-      } else {
-        unawaited(seek(segment.end));
-        _infoController.add(segment.category == 'music_offtopic'
-            ? 'Saltata una parte non musicale'
-            : 'Saltato un segmento (${SponsorBlockService.categories[segment.category] ?? segment.category})');
-      }
-      return;
-    }
-  }
-
-  /// The current track has started: what comes next is prepared now, and
-  /// not before, so that nothing competes with its first seconds. The next
-  /// track's stream first, then the Canvas videos around, and last the file
-  /// that makes this track's Canvas instant the next time.
-  void _prepareWhatFollows(Song song, int generation) {
-    unawaited(() async {
-      await _prefetchNext();
-      if (generation != _loadGeneration) return;
-      _warmCanvasAround();
-      unawaited(LyricsService.instance.preload(_upcoming(2)));
-      await Future<void>.delayed(const Duration(seconds: 4));
-      if (generation != _loadGeneration) return;
-      await CanvasService.instance.keepForReplay(song);
-    }());
-  }
-
-  /// The [count] songs that come after the current one in queue order.
-  List<Song> _upcoming(int count) {
-    final items = _queue.items;
-    final index = _queue.index;
-    if (index < 0) return const [];
-    return items.sublist(index + 1, (index + 1 + count).clamp(index + 1, items.length));
-  }
-
-  /// Resolves the next track's stream ahead of time, so skipping to it (or
-  /// reaching it) starts without the matching and lookup delay. With
-  /// shuffle the next track is the one the queue has drawn.
-  Future<void> _prefetchNext() async {
-    final next = _queue.peekNext();
-    if (next == null) return;
-    final song = _queue.items[next];
-    try {
-      if (StorageService.instance.isDownloaded(song.id)) return;
-      final videoId = await TrackMatcherService.instance.resolveAndCacheStreamId(song);
-      if (videoId == null) return;
-      final yt = YTMusicService.instance;
-      if (await yt.getHlsAudioUrl(videoId) == null) await yt.getAudioStreamUrl(videoId);
-    } catch (e) {
-      debugPrint('AudioPlayerHandler._prefetchNext: $e');
-    }
-  }
+  // Prepares what is around the current track: the next stream, the Canvas
+  // videos, the lyrics and the original covers.
+  late final PlaybackPreloader _preloader = PlaybackPreloader(
+    queue: _queue,
+    currentGeneration: () => _loadGeneration,
+    onQueueChanged: _updateQueueBroadcast,
+    onCurrentCoverChanged: _publishCurrentMediaItem,
+  );
 
   // --- Core API ---
 
@@ -616,8 +558,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     mediaItem.add(song.toMediaItem());
     StorageService.instance.addToHistory(song);
 
-    _warmCanvasForCurrent();
-    _upgradeCoversAround();
+    _preloader.warmCanvasForCurrent();
+    _preloader.upgradeCoversAround();
     if (smartShuffleNotifier.value) {
       _suggestions.resetBudget();
       unawaited(_suggestions.topUp());
@@ -737,9 +679,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     if (_trackDuration > Duration.zero && target > _trackDuration) target = _trackDuration;
     log.log('CMD', 'seek ${target.inSeconds}s (inCaricamento=$_loading)');
 
-    for (var i = 0; i < _segments.length; i++) {
-      if (_segments[i].contains(target)) _segmentsPassed.add(i);
-    }
+    _skipper.markEntered(target);
     if (_remote != null) {
       _remote!.send(ConnectProtocol.seek, {'positionMs': target.inMilliseconds});
       _expectFromRemote(position: target);
@@ -833,39 +773,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     }
   }
 
-  // --- Original covers ---
-
-  /// Swaps YouTube video thumbnails for the official album cover on the
-  /// current track and the ones around it.
-  void _upgradeCoversAround() {
-    final items = _queue.items;
-    final index = _queue.index;
-    if (index < 0) return;
-
-    for (var i = index - 1; i <= index + 3; i++) {
-      if (i < 0 || i >= items.length) continue;
-      final song = items[i];
-      if (!CoverArtService.needsOriginal(song.thumbnailUrl)) continue;
-
-      unawaited(() async {
-        try {
-          final cover = await CoverArtService.instance.originalCover(song);
-          if (cover == null) return;
-          _queue.updateSong(song.id, (s) => s.copyWith(thumbnailUrl: cover));
-          _updateQueueBroadcast();
-
-          final current = currentSong;
-          if (current != null && current.id == song.id) {
-            _publishCurrentMediaItem();
-            await StorageService.instance.addToHistory(current);
-          }
-        } catch (e) {
-          debugPrint('AudioPlayerHandler._upgradeCoversAround: $e');
-        }
-      }());
-    }
-  }
-
   // --- Recommendations & Smart Shuffle ---
 
   late final SuggestionManager _suggestions = SuggestionManager(
@@ -896,36 +803,10 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
   Future<void> setSmartShuffle(bool enabled) => _suggestions.setSmartShuffle(enabled);
 
   // --- Sleep timer logic ---
-  void setSleepTimer(Duration? duration, {bool endOfTrack = false}) {
-    _sleepTimer?.cancel();
-    _sleepTimer = null;
-    _sleepTimerEndOfTrack = endOfTrack;
+  void setSleepTimer(Duration? duration, {bool endOfTrack = false}) =>
+      _sleep.set(duration, endOfTrack: endOfTrack);
 
-    if (endOfTrack) {
-      sleepTimerNotifier.value = 'Fine brano';
-      return;
-    }
-
-    if (duration != null) {
-      final minutes = duration.inMinutes;
-      sleepTimerNotifier.value = '$minutes min';
-      _sleepTimer = Timer(duration, () {
-        pause();
-        _sleepTimer = null;
-        _sleepTimerEndOfTrack = false;
-        sleepTimerNotifier.value = null;
-      });
-    } else {
-      sleepTimerNotifier.value = null;
-    }
-  }
-
-  void cancelSleepTimer() {
-    _sleepTimer?.cancel();
-    _sleepTimer = null;
-    _sleepTimerEndOfTrack = false;
-    sleepTimerNotifier.value = null;
-  }
+  void cancelSleepTimer() => _sleep.cancel();
 
   // --- Queue logic ---
   void addToQueue(Song song) {
@@ -1036,41 +917,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       (songs: _queue.items, index: _queue.index, shuffle: _queue.shuffle, repeat: _queue.repeat);
 
   List<Song> get currentPlaylist => _queue.items;
-
-  /// Looks up and warms the Canvas of the current track, the one the user
-  /// is about to look at. It starts with the track, alongside its audio.
-  void _warmCanvasForCurrent() {
-    final song = currentSong;
-    if (song == null) return;
-    unawaited(() async {
-      final url = await CanvasService.instance.getCanvasUrl(song);
-      if (url == null || url.isEmpty || currentSong?.id != song.id) return;
-      await CanvasVideoPool.instance.warm(url);
-    }());
-  }
-
-  /// Looks up and warms the Canvas of the tracks around the current one
-  /// (the previous, the next and, in queue order, the one after), so that
-  /// skipping shows the video at once.
-  void _warmCanvasAround() {
-    final items = _queue.items;
-    final index = _queue.index;
-    if (index < 0) return;
-    final around = <int>{
-      ?_queue.peekPrevious(),
-      ?_queue.peekNext(),
-      if (!_queue.shuffle && index + 2 < items.length) index + 2,
-    }..remove(index);
-
-    for (final i in around) {
-      final song = items[i];
-      unawaited(() async {
-        final url = await CanvasService.instance.prefetch(song);
-        if (url == null || url.isEmpty) return;
-        await CanvasVideoPool.instance.warm(url);
-      }());
-    }
-  }
 
   /// Saves where [song] starts and, when it is playing, jumps there so the
   /// user hears the new starting point right away.
@@ -1308,7 +1154,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
       final song = currentSong!;
       mediaItem.add(song.toMediaItem());
       StorageService.instance.addToHistory(song);
-      _warmCanvasForCurrent();
+      _preloader.warmCanvasForCurrent();
     }
 
     final volumeSetAt = _volumeSetAt;
@@ -1421,8 +1267,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     _updateQueueBroadcast();
     mediaItem.add(start.toMediaItem());
     StorageService.instance.addToHistory(start);
-    _warmCanvasForCurrent();
-    _upgradeCoversAround();
+    _preloader.warmCanvasForCurrent();
+    _preloader.upgradeCoversAround();
 
     _userStopped = false;
     final loaded = _loadAndPlayCurrent(startSeconds: position.inMilliseconds / 1000);

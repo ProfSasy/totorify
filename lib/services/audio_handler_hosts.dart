@@ -104,8 +104,7 @@ class _StreamOpenerHost implements StreamOpenerHost {
     _handler._seekGeneration++;
     _handler._pendingSeek = null;
     _handler._trackDuration = Duration.zero;
-    _handler._segments = const [];
-    _handler._segmentsPassed.clear();
+    _handler._skipper.reset();
     _handler.positionNotifier.value = start;
   }
 
@@ -129,7 +128,7 @@ class _StreamOpenerHost implements StreamOpenerHost {
 
   @override
   void prepareWhatFollows(Song song, int generation) =>
-      _handler._prepareWhatFollows(song, generation);
+      _handler._preloader.prepareWhatFollows(song, generation);
 
   @override
   void onPlayerValue(PlayerBackend player) => _handler._onPlayerValue(player);
