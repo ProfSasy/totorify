@@ -9,6 +9,11 @@ import '../models/artist.dart';
 import '../models/song.dart';
 import '../models/playlist.dart';
 import 'playback_log_service.dart';
+import 'storage/canvas_answer_store.dart';
+import 'storage/cover_store.dart';
+import 'storage/device_settings_store.dart';
+import 'storage/lyrics_store.dart';
+import 'storage/source_mapping_store.dart';
 
 class StorageService {
   static final StorageService instance = StorageService._internal();
@@ -29,13 +34,17 @@ class StorageService {
   late Box _favoritesBox;
   late Box _playlistsBox;
   late Box _historyBox;
-  late Box _settingsBox;
+  late DeviceSettingsStore _settings;
+  Box get _settingsBox => _settings.box;
   late Box _downloadsBox;
-  late Box _ytMappingBox;
-  late Box _coversBox;
+  late SourceMappingStore _sources;
+  Box get _ytMappingBox => _sources.box;
+  late CoverStore _covers;
+  Box get _coversBox => _covers.box;
   late Box _artistsBox;
-  late Box _canvasBox;
-  late Box _lyricsBox;
+  late CanvasAnswerStore _canvasAnswers;
+  late LyricsStore _lyrics;
+  Box get _lyricsBox => _lyrics.box;
   late Box _guestBox;
 
   // The Documents folder moves when iOS reinstalls the app: paths are built
@@ -54,7 +63,6 @@ class StorageService {
 
   final List<Song> _cachedDownloads = [];
   final Set<String> _downloadedIds = {};
-  final Map<String, String> _cachedYtMappings = {};
   final List<Artist> _cachedArtists = [];
 
   // The library of a phone, shown beside this device's own (see
@@ -81,13 +89,19 @@ class StorageService {
     _favoritesBox = await _openBoxSafe(_favoritesBoxName);
     _playlistsBox = await _openBoxSafe(_playlistsBoxName);
     _historyBox = await _openBoxSafe(_historyBoxName);
-    _settingsBox = await _openBoxSafe(_settingsBoxName);
+    _settings = DeviceSettingsStore(
+      await _openBoxSafe(_settingsBoxName),
+      isSearchHistoryPaused: () => AppSettings.instance.pauseSearchHistory.value,
+    );
     _downloadsBox = await _openBoxSafe(_downloadsBoxName);
-    _ytMappingBox = await _openBoxSafe(_ytMappingBoxName);
-    _coversBox = await _openBoxSafe(_coversBoxName);
+    _sources = SourceMappingStore(await _openBoxSafe(_ytMappingBoxName));
+    _covers = CoverStore(await _openBoxSafe(_coversBoxName));
     _artistsBox = await _openBoxSafe(_artistsBoxName);
-    _canvasBox = await _openBoxSafe(_canvasBoxName);
-    _lyricsBox = await _openBoxSafe(_lyricsBoxName);
+    _canvasAnswers = CanvasAnswerStore(await _openBoxSafe(_canvasBoxName));
+    _lyrics = LyricsStore(
+      await _openBoxSafe(_lyricsBoxName),
+      isDownloaded: _downloadedIds.contains,
+    );
     _guestBox = await _openBoxSafe(_guestBoxName);
     await AppSettings.instance.init();
     await LibraryExtras.instance.init();
@@ -256,13 +270,7 @@ class StorageService {
     }
 
     // 5. YouTube Mappings
-    _cachedYtMappings.clear();
-    for (final key in _ytMappingBox.keys) {
-      final val = _ytMappingBox.get(key);
-      if (val is String && val.isNotEmpty) {
-        _cachedYtMappings[key.toString()] = val;
-      }
-    }
+    _sources.reload();
 
     // 6. Followed artists (most recently followed first)
     _cachedArtists.clear();
@@ -658,60 +666,25 @@ class StorageService {
     }
   }
 
-  // --- YOUTUBE ID MAPPING CACHE ---
-  String? getCachedYouTubeMapping(String spotifyId) {
-    if (_cachedYtMappings.containsKey(spotifyId)) {
-      return _cachedYtMappings[spotifyId];
-    }
-    try {
-      final val = _ytMappingBox.get(spotifyId) as String?;
-      if (val != null && val.isNotEmpty) {
-        _cachedYtMappings[spotifyId] = val;
-      }
-      return val;
-    } catch (_) {
-      return null;
-    }
-  }
+  // --- YOUTUBE ID MAPPING CACHE --- (see [SourceMappingStore])
+  String? getCachedYouTubeMapping(String spotifyId) => _sources.getMapping(spotifyId);
 
-  Future<void> cacheYouTubeMapping(String spotifyId, String youtubeVideoId) async {
-    _cachedYtMappings[spotifyId] = youtubeVideoId;
-    try {
-      await _ytMappingBox.put(spotifyId, youtubeVideoId);
-    } catch (e) {
-      debugPrint('StorageService.cacheYouTubeMapping: $e');
-    }
-  }
+  Future<void> cacheYouTubeMapping(String spotifyId, String youtubeVideoId) =>
+      _sources.cacheMapping(spotifyId, youtubeVideoId);
 
   /// Manual start offset for songs whose source is a music video with an
   /// intro: the clip begins at this offset instead of 0.
-  int? getStartOffsetMs(String songId) {
-    final value = _ytMappingBox.get('offset_$songId');
-    return value is int ? value : null;
-  }
+  int? getStartOffsetMs(String songId) => _sources.getStartOffsetMs(songId);
 
-  Future<void> cacheStartOffset(String songId, int offsetMs) async {
-    try {
-      await _ytMappingBox.put('offset_$songId', offsetMs);
-    } catch (e) {
-      debugPrint('StorageService.cacheStartOffset: $e');
-    }
-  }
+  Future<void> cacheStartOffset(String songId, int offsetMs) =>
+      _sources.cacheStartOffset(songId, offsetMs);
 
   /// Spotify track matched to a song from another catalog, so its Canvas
   /// is looked up without searching again.
-  String? getCachedSpotifyId(String songId) {
-    final value = _ytMappingBox.get('spotify_id_$songId');
-    return value is String && value.isNotEmpty ? value : null;
-  }
+  String? getCachedSpotifyId(String songId) => _sources.getSpotifyId(songId);
 
-  Future<void> cacheSpotifyId(String songId, String spotifyTrackId) async {
-    try {
-      await _ytMappingBox.put('spotify_id_$songId', spotifyTrackId);
-    } catch (e) {
-      debugPrint('StorageService.cacheSpotifyId: $e');
-    }
-  }
+  Future<void> cacheSpotifyId(String songId, String spotifyTrackId) =>
+      _sources.cacheSpotifyId(songId, spotifyTrackId);
 
   // --- DOWNLOADS & OFFLINE ---
   /// Images chosen by the user (a playlist's cover) are kept in the app's
@@ -764,100 +737,39 @@ class StorageService {
   List<String> get localCanvasIds => List.unmodifiable(_localCanvasIds);
 
   /// Exact length of a downloaded song, measured when it was downloaded.
-  Duration? getDownloadDuration(String songId) {
-    final value = _ytMappingBox.get('duration_$songId');
-    return value is int && value > 0 ? Duration(milliseconds: value) : null;
-  }
+  Duration? getDownloadDuration(String songId) => _sources.getDownloadDuration(songId);
 
-  Future<void> saveDownloadDuration(String songId, Duration duration) async {
-    try {
-      await _ytMappingBox.put('duration_$songId', duration.inMilliseconds);
-    } catch (e) {
-      debugPrint('StorageService.saveDownloadDuration: $e');
-    }
-  }
+  Future<void> saveDownloadDuration(String songId, Duration duration) =>
+      _sources.saveDownloadDuration(songId, duration);
 
-  // --- CANVAS ANSWERS ---
-  // The Canvas found for a song (or the fact that it has none) survives a
-  // restart, so it is not looked up again at every session.
-  static const int _maxCanvasAnswers = 1500;
+  // --- CANVAS ANSWERS --- (see [CanvasAnswerStore])
 
   /// The stored answer for [songId], or null when there is none or it was
   /// made by other rules ([version]).
-  ({String? url, DateTime savedAt})? getCanvasAnswer(String songId, int version) {
-    final raw = _canvasBox.get(songId);
-    if (raw is! Map || raw['v'] != version || raw['at'] is! int) return null;
-    final url = raw['url'];
-    return (
-      url: url is String && url.isNotEmpty ? url : null,
-      savedAt: DateTime.fromMillisecondsSinceEpoch(raw['at'] as int),
-    );
-  }
+  ({String? url, DateTime savedAt})? getCanvasAnswer(String songId, int version) =>
+      _canvasAnswers.get(songId, version);
 
-  Future<void> saveCanvasAnswer(String songId, String? url, int version) async {
-    try {
-      if (_canvasBox.length >= _maxCanvasAnswers) {
-        await _canvasBox.deleteAll(_canvasBox.keys.take(_maxCanvasAnswers ~/ 5).toList());
-      }
-      await _canvasBox.put(songId, {
-        'url': url,
-        'v': version,
-        'at': DateTime.now().millisecondsSinceEpoch,
-      });
-    } catch (e) {
-      debugPrint('StorageService.saveCanvasAnswer: $e');
-    }
-  }
+  Future<void> saveCanvasAnswer(String songId, String? url, int version) =>
+      _canvasAnswers.save(songId, url, version);
 
-  Future<void> removeCanvasAnswer(String songId) async => _canvasBox.delete(songId);
+  Future<void> removeCanvasAnswer(String songId) => _canvasAnswers.remove(songId);
 
-  Future<void> clearCanvasAnswers() async => _canvasBox.clear();
+  Future<void> clearCanvasAnswers() => _canvasAnswers.clear();
 
-  // --- LYRICS ---
-  static const int _maxStoredLyrics = 1000;
+  // --- LYRICS --- (see [LyricsStore])
 
-  Map<String, dynamic>? getStoredLyrics(String songId) {
-    final raw = _lyricsBox.get(songId);
-    return raw is Map ? Map<String, dynamic>.from(raw) : null;
-  }
+  Map<String, dynamic>? getStoredLyrics(String songId) => _lyrics.get(songId);
 
-  bool _isManualLyrics(Object? key) {
-    final raw = _lyricsBox.get(key);
-    return raw is Map && raw['manual'] == true;
-  }
+  bool _isManualLyrics(Object? key) => _lyrics.isManual(key);
 
   /// Forgets the lyrics found by the sources; those chosen or written by
   /// the user stay.
-  Future<void> clearFoundLyrics() async {
-    try {
-      await _lyricsBox.deleteAll([
-        for (final key in _lyricsBox.keys)
-          if (!_isManualLyrics(key)) key,
-      ]);
-    } catch (e) {
-      debugPrint('StorageService.clearFoundLyrics: $e');
-    }
-  }
+  Future<void> clearFoundLyrics() => _lyrics.clearFound();
 
   /// How many songs have lyrics saved.
-  int get storedLyricsCount => _lyricsBox.length;
+  int get storedLyricsCount => _lyrics.count;
 
-  Future<void> saveLyrics(String songId, Map<String, dynamic> data) async {
-    try {
-      if (_lyricsBox.length >= _maxStoredLyrics) {
-        // The oldest go first, but never those of a downloaded song nor
-        // those the user chose or wrote.
-        final evict = _lyricsBox.keys
-            .where((key) => !_downloadedIds.contains(key) && !_isManualLyrics(key))
-            .take(_maxStoredLyrics ~/ 5)
-            .toList();
-        await _lyricsBox.deleteAll(evict);
-      }
-      await _lyricsBox.put(songId, data);
-    } catch (e) {
-      debugPrint('StorageService.saveLyrics: $e');
-    }
-  }
+  Future<void> saveLyrics(String songId, Map<String, dynamic> data) => _lyrics.save(songId, data);
 
   Future<bool> hasLocalAudioFile(String songId) async {
     try {
@@ -911,114 +823,75 @@ class StorageService {
     await _downloadsBox.clear();
   }
 
-  static const int defaultAccentColor = 0xFF1ED760;
+  // --- SETTINGS OF THE DEVICE --- (see [DeviceSettingsStore])
+  static const int defaultAccentColor = DeviceSettingsStore.defaultAccentColor;
 
-  Color get accentColor {
-    final val = _settingsBox.get('accent_color', defaultValue: defaultAccentColor);
-    if (val is! int) return const Color(defaultAccentColor);
-    return Color(val);
-  }
+  Color get accentColor => _settings.accentColor;
 
   Future<void> setAccentColor(Color color) async {
-    await _settingsBox.put('accent_color', color.toARGB32());
+    await _settings.setAccentColor(color);
     accentColorNotifier.value = color;
   }
 
-  bool get isHighQuality => _settingsBox.get('high_quality', defaultValue: true) as bool;
-  Future<void> setHighQuality(bool value) async => _settingsBox.put('high_quality', value);
+  bool get isHighQuality => _settings.isHighQuality;
+  Future<void> setHighQuality(bool value) => _settings.setHighQuality(value);
 
-  bool get isAmoledTheme => _settingsBox.get('amoled_theme', defaultValue: false) as bool;
-  Future<void> setAmoledTheme(bool value) async => _settingsBox.put('amoled_theme', value);
+  bool get isAmoledTheme => _settings.isAmoledTheme;
+  Future<void> setAmoledTheme(bool value) => _settings.setAmoledTheme(value);
 
-  /// Devices this one has handed its playback to, most recent first, as
-  /// maps (see `ConnectDevice`): tried first the next time, before looking
-  /// around the network.
-  List<Map<String, dynamic>> get connectDevices => [
-        for (final raw in _settingsBox.get('connect_devices', defaultValue: <dynamic>[]) as List)
-          if (raw is Map) Map<String, dynamic>.from(raw),
-      ];
-  Future<void> setConnectDevices(List<Map<String, dynamic>> devices) async =>
-      _settingsBox.put('connect_devices', devices);
+  /// Devices this one has handed its playback to, most recent first.
+  List<Map<String, dynamic>> get connectDevices => _settings.connectDevices;
+  Future<void> setConnectDevices(List<Map<String, dynamic>> devices) =>
+      _settings.setConnectDevices(devices);
 
-  /// Identity and name of this device for the others on the network. The id
-  /// is made once and kept.
-  String get connectId {
-    final known = _settingsBox.get('connect_id') as String?;
-    if (known != null && known.isNotEmpty) return known;
-    final id = 'totorify-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
-    _settingsBox.put('connect_id', id);
-    return id;
-  }
+  /// Identity of this device for the others on the network.
+  String get connectId => _settings.connectId;
 
-  /// The name the user gave this device for the others; null when none was
-  /// given and the kind of device stands in ("iPhone").
-  String? get connectName {
-    final name = (_settingsBox.get('connect_name') as String?)?.trim() ?? '';
-    return name.isEmpty ? null : name;
-  }
+  /// The name the user gave this device for the others, or null.
+  String? get connectName => _settings.connectName;
+  Future<void> setConnectName(String name) => _settings.setConnectName(name);
 
-  Future<void> setConnectName(String name) async => _settingsBox.put('connect_name', name.trim());
-
-  /// Whether this device can be found and asked to play by the others (a
-  /// phone; a TV always can). Off until the user turns it on.
-  bool get receivesPlayback => _settingsBox.get('connect_receive', defaultValue: false) as bool;
+  /// Whether this device can be found and asked to play by the others.
+  bool get receivesPlayback => _settings.receivesPlayback;
 
   /// Whether the user (or the app, at its first start) has chosen either way.
-  bool get receivesPlaybackWasChosen => _settingsBox.containsKey('connect_receive');
-  Future<void> setReceivesPlayback(bool value) async => _settingsBox.put('connect_receive', value);
+  bool get receivesPlaybackWasChosen => _settings.receivesPlaybackWasChosen;
+  Future<void> setReceivesPlayback(bool value) => _settings.setReceivesPlayback(value);
 
-  /// The devices the user allowed for good to play on this one, by id, with
-  /// the name they had.
-  Map<String, String> get connectTrusted {
-    final raw = _settingsBox.get('connect_trusted');
-    return {
-      if (raw is Map)
-        for (final entry in raw.entries) entry.key.toString(): entry.value.toString(),
-    };
-  }
-
-  Future<void> trustConnectDevice(String id, String name) async =>
-      _settingsBox.put('connect_trusted', {...connectTrusted, id: name});
-
-  Future<void> clearConnectTrusted() async => _settingsBox.delete('connect_trusted');
+  /// The devices the user allowed for good to play on this one, by id.
+  Map<String, String> get connectTrusted => _settings.connectTrusted;
+  Future<void> trustConnectDevice(String id, String name) =>
+      _settings.trustConnectDevice(id, name);
+  Future<void> clearConnectTrusted() => _settings.clearConnectTrusted();
 
   /// How loud the app plays for the devices that control it, from 0 to 1.
-  double get outputVolume =>
-      (_settingsBox.get('output_volume', defaultValue: 1.0) as num?)?.toDouble() ?? 1.0;
-  Future<void> setOutputVolume(double value) async => _settingsBox.put('output_volume', value);
+  double get outputVolume => _settings.outputVolume;
+  Future<void> setOutputVolume(double value) => _settings.setOutputVolume(value);
 
   /// Whether the Library shows covers in a grid instead of rows.
-  bool get libraryGrid => _settingsBox.get('library_grid', defaultValue: false) as bool? ?? false;
-  Future<void> setLibraryGrid(bool value) async => _settingsBox.put('library_grid', value);
+  bool get libraryGrid => _settings.libraryGrid;
+  Future<void> setLibraryGrid(bool value) => _settings.setLibraryGrid(value);
 
-  bool get hasSeenLogin => _settingsBox.get('has_seen_login', defaultValue: false) as bool;
-  Future<void> setHasSeenLogin(bool value) async => _settingsBox.put('has_seen_login', value);
+  bool get hasSeenLogin => _settings.hasSeenLogin;
+  Future<void> setHasSeenLogin(bool value) => _settings.setHasSeenLogin(value);
 
-  bool get isCanvasEnabled =>
-      _settingsBox.get('canvas_enabled', defaultValue: true) as bool? ?? true;
-  Future<void> setCanvasEnabled(bool value) async =>
-      _settingsBox.put('canvas_enabled', value);
+  bool get isCanvasEnabled => _settings.isCanvasEnabled;
+  Future<void> setCanvasEnabled(bool value) => _settings.setCanvasEnabled(value);
 
   /// Whether the Canvas video of a song is saved when the song is downloaded.
-  bool get savesCanvasWithDownloads =>
-      _settingsBox.get('save_canvas_with_downloads', defaultValue: true) as bool? ?? true;
-  Future<void> setSavesCanvasWithDownloads(bool value) async =>
-      _settingsBox.put('save_canvas_with_downloads', value);
+  bool get savesCanvasWithDownloads => _settings.savesCanvasWithDownloads;
+  Future<void> setSavesCanvasWithDownloads(bool value) =>
+      _settings.setSavesCanvasWithDownloads(value);
 
-  String? get spDcCookie => _settingsBox.get('sp_dc_cookie') as String?;
-  Future<void> setSpDcCookie(String? value) async { if (value == null || value.isEmpty) { await _settingsBox.delete('sp_dc_cookie'); } else { await _settingsBox.put('sp_dc_cookie', value); } }
+  String? get spDcCookie => _settings.spDcCookie;
+  Future<void> setSpDcCookie(String? value) => _settings.setSpDcCookie(value);
 
   // --- ORIGINAL COVERS ---
   /// Official album cover resolved for a song whose own artwork was a
   /// YouTube video thumbnail.
-  String? getCachedCover(String songId) {
-    final raw = _coversBox.get(songId);
-    return raw is String && raw.isNotEmpty ? raw : null;
-  }
+  String? getCachedCover(String songId) => _covers.get(songId);
 
-  Future<void> cacheCover(String songId, String url) async {
-    await _coversBox.put(songId, url);
-  }
+  Future<void> cacheCover(String songId, String url) => _covers.save(songId, url);
 
   bool isFollowingArtist(String artistId) =>
       _cachedArtists.any((a) => a.id == artistId) || _guestArtists.any((a) => a.id == artistId);
@@ -1550,28 +1423,10 @@ class StorageService {
     }
   }
 
-  // --- RECENT SEARCHES ---
-  static const int _maxRecentSearches = 10;
+  // --- RECENT SEARCHES --- (see [DeviceSettingsStore])
+  List<String> getRecentSearches() => _settings.getRecentSearches();
 
-  List<String> getRecentSearches() {
-    final raw = _settingsBox.get('recent_searches', defaultValue: <dynamic>[]);
-    if (raw is! List) return const [];
-    return raw.whereType<String>().toList(growable: false);
-  }
+  Future<void> addRecentSearch(String query) => _settings.addRecentSearch(query);
 
-  Future<void> addRecentSearch(String query) async {
-    final clean = query.trim();
-    if (clean.isEmpty || AppSettings.instance.pauseSearchHistory.value) return;
-    final searches = getRecentSearches().toList()
-      ..removeWhere((q) => q.toLowerCase() == clean.toLowerCase())
-      ..insert(0, clean);
-    if (searches.length > _maxRecentSearches) {
-      searches.removeRange(_maxRecentSearches, searches.length);
-    }
-    await _settingsBox.put('recent_searches', searches);
-  }
-
-  Future<void> clearRecentSearches() async {
-    await _settingsBox.delete('recent_searches');
-  }
+  Future<void> clearRecentSearches() => _settings.clearRecentSearches();
 }
