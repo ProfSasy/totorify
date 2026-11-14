@@ -11,6 +11,7 @@ import '../../services/ytmusic_catalog_service.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_tokens.dart';
 import 'app_cover.dart';
+import 'player/player_style.dart';
 
 /// The cards under the player, reached by scrolling it up as in Spotify:
 /// a preview of the lyrics, the artist, what plays next and the credits.
@@ -47,7 +48,7 @@ class _PlayerCardsState extends State<PlayerCards> {
   Future<Artist?>? _artist;
   String? _songId;
 
-  static const Color _ink = Colors.white;
+  static Color get _ink => playerInk;
 
   static String _mainArtist(Song song) => song.artist.split(',').first.trim();
 
@@ -84,7 +85,7 @@ class _PlayerCardsState extends State<PlayerCards> {
 
   Widget _card({required Widget child, required VoidCallback onTap, Color? color}) {
     return Material(
-      color: color ?? Color.lerp(widget.palette.surface, Colors.white, 0.07),
+      color: color ?? Color.lerp(widget.palette.surface, _ink, 0.07),
       borderRadius: BorderRadius.circular(AppRadius.md),
       clipBehavior: Clip.antiAlias,
       child: InkWell(onTap: onTap, child: child),
@@ -99,7 +100,7 @@ class _PlayerCardsState extends State<PlayerCards> {
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(color: _ink, fontSize: 16, fontWeight: FontWeight.w800),
+              style: TextStyle(color: _ink, fontSize: 16, fontWeight: FontWeight.w800),
             ),
           ),
           if (action != null)
@@ -113,7 +114,7 @@ class _PlayerCardsState extends State<PlayerCards> {
                 ),
                 child: Text(
                   action,
-                  style: const TextStyle(color: _ink, fontSize: 12, fontWeight: FontWeight.w700),
+                  style: TextStyle(color: _ink, fontSize: 12, fontWeight: FontWeight.w700),
                 ),
               ),
             ),
@@ -127,7 +128,7 @@ class _PlayerCardsState extends State<PlayerCards> {
   Widget _lyricsCard() {
     return _card(
       // The vivid colour of the cover, as Spotify gives its lyrics card.
-      color: Color.lerp(widget.palette.accent, Colors.black, 0.45),
+      color: Color.lerp(widget.palette.accent, PlayerStyle.shade, 0.45),
       onTap: widget.onLyrics,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -154,7 +155,7 @@ class _PlayerCardsState extends State<PlayerCards> {
               return Padding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.xl),
                 child: text == null
-                    ? const SizedBox(
+                    ? SizedBox(
                         height: 60,
                         child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: _ink)),
                       )
@@ -212,7 +213,7 @@ class _PlayerCardsState extends State<PlayerCards> {
                         ),
                       ),
                     ),
-                    const Positioned(
+                    Positioned(
                       left: AppSpacing.lg,
                       top: AppSpacing.lg,
                       child: Text(
@@ -230,7 +231,7 @@ class _PlayerCardsState extends State<PlayerCards> {
                   children: [
                     Text(
                       name,
-                      style: const TextStyle(color: _ink, fontSize: 17, fontWeight: FontWeight.w800),
+                      style: TextStyle(color: _ink, fontSize: 17, fontWeight: FontWeight.w800),
                     ),
                     if ((artist?.audience ?? '').isNotEmpty) ...[
                       const SizedBox(height: 4),
@@ -291,7 +292,7 @@ class _PlayerCardsState extends State<PlayerCards> {
                             song.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: _ink, fontSize: 14, fontWeight: FontWeight.w600),
+                            style: TextStyle(color: _ink, fontSize: 14, fontWeight: FontWeight.w600),
                           ),
                           const SizedBox(height: 2),
                           Text(
@@ -335,7 +336,7 @@ class _PlayerCardsState extends State<PlayerCards> {
                 children: [
                   Text(
                     value,
-                    style: const TextStyle(color: _ink, fontSize: 14.5, fontWeight: FontWeight.w600),
+                    style: TextStyle(color: _ink, fontSize: 14.5, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 2),
                   Text(label, style: TextStyle(color: _ink.withValues(alpha: 0.6), fontSize: 12.5)),

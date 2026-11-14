@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/playlist.dart';
 import '../../models/song.dart';
+import '../../services/app_settings.dart';
 import '../../services/library_extras.dart';
 import '../../services/listening_stats.dart';
 import '../../services/audio_handler.dart';
@@ -257,7 +258,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               child: Container(
                 width: 34,
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.1),
+                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(AppIcons.close, size: 18, color: cs.onSurface),
@@ -433,14 +434,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     if (_grid) {
       const spacing = AppSpacing.md;
-      final width = (MediaQuery.sizeOf(context).width - 2 * AppSpacing.lg - 2 * spacing) / 3;
+      // As many columns as the user wants.
+      final columns = const [2, 3, 4][AppSettings.instance.libraryColumns.value.clamp(0, 2)];
+      final width =
+          (MediaQuery.sizeOf(context).width - 2 * AppSpacing.lg - (columns - 1) * spacing) / columns;
       return [
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(
               AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
           sliver: SliverGrid(
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
+              crossAxisCount: columns,
               mainAxisExtent: CoverCard.heightFor(width, subtitleLines: 2),
               crossAxisSpacing: spacing,
               mainAxisSpacing: AppSpacing.sm,

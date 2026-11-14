@@ -60,7 +60,7 @@ class PlayerQueueTab extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(AppSpacing.xl, AppSpacing.lg, AppSpacing.xl, AppSpacing.xs),
               child: Text(
                 text,
-                style: const TextStyle(color: playerInk, fontSize: 16, fontWeight: FontWeight.w800),
+                style: TextStyle(color: playerInk, fontSize: 16, fontWeight: FontWeight.w800),
               ),
             );
 
@@ -188,7 +188,7 @@ class PlayerQueueTab extends StatelessWidget {
             accent: palette.accent,
           ),
           proxyDecorator: (child, index, animation) => Material(
-            color: Color.lerp(palette.surface, Colors.white, 0.08),
+            color: Color.lerp(palette.surface, playerInk, 0.08),
             elevation: 8,
             shadowColor: Colors.black,
             child: child,
@@ -303,13 +303,13 @@ class _QueueSuggestionsState extends State<QueueSuggestions> {
                 children: [
                   Icon(AppIcons.smart, size: 17, color: widget.accent),
                   const SizedBox(width: AppSpacing.sm),
-                  const Text(
+                  Text(
                     'Consigliati',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w800,
                       letterSpacing: -0.3,
-                      color: Colors.white,
+                      color: playerInk,
                     ),
                   ),
                 ],
@@ -331,9 +331,9 @@ class _QueueSuggestionsState extends State<QueueSuggestions> {
                             song.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontWeight: FontWeight.w600,
-                              color: Colors.white,
+                              color: playerInk,
                               fontSize: 15,
                             ),
                           ),
@@ -343,7 +343,7 @@ class _QueueSuggestionsState extends State<QueueSuggestions> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.72),
+                              color: playerInk.withValues(alpha: 0.72),
                               fontSize: 13,
                             ),
                           ),
@@ -352,7 +352,7 @@ class _QueueSuggestionsState extends State<QueueSuggestions> {
                     ),
                     IconButton(
                       tooltip: 'Aggiungi alla coda',
-                      icon: const Icon(AppIcons.save, color: Colors.white, size: 25),
+                      icon: Icon(AppIcons.save, color: playerInk, size: 25),
                       onPressed: () {
                         PlaybackLogService.instance
                             .log('UI', 'coda: aggiungo consigliato "${song.title}"');

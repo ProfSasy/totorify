@@ -270,6 +270,18 @@ class AppSettings {
   /// The thin progress line under the mini player.
   late final miniShowProgress = _setting<bool>('mini_show_progress', true);
 
+  // ── Pages ───────────────────────────────────────────────────────────────
+
+  /// How many columns the grid of the Library has: 0 two, 1 three, 2 four.
+  late final libraryColumns = _setting<int>('library_columns', 1);
+
+  /// The artwork on top of a playlist or an album: 0 small, 1 as designed,
+  /// 2 large.
+  late final collectionCoverSize = _setting<int>('collection_cover_size', 1);
+
+  /// The color of the cover washes over the top of the pages.
+  late final pageWash = _setting<bool>('page_wash', true);
+
   /// The buttons under the transport of the player in the order the user
   /// wants them, by name; empty for the designed order.
   late final playerActionOrder = _setting<List<String>>('player_action_order', const []);
@@ -378,6 +390,9 @@ class AppSettings {
     miniPlayerStyle,
     miniHiddenButtons,
     miniShowProgress,
+    libraryColumns,
+    collectionCoverSize,
+    pageWash,
   ];
 
   /// Everything as it is stored, for a backup.

@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import '../widgets/app_cover.dart' show imageProviderFor;
 import 'package:flutter/material.dart';
 
+import '../../services/app_settings.dart';
 import 'app_theme.dart';
 import 'app_tokens.dart';
 
@@ -44,6 +45,17 @@ class AmbientPalette {
 
   /// Ink that stays readable on [accent].
   Color get onAccent => AppTheme.inkOn(accent);
+
+  /// The color a page of the app takes from the artwork behind its own
+  /// text: the dark shade on a dark theme, and on a light one the color of
+  /// the cover laid lightly over the background, so that dark text stays
+  /// readable. Transparent when the user turned the wash off.
+  Color washFor(ColorScheme scheme) {
+    if (!AppSettings.instance.pageWash.value) return scheme.surfaceDim.withValues(alpha: 0);
+    return scheme.brightness == Brightness.light
+        ? Color.lerp(scheme.surfaceDim, accent, 0.42)!
+        : surface;
+  }
 
   /// Shown while the artwork is being read: buttons in the user's accent on
   /// a surface without a color yet, so the real one blooms out of gray
@@ -378,9 +390,10 @@ class AmbientBackdrop extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
+                // On a light theme the wash is light too (see [washFor]).
                 colors: [
-                  palette.surface.withValues(alpha: k),
-                  palette.surface.withValues(alpha: 0),
+                  palette.washFor(cs).withValues(alpha: palette.washFor(cs).a * k),
+                  palette.washFor(cs).withValues(alpha: 0),
                 ],
                 stops: [0.0, extent.clamp(0.05, 1.0)],
               ),

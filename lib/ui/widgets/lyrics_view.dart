@@ -1,3 +1,4 @@
+import 'player/player_style.dart';
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
@@ -47,7 +48,7 @@ class LyricsView extends StatefulWidget {
 }
 
 class _LyricsViewState extends State<LyricsView> {
-  static const Color _ink = Colors.white;
+  static Color get _ink => playerInk;
 
   Song? _song;
   Lyrics _lyrics = Lyrics.empty;
@@ -260,7 +261,7 @@ class _LyricsViewState extends State<LyricsView> {
   Widget build(BuildContext context) {
     final faint = _ink.withValues(alpha: 0.38);
     if (_loading) {
-      return const Center(child: CupertinoActivityIndicator(color: _ink, radius: 14));
+      return Center(child: CupertinoActivityIndicator(color: _ink, radius: 14));
     }
     final song = _song;
     if (song == null || _shown.isEmpty) return _empty(faint);
@@ -502,7 +503,7 @@ class _LyricsViewState extends State<LyricsView> {
         child: Container(
           height: 46,
           padding: const EdgeInsets.only(left: AppSpacing.lg, right: AppSpacing.xs),
-          color: Colors.black.withValues(alpha: 0.28),
+          color: PlayerStyle.shade.withValues(alpha: 0.28),
           child: Row(
             children: [
               Expanded(
@@ -523,7 +524,7 @@ class _LyricsViewState extends State<LyricsView> {
                 ),
               ),
               if (_annotating)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.symmetric(horizontal: 8),
                   child: CupertinoActivityIndicator(color: _ink, radius: 8),
                 ),
@@ -617,7 +618,7 @@ class _KaraokeLineState extends State<_KaraokeLine> with SingleTickerProviderSta
 
   @override
   Widget build(BuildContext context) {
-    final sung = widget.style.color ?? Colors.white;
+    final sung = widget.style.color ?? playerInk;
     return RichText(
       maxLines: 2,
       overflow: TextOverflow.ellipsis,

@@ -71,7 +71,7 @@ class PlayerTitleRow extends StatelessWidget {
                   mediaItem.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -0.5,

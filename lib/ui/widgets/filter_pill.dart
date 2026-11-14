@@ -27,7 +27,7 @@ class FilterPill extends StatelessWidget {
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
-          color: selected ? cs.primary : Colors.white.withValues(alpha: 0.1),
+          color: selected ? cs.primary : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.1),
           borderRadius: AppRadius.chip,
         ),
         child: Text(

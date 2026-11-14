@@ -86,7 +86,7 @@ class PlayerTransportControls extends StatelessWidget {
             PlaybackLogService.instance.log('UI', 'player: prev');
             audioHandler.skipToPrevious();
           },
-          icon: const Icon(AppIcons.previous, color: playerInk),
+          icon: Icon(AppIcons.previous, color: playerInk),
         ),
         // White with a dark icon, as Spotify's: the colour of
         // the song stays on the background.
@@ -113,7 +113,7 @@ class PlayerTransportControls extends StatelessWidget {
             PlaybackLogService.instance.log('UI', 'player: next');
             audioHandler.skipToNext();
           },
-          icon: const Icon(AppIcons.next, color: playerInk),
+          icon: Icon(AppIcons.next, color: playerInk),
         ),
         if (showModes)
         Builder(
@@ -169,7 +169,7 @@ class ToggleGlyph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tint = active ? color : Colors.white;
+    final tint = active ? color : playerInk;
     return IconButton(
       tooltip: tooltip,
       padding: EdgeInsets.zero,

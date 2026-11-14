@@ -214,6 +214,27 @@ class ListsSettingsScreen extends StatelessWidget {
             ),
           ],
         ),
+        SettingsSection(
+          title: 'Pagine',
+          children: [
+            SettingChoice(
+              setting: settings.libraryColumns,
+              title: 'Colonne della libreria',
+              labels: const ['Due', 'Tre', 'Quattro'],
+              sheetTitle: 'Colonne della griglia in libreria',
+            ),
+            SettingChoice(
+              setting: settings.collectionCoverSize,
+              title: 'Copertina di playlist e album',
+              labels: const ['Piccola', 'Predefinita', 'Grande'],
+            ),
+            SettingSwitch(
+              setting: settings.pageWash,
+              title: 'Colore della copertina in cima',
+              subtitle: 'La sfumatura dietro la Home e in cima a playlist e album',
+            ),
+          ],
+        ),
       ],
     );
   }

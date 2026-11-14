@@ -232,7 +232,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                               child: Icon(AppIcons.clear, size: 18, color: cs.onSurfaceVariant),
                             ),
                       filled: true,
-                      fillColor: Colors.white.withValues(alpha: 0.10),
+                      fillColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.10),
                       contentPadding: const EdgeInsets.symmetric(vertical: 9),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(6),
@@ -248,7 +248,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                 child: TextButton.icon(
                   onPressed: _chooseOrder,
                   style: TextButton.styleFrom(
-                    backgroundColor: Colors.white.withValues(alpha: 0.10),
+                    backgroundColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.10),
                     foregroundColor: cs.onSurface,
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),

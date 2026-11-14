@@ -49,6 +49,18 @@ class PlayerSheet extends StatefulWidget {
   /// computer app) the page stays, and the player opens when asked.
   static bool opensOnPlay = true;
 
+  /// The palette of the player drawn in the colors of the theme: its
+  /// surfaces are the theme's, and the color of the cover stays for what is
+  /// switched on, darker on a light theme so that it can be read.
+  static AmbientPalette themedPalette(AmbientPalette cover, ColorScheme scheme) => AmbientPalette(
+        accent: scheme.brightness == Brightness.light
+            ? Color.lerp(cover.accent, Colors.black, 0.32)!
+            : cover.accent,
+        surface: scheme.surfaceContainerHigh,
+        deep: scheme.surfaceDim,
+        fromArtwork: cover.fromArtwork,
+      );
+
   /// For the pages, after starting a song.
   static void showOnPlay(BuildContext context, AudioPlayerHandler audioHandler) {
     if (opensOnPlay) show(context, audioHandler);
@@ -275,11 +287,22 @@ class _PlayerSheetState extends State<PlayerSheet>
         final bottomInset =
             flutterView.viewPadding.bottom / flutterView.devicePixelRatio;
 
-        // Everything in the player takes its colors from the cover.
+        // In the colors of the theme, when the user wants the player so:
+        // its ink, and what stands for the dark shades of the cover.
+        final themed = AppSettings.instance.playerBackground.value == 3;
+        if (themed) {
+          PlayerStyle.ink = colorScheme.onSurface;
+          PlayerStyle.shade = colorScheme.surfaceDim;
+        } else {
+          PlayerStyle.dark();
+        }
+
+        // Everything in the player takes its colors from the cover (or,
+        // drawn in the colors of the theme, from the theme).
         return AmbientTint(
           artworkUrl: mediaItem.artUri?.toString(),
           fallback: colorScheme.primary,
-          builder: (context, palette) => SizedBox(
+          builder: (context, coverPalette) => ((AmbientPalette palette) => SizedBox(
             height: MediaQuery.sizeOf(context).height,
             child: StreamBuilder<PlaybackState>(
               stream: widget.audioHandler.playbackState,
@@ -300,7 +323,9 @@ class _PlayerSheetState extends State<PlayerSheet>
                 return Stack(
                   fit: StackFit.expand,
                   children: [
-                    if (background == 2)
+                    if (background == 3)
+                      ColoredBox(color: colorScheme.surfaceDim)
+                    else if (background == 2)
                       const ColoredBox(color: Colors.black)
                     else if (background == 1 && mediaItem.artUri != null)
                       BlurredCover(url: mediaItem.artUri.toString(), palette: palette)
@@ -350,9 +375,9 @@ class _PlayerSheetState extends State<PlayerSheet>
                                   begin: Alignment.topCenter,
                                   end: Alignment.bottomCenter,
                                   colors: [
-                                    Colors.black.withValues(alpha: 0.5),
-                                    Colors.black.withValues(alpha: 0.08),
-                                    Colors.black.withValues(alpha: 0.86),
+                                    PlayerStyle.shade.withValues(alpha: 0.5),
+                                    PlayerStyle.shade.withValues(alpha: 0.08),
+                                    PlayerStyle.shade.withValues(alpha: 0.86),
                                   ],
                                   stops: const [0.0, 0.42, 1.0],
                                 ),
@@ -460,7 +485,7 @@ class _PlayerSheetState extends State<PlayerSheet>
                 );
               },
             ),
-          ),
+          ))(themed ? PlayerSheet.themedPalette(coverPalette, colorScheme) : coverPalette),
         );
       },
     );

@@ -75,7 +75,7 @@ class PlayerHeader extends StatelessWidget {
                       : mediaItem.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                     color: playerInk,
@@ -86,7 +86,7 @@ class PlayerHeader extends StatelessWidget {
           ),
           IconButton(
             tooltip: 'Altre opzioni',
-            icon: const Icon(AppIcons.more, color: playerInk, size: 26),
+            icon: Icon(AppIcons.more, color: playerInk, size: 26),
             onPressed: onMenu,
           ),
           const SizedBox(width: AppSpacing.xs),

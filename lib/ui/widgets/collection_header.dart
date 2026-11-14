@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../services/app_settings.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
@@ -24,7 +25,10 @@ class CollectionHeader extends StatelessWidget {
   /// play button leave the first screen.
   static double artworkSize(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    return math.min(math.min(size.width * 0.6, size.height * 0.3), 260);
+    final designed = math.min(math.min(size.width * 0.6, size.height * 0.3), 260.0);
+    // Smaller or larger, as the user wants it; never wider than the page.
+    final scale = const [0.68, 1.0, 1.22][AppSettings.instance.collectionCoverSize.value.clamp(0, 2)];
+    return math.min(designed * scale, size.width - 2 * AppSpacing.xl);
   }
 
   final AmbientPalette palette;
@@ -35,6 +39,7 @@ class CollectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final size = artworkSize(context);
+    final wash = palette.washFor(Theme.of(context).colorScheme);
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -46,7 +51,7 @@ class CollectionHeader extends StatelessWidget {
           height: 700,
           child: AnimatedContainer(
             duration: AppMotion.ambience,
-            color: palette.surface,
+            color: wash,
           ),
         ),
         Positioned.fill(
@@ -57,7 +62,7 @@ class CollectionHeader extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [palette.surface, palette.surface.withValues(alpha: 0)],
+                colors: [wash, wash.withValues(alpha: 0)],
               ),
             ),
           ),
@@ -140,7 +145,7 @@ class CollectionTopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final start = revealAt ?? CollectionHeader.artworkSize(context) - AppSpacing.md;
-    final surface = Color.lerp(palette.surface, cs.surfaceDim, 0.4)!;
+    final surface = Color.lerp(palette.washFor(cs).withValues(alpha: 1), cs.surfaceDim, 0.4)!;
 
     return Positioned(
       top: 0,

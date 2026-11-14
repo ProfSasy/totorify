@@ -111,6 +111,7 @@ class AppThemes {
         'color_surface': 0xFFFFFFFF,
         'color_text': 0xFF1B1B1B,
         'color_text_secondary': 0xFF5F5B55,
+        'player_background': 3,
         'font_family': 'Georgia',
         'corner_style': 2,
         'mini_player_style': 2,

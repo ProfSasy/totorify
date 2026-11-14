@@ -397,7 +397,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
       child: Icon(
         AppIcons.artist,
         size: height * 0.42,
-        color: Colors.white.withValues(alpha: 0.18),
+        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.18),
       ),
     );
 

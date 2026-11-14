@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
+import 'player_style.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/audio_handler.dart';
 import '../../../services/ytmusic_service.dart';
@@ -44,7 +45,7 @@ class _PlayerSeekBarState extends State<PlayerSeekBar> {
     final timeStyle = TextStyle(
       fontSize: 11.5,
       fontWeight: FontWeight.w500,
-      color: Colors.white.withValues(alpha: 0.72),
+      color: playerInk.withValues(alpha: 0.72),
       fontFeatures: const [FontFeature.tabularFigures()],
     );
 
@@ -87,9 +88,9 @@ class _PlayerSeekBarState extends State<PlayerSeekBar> {
                   pressedElevation: 0,
                 ),
                 overlayShape: SliderComponentShape.noOverlay,
-                activeTrackColor: Colors.white,
-                inactiveTrackColor: Colors.white.withValues(alpha: 0.24),
-                thumbColor: Colors.white,
+                activeTrackColor: playerInk,
+                inactiveTrackColor: playerInk.withValues(alpha: 0.24),
+                thumbColor: playerInk,
               ),
               child: SizedBox(
                 height: 24,

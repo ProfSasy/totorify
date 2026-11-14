@@ -953,7 +953,7 @@ class _QuickTile extends StatelessWidget {
       child: Container(
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.09),
+          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.09),
           borderRadius: BorderRadius.circular(AppRadius.sm),
         ),
         child: Row(

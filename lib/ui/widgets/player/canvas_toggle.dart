@@ -1,5 +1,4 @@
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../services/playback_log_service.dart';
 import '../../theme/app_ambience.dart';
@@ -60,14 +59,14 @@ class CanvasToggle extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
             decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.38),
+              color: PlayerStyle.shade.withValues(alpha: 0.38),
               borderRadius: AppRadius.chip,
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (waiting)
-                  const Padding(
+                  Padding(
                     padding: EdgeInsets.only(right: 1),
                     child: CupertinoActivityIndicator(radius: 6, color: playerInk),
                   )

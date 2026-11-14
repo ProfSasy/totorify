@@ -15,7 +15,12 @@ class PlayerSettingsScreen extends StatefulWidget {
 }
 
 class _PlayerSettingsScreenState extends State<PlayerSettingsScreen> {
-  static const _backgrounds = ['I colori della copertina', 'La copertina sfocata', 'Nero'];
+  static const _backgrounds = [
+    'I colori della copertina',
+    'La copertina sfocata',
+    'Nero',
+    'I colori del tema',
+  ];
   static const _bars = ['Normale', 'Sottile', 'Spessa', 'Ondulata'];
   static const _covers = ['Predefinita', 'Disco', 'Piccola'];
 
@@ -47,7 +52,7 @@ class _PlayerSettingsScreenState extends State<PlayerSettingsScreen> {
             ),
             SettingLink(
               title: 'Sfondo',
-              subtitle: _backgrounds[settings.playerBackground.value.clamp(0, 2)],
+              subtitle: _backgrounds[settings.playerBackground.value.clamp(0, 3)],
               onTap: () => _choose(settings.playerBackground, 'Sfondo del player', _backgrounds),
             ),
             SettingLink(
