@@ -9,6 +9,7 @@ import '../../theme/app_icons.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/app_tokens.dart';
 import '../../widgets/app_sheet.dart';
+import 'home_settings_screen.dart';
 import 'player_settings_screen.dart';
 import 'settings_kit.dart';
 
@@ -65,8 +66,8 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
     final sure = await confirmAction(
       context,
       title: 'Ripristinare l\'aspetto?',
-      message: 'Font, dimensione del testo, colori dinamici e forme tornano come all\'inizio. '
-          'I font importati restano.',
+      message: 'Font, dimensione del testo, colori dinamici, forme e sezioni della Home '
+          'tornano come all\'inizio. I font importati restano.',
       confirm: 'Ripristina',
     );
     if (!sure) return;
@@ -76,6 +77,8 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
       _settings.textScale,
       _settings.dynamicColor,
       _settings.cornerStyle,
+      _settings.homeSections,
+      _settings.homeHiddenSections,
     ]) {
       await setting.set(setting.fallback);
     }
@@ -158,6 +161,11 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
         SettingsSection(
           title: 'Schermate',
           children: [
+            SettingLink(
+              title: 'Home',
+              subtitle: 'Ordine delle sezioni, e quali mostrare',
+              onTap: () => SettingsPage.open(context, const HomeSettingsScreen()),
+            ),
             SettingLink(
               title: 'Player',
               subtitle: 'Copertina, titolo, pulsanti, sfondo, barra di avanzamento',

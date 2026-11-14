@@ -5,6 +5,7 @@ import '../../models/playlist.dart';
 import '../../models/song.dart';
 import '../../services/ai_mix_service.dart';
 import '../../services/ai_service.dart';
+import '../../services/app_settings.dart';
 import '../../services/library_extras.dart';
 import '../../services/listening_stats.dart';
 import '../../services/audio_handler.dart';
@@ -14,6 +15,7 @@ import '../../services/recommendation_service.dart';
 import '../../services/spotify_catalog_service.dart';
 import '../../services/storage_service.dart';
 import '../app_navigation.dart';
+import '../home_layout.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
@@ -71,6 +73,9 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     AuthService.instance.addListener(_onAuthChanged);
     StorageService.instance.historyNotifier.addListener(_refreshMixes);
+    // The sections are drawn again when the user moves or hides one.
+    AppSettings.instance.homeSections.addListener(_onAuthChanged);
+    AppSettings.instance.homeHiddenSections.addListener(_onAuthChanged);
     AuthService.instance.getSavedUserName().then((name) {
       if (!mounted || name == null || name.isEmpty) return;
       setState(() => _savedUserName = name);
@@ -87,6 +92,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     AuthService.instance.removeListener(_onAuthChanged);
     StorageService.instance.historyNotifier.removeListener(_refreshMixes);
+    AppSettings.instance.homeSections.removeListener(_onAuthChanged);
+    AppSettings.instance.homeHiddenSections.removeListener(_onAuthChanged);
     _barSolid.dispose();
     super.dispose();
   }
@@ -407,6 +414,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 slivers: [
                   SliverToBoxAdapter(child: SizedBox(height: topInset + AppSpacing.sm)),
 
+                  // The sections, in the order the user chose (Impostazioni >
+                  // Aspetto > Home), without the ones they hid.
+                  for (final section in HomeLayout.visible(
+                    AppSettings.instance.homeSections.value,
+                    AppSettings.instance.homeHiddenSections.value,
+                  ))
+                    ...switch (section) {
+                      HomeLayout.quick => <Widget>[
                   // ── Quick access: favourites, recents, charts ───────────
                   if (_feed == null)
                   SliverPadding(
@@ -419,7 +434,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       builder: (context, _) => _buildQuickGrid(cs),
                     ),
                   ),
-
+                      ],
+                      HomeLayout.pinned => <Widget>[
                   // ── What the user pinned ────────────────────────────────
                   if (_shows('Playlist'))
                   SliverToBoxAdapter(
@@ -461,7 +477,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
                   ),
-
+                      ],
+                      HomeLayout.aiMix => <Widget>[
                   // ── A mix made by the AI, when the user set it up ───────
                   if (_shows('Mix'))
                   SliverToBoxAdapter(
@@ -494,7 +511,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
                   ),
-
+                      ],
+                      HomeLayout.mixes => <Widget>[
                   // ── Mixes built on the listening history ────────────────
                   if (_mixArtists.isNotEmpty && _shows('Mix')) ...[
                     const SliverToBoxAdapter(child: SectionHeader('Mix per te')),
@@ -519,7 +537,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ],
-
+                      ],
+                      HomeLayout.recent => <Widget>[
                   // ── Recently played ─────────────────────────────────────
                   if (_feed == null)
                   SliverToBoxAdapter(
@@ -558,7 +577,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
                   ),
-
+                      ],
+                      HomeLayout.stats => <Widget>[
                   // ── From the statistics: the month's most played, and the
                   //    liked songs not heard for a while ─────────────────────
                   if (_shows('Mix'))
@@ -592,7 +612,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
                   ),
-
+                      ],
+                      HomeLayout.artists => <Widget>[
                   // ── Followed artists ────────────────────────────────────
                   if (_shows('Artisti'))
                   SliverToBoxAdapter(
@@ -626,7 +647,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
                   ),
-
+                      ],
+                      HomeLayout.playlists => <Widget>[
                   // ── The user's playlists ────────────────────────────────
                   if (_shows('Playlist'))
                   SliverToBoxAdapter(
@@ -665,7 +687,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
                   ),
-
+                      ],
+                      HomeLayout.charts => <Widget>[
                   // ── Charts and new releases ─────────────────────────────
                   if (_shows('Playlist'))
                   const SliverToBoxAdapter(
@@ -692,23 +715,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
                   ),
-
-                  // ── Songs by category ───────────────────────────────────
-                  if (_feed != null && _feedIsEmpty())
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.all(AppSpacing.xl),
-                        child: Text(
-                          switch (_feed) {
-                            'Artisti' => 'Non segui ancora nessun artista: apri la pagina di un artista e tocca "Segui".',
-                            'Playlist' => 'Nessuna playlist per ora: creane una o importala con "Crea".',
-                            _ => 'I mix arrivano quando hai ascoltato un po\' di musica.',
-                          },
-                          textAlign: TextAlign.center,
-                          style: AppText.caption(cs),
-                        ),
-                      ),
-                    ),
+                      ],
+                      HomeLayout.listenNow => <Widget>[
                   if (_feed == null) ...[
                   const SliverToBoxAdapter(child: SectionHeader('Da ascoltare ora')),
                   SliverToBoxAdapter(
@@ -775,6 +783,26 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
                   ],
+                      ],
+                      _ => const <Widget>[],
+                    },
+
+                  // ── Songs by category ───────────────────────────────────
+                  if (_feed != null && _feedIsEmpty())
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.all(AppSpacing.xl),
+                        child: Text(
+                          switch (_feed) {
+                            'Artisti' => 'Non segui ancora nessun artista: apri la pagina di un artista e tocca "Segui".',
+                            'Playlist' => 'Nessuna playlist per ora: creane una o importala con "Crea".',
+                            _ => 'I mix arrivano quando hai ascoltato un po\' di musica.',
+                          },
+                          textAlign: TextAlign.center,
+                          style: AppText.caption(cs),
+                        ),
+                      ),
+                    ),
                   const SliverToBoxAdapter(
                       child: SizedBox(height: AppSpacing.bottomContentInset)),
                 ],

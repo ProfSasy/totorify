@@ -195,6 +195,13 @@ class AppSettings {
   /// Shuffle and repeat beside the transport buttons.
   late final playerShowModes = _setting<bool>('player_show_modes', true);
 
+  /// The sections of the Home in the order the user wants them, by name
+  /// (`HomeLayout`); empty for the designed order.
+  late final homeSections = _setting<List<String>>('home_sections', const []);
+
+  /// The sections of the Home the user does not want to see.
+  late final homeHiddenSections = _setting<List<String>>('home_hidden_sections', const []);
+
   // ── Listening together ──────────────────────────────────────────────────
 
   /// Who listens along may also play, pause, skip and propose songs.
@@ -266,6 +273,8 @@ class AppSettings {
       playerShowSource,
       playerHiddenActions,
       playerShowModes,
+      homeSections,
+      homeHiddenSections,
       togetherGuestsControl,
       pauseListenHistory,
       pauseSearchHistory,
