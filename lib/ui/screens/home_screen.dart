@@ -353,13 +353,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _songRow(List<Song> songs) => _CardRow(
-        height: CoverCard.heightFor(118),
+        height: CoverCard.heightFor(CoverCard.rowSize(118)),
         itemCount: songs.length,
         itemBuilder: (context, index) => CoverCard(
           imageUrl: songs[index].thumbnailUrl,
           title: songs[index].title,
           subtitle: songs[index].artist,
-          size: 118,
+          size: CoverCard.rowSize(118),
           onTap: () => _play(songs[index], songs),
         ),
       );
@@ -448,7 +448,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           children: [
                             const SectionHeader('Fissati'),
                             _CardRow(
-                              height: CoverCard.heightFor(118),
+                              height: CoverCard.heightFor(CoverCard.rowSize(118)),
                               itemCount: pins.length,
                               itemBuilder: (context, index) {
                                 final pin = pins[index];
@@ -461,7 +461,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       : (playlistCoverUrl(stored) ?? pin.imageUrl),
                                   title: pin.title,
                                   subtitle: pin.subtitle,
-                                  size: 118,
+                                  size: CoverCard.rowSize(118),
                                   circle: pin.kind == Pin.artist,
                                   icon: switch (pin.kind) {
                                     Pin.artist => AppIcons.artist,
@@ -518,7 +518,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SliverToBoxAdapter(child: SectionHeader('Mix per te')),
                     SliverToBoxAdapter(
                       child: _CardRow(
-                        height: CoverCard.heightFor(150, subtitleLines: 2),
+                        height: CoverCard.heightFor(CoverCard.rowSize(150), subtitleLines: 2),
                         itemCount: _mixArtists.length,
                         itemBuilder: (context, index) {
                           final artist = _mixArtists[index];
@@ -527,7 +527,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             title: 'Mix ${artist.name}',
                             subtitle: '${artist.name} e artisti simili',
                             subtitleLines: 2,
-                            size: 150,
+                            size: CoverCard.rowSize(150),
                             badge: 'MIX',
                             icon: AppIcons.radio,
                             busy: _openingId == 'mix_${artist.id}',
@@ -555,7 +555,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               trailing: _SeeAll(onTap: _openHistory),
                             ),
                             _CardRow(
-                              height: CoverCard.heightFor(118),
+                              height: CoverCard.heightFor(CoverCard.rowSize(118)),
                               itemCount: recent.length,
                               itemBuilder: (context, index) {
                                 final song = recent[index];
@@ -563,7 +563,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   imageUrl: song.thumbnailUrl,
                                   title: song.title,
                                   subtitle: song.artist,
-                                  size: 118,
+                                  size: CoverCard.rowSize(118),
                                   onTap: () {
                                     PlaybackLogService.instance
                                         .log('UI', 'home: play "${song.title}"');
@@ -626,13 +626,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           children: [
                             const SectionHeader('I tuoi artisti'),
                             _CardRow(
-                              height: CoverCard.heightFor(118),
+                              height: CoverCard.heightFor(CoverCard.rowSize(118)),
                               itemCount: artists.length,
                               itemBuilder: (context, index) => CoverCard(
                                 imageUrl: artists[index].imageUrl,
                                 title: artists[index].name,
                                 subtitle: 'Artista',
-                                size: 118,
+                                size: CoverCard.rowSize(118),
                                 circle: true,
                                 icon: AppIcons.artist,
                                 onTap: () => ArtistScreen.open(
@@ -665,7 +665,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           children: [
                             const SectionHeader('Le tue playlist'),
                             _CardRow(
-                              height: CoverCard.heightFor(140),
+                              height: CoverCard.heightFor(CoverCard.rowSize(140)),
                               itemCount: playlists.length,
                               itemBuilder: (context, index) {
                                 final playlist = playlists[index];
@@ -673,6 +673,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   imageUrl: playlistCoverUrl(playlist),
                                   title: playlist.title,
                                   subtitle: '${playlist.songs.length} brani',
+                                  size: CoverCard.rowSize(140),
                                   icon: AppIcons.playlist,
                                   onTap: () {
                                     PlaybackLogService.instance.log('UI',
@@ -696,7 +697,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (_shows('Playlist'))
                   SliverToBoxAdapter(
                     child: _CardRow(
-                      height: CoverCard.heightFor(150, subtitleLines: 2),
+                      height: CoverCard.heightFor(CoverCard.rowSize(150), subtitleLines: 2),
                       itemCount:
                           SpotifyCatalogService.instance.featuredPlaylists.length,
                       itemBuilder: (context, index) {
@@ -707,7 +708,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           title: bundle.title,
                           subtitle: bundle.subtitle,
                           subtitleLines: 2,
-                          size: 150,
+                          size: CoverCard.rowSize(150),
                           icon: AppIcons.playlist,
                           busy: _openingId == bundle.id,
                           onTap: () => _openSpotifyPlaylist(bundle),

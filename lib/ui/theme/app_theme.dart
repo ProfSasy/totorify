@@ -74,7 +74,19 @@ class AppTheme {
   ///
   /// With [tint] (the dark shade of a cover) the backgrounds lean towards
   /// it, and stay as dark as they were: text is as readable as without.
-  static ColorScheme schemeFor({required bool isAmoled, Color? customAccent, Color? tint}) {
+  ///
+  /// [background], [surfaceColor], [text] and [textSecondary] are colors the
+  /// user chose one by one: each replaces the designed one, and what is not
+  /// chosen follows (white text turns dark on a light background).
+  static ColorScheme schemeFor({
+    required bool isAmoled,
+    Color? customAccent,
+    Color? tint,
+    Color? background,
+    Color? surfaceColor,
+    Color? text,
+    Color? textSecondary,
+  }) {
     final primary = customAccent ?? accentColor;
     Color tinted(Color base, double amount) {
       if (tint == null) return base;
@@ -85,10 +97,27 @@ class AppTheme {
     }
 
     // Pure black stays pure black: that is what "Nero assoluto" is for.
-    final bg = isAmoled ? amoledBg : tinted(darkBg, 0.5);
-    final surface = tinted(isAmoled ? amoledSurface : darkSurface, 0.45);
-    final surfaceHigh = tinted(isAmoled ? amoledSurfaceHigh : darkSurfaceHigh, 0.4);
-    final surfaceHighest = tinted(isAmoled ? amoledSurfaceHighest : darkSurfaceHighest, 0.4);
+    final bg = background ?? (isAmoled ? amoledBg : tinted(darkBg, 0.5));
+    // The surfaces follow a background the user chose, a step towards its
+    // ink each; a surface chosen brings its two brighter steps with it.
+    Color step(Color from, double amount) => Color.lerp(from, inkOn(from), amount)!;
+    final surface = surfaceColor ??
+        (background != null
+            ? step(background, 0.05)
+            : tinted(isAmoled ? amoledSurface : darkSurface, 0.45));
+    final surfaceHigh = (surfaceColor != null || background != null)
+        ? step(surface, 0.05)
+        : tinted(isAmoled ? amoledSurfaceHigh : darkSurfaceHigh, 0.4);
+    final surfaceHighest = (surfaceColor != null || background != null)
+        ? step(surface, 0.1)
+        : tinted(isAmoled ? amoledSurfaceHighest : darkSurfaceHighest, 0.4);
+    final custom = background != null || surfaceColor != null;
+    final onSurface = text ?? (custom ? inkOn(bg) : Colors.white);
+    final onSurfaceVariant = textSecondary ??
+        (text == null && !custom
+            ? const Color(0xFFB3B3B3)
+            : Color.lerp(onSurface, bg, 0.32)!);
+    final light = bg.computeLuminance() > 0.4;
     final secondary = Color.lerp(primary, const Color(0xFF7C6BFF), 0.35)!;
     final tertiary = Color.lerp(primary, const Color(0xFF3ED6C4), 0.45)!;
 
@@ -108,10 +137,10 @@ class AppTheme {
       errorContainer: const Color(0xFF3A1218),
       onErrorContainer: const Color(0xFFFFB3BB),
       surface: surface,
-      onSurface: Colors.white,
-      onSurfaceVariant: const Color(0xFFB3B3B3),
-      outline: Colors.white.withValues(alpha: 0.30),
-      outlineVariant: Colors.white.withValues(alpha: 0.08),
+      onSurface: onSurface,
+      onSurfaceVariant: onSurfaceVariant,
+      outline: onSurface.withValues(alpha: 0.30),
+      outlineVariant: onSurface.withValues(alpha: 0.08),
       shadow: Colors.black,
       scrim: Colors.black,
       inverseSurface: const Color(0xFFEAEAEA),
@@ -119,6 +148,9 @@ class AppTheme {
       inversePrimary: lift(primary, 0.5),
       surfaceTint: Colors.transparent,
     ).copyWith(
+      // A light background: the status bar and the system's own pieces
+      // take dark ink.
+      brightness: light ? Brightness.light : Brightness.dark,
       surfaceDim: bg,
       surfaceBright: surfaceHigh,
       surfaceContainerLowest: bg,
@@ -138,8 +170,21 @@ class AppTheme {
     String? fontFamily,
     Color? tint,
     double cornerScale = 1.0,
+    Color? background,
+    Color? surfaceColor,
+    Color? text,
+    Color? textSecondary,
+    int revision = 0,
   }) {
-    final cs = schemeFor(isAmoled: isAmoled, customAccent: customAccent, tint: tint);
+    final cs = schemeFor(
+      isAmoled: isAmoled,
+      customAccent: customAccent,
+      tint: tint,
+      background: background,
+      surfaceColor: surfaceColor,
+      text: text,
+      textSecondary: textSecondary,
+    );
     final bg = cs.surfaceDim;
     AppRadius.scale = cornerScale;
     final chosenFont = (fontFamily == null || fontFamily.isEmpty) ? null : fontFamily;
@@ -156,18 +201,18 @@ class AppTheme {
 
     return ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
+      brightness: cs.brightness,
       colorScheme: cs,
       fontFamily: chosenFont,
       // Part of the theme, so that what is drawn with it is drawn again
       // when it changes.
-      extensions: [AppShape(cornerScale)],
+      extensions: [AppShape(cornerScale, revision: revision)],
       scaffoldBackgroundColor: bg,
       canvasColor: bg,
       // Touches answer with a quiet highlight, never with a ripple.
       splashFactory: NoSplash.splashFactory,
       splashColor: Colors.transparent,
-      highlightColor: Colors.white.withValues(alpha: 0.06),
+      highlightColor: cs.onSurface.withValues(alpha: 0.06),
       // NOTE: no custom PageTransitionsTheme: iOS already defaults to the
       // Cupertino transition, and the builder class name differs across
       // Flutter releases (CI runs a newer stable than some dev machines).
@@ -367,19 +412,26 @@ class AppTheme {
 
 /// How round covers and cards are, as part of the theme.
 class AppShape extends ThemeExtension<AppShape> {
-  const AppShape(this.cornerScale);
+  const AppShape(this.cornerScale, {this.revision = 0});
 
   final double cornerScale;
 
+  /// Changes whenever a choice about the look does, also one the theme
+  /// itself does not carry (the size of the rows, the buttons shown): what
+  /// reads the theme is then drawn again with it.
+  final int revision;
+
   @override
-  AppShape copyWith({double? cornerScale}) => AppShape(cornerScale ?? this.cornerScale);
+  AppShape copyWith({double? cornerScale, int? revision}) =>
+      AppShape(cornerScale ?? this.cornerScale, revision: revision ?? this.revision);
 
   @override
   AppShape lerp(AppShape? other, double t) => t < 0.5 ? this : (other ?? this);
 
   @override
-  bool operator ==(Object other) => other is AppShape && other.cornerScale == cornerScale;
+  bool operator ==(Object other) =>
+      other is AppShape && other.cornerScale == cornerScale && other.revision == revision;
 
   @override
-  int get hashCode => cornerScale.hashCode;
+  int get hashCode => Object.hash(cornerScale, revision);
 }

@@ -8,6 +8,8 @@ import '../../models/song.dart';
 import '../../services/audio_handler.dart';
 import '../../services/playback_log_service.dart';
 import '../../services/storage_service.dart';
+import '../../services/app_settings.dart';
+import '../ordered_choice.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
@@ -84,6 +86,18 @@ class _MiniPlayerBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    // How the user wants it: the theme is made again when one of these
+    // changes, and the mini player with it.
+    final look = AppSettings.instance;
+    final hidden = look.miniHiddenButtons.value;
+    // Always dark enough for its white text, whatever it takes its color
+    // from: the cover, a neutral surface, or the color of the app.
+    final surface = switch (look.miniPlayerStyle.value) {
+      1 => const Color(0xFF2A2A2A),
+      2 => Color.lerp(cs.primary, Colors.black, 0.52)!,
+      _ => palette.surface,
+    };
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => _open(context),
@@ -108,7 +122,7 @@ class _MiniPlayerBody extends StatelessWidget {
         margin: const EdgeInsets.fromLTRB(AppSpacing.sm, 0, AppSpacing.sm, 6),
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          color: palette.surface,
+          color: surface,
           borderRadius: AppRadius.floating,
           boxShadow: [
             BoxShadow(
@@ -199,6 +213,7 @@ class _MiniPlayerBody extends StatelessWidget {
                     ),
                   ),
 
+                  if (!hidden.contains(MiniPlayerButtons.devices))
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 6),
                     child: DevicesButton(
@@ -209,11 +224,21 @@ class _MiniPlayerBody extends StatelessWidget {
                       size: 22,
                     ),
                   ),
+                  if (!hidden.contains(MiniPlayerButtons.favorite))
                   FavoriteButton(
                     song: () => audioHandler.currentSong,
                     activeColor: palette.accent,
                     size: 23,
                     source: 'mini',
+                  ),
+                  if (!hidden.contains(MiniPlayerButtons.previous))
+                  _SkipButton(
+                    tooltip: 'Brano precedente',
+                    icon: AppIcons.previous,
+                    onPressed: () {
+                      PlaybackLogService.instance.log('UI', 'mini: prev');
+                      audioHandler.skipToPrevious();
+                    },
                   ),
 
                   // ── Play / Pause ──────────────────────────────────────────
@@ -252,12 +277,50 @@ class _MiniPlayerBody extends StatelessWidget {
                             ),
                           ),
                   ),
+                  if (!hidden.contains(MiniPlayerButtons.next))
+                  _SkipButton(
+                    tooltip: 'Brano successivo',
+                    icon: AppIcons.next,
+                    onPressed: () {
+                      PlaybackLogService.instance.log('UI', 'mini: next');
+                      audioHandler.skipToNext();
+                    },
+                  ),
                 ],
               ),
             ),
-            _ProgressBar(audioHandler: audioHandler, mediaItem: mediaItem),
+            if (look.miniShowProgress.value)
+              _ProgressBar(audioHandler: audioHandler, mediaItem: mediaItem)
+            else
+              const SizedBox(height: 2),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Previous or next, for who wants them in the mini player.
+class _SkipButton extends StatelessWidget {
+  const _SkipButton({required this.tooltip, required this.icon, required this.onPressed});
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 36,
+      height: 40,
+      child: IconButton(
+        padding: EdgeInsets.zero,
+        tooltip: tooltip,
+        onPressed: () {
+          HapticFeedback.selectionClick();
+          onPressed();
+        },
+        icon: Icon(icon, color: Colors.white, size: 26),
       ),
     );
   }

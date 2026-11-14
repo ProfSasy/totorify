@@ -7,6 +7,7 @@ import '../../services/playback_log_service.dart';
 import '../../services/download_service.dart';
 import '../../services/spotify_service.dart';
 import '../../services/storage_service.dart';
+import '../../services/app_settings.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 import 'app_cover.dart';
@@ -52,6 +53,12 @@ class SongTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final accent = cs.primary;
+    // How the user wants the rows: the theme is made again when one of
+    // these changes, and the row with it.
+    final look = AppSettings.instance;
+    final gap = const [3.0, 7.0, 11.0][look.listDensity.value.clamp(0, 2)];
+    final coverSize = const [0.0, 40.0, 50.0, 60.0][look.listCoverSize.value.clamp(0, 3)];
+    final showMenu = look.listShowMenu.value;
 
     String thumbUrl = song.thumbnailUrl;
     if (song.spotifyTrackId != null &&
@@ -72,7 +79,12 @@ class SongTile extends StatelessWidget {
         _openMenu(context);
       },
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 7, AppSpacing.xs, 7),
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          gap,
+          showMenu ? AppSpacing.xs : AppSpacing.lg,
+          gap,
+        ),
         child: Row(
           children: [
             if (index != null)
@@ -88,9 +100,10 @@ class SongTile extends StatelessWidget {
               ),
 
             // ── Thumbnail ──────────────────────────────────────────────
+            if (coverSize > 0) ...[
             Stack(
               children: [
-                AppCover(url: thumbUrl, size: 50),
+                AppCover(url: thumbUrl, size: coverSize),
                 if (isPlaying)
                   Positioned.fill(
                     child: DecoratedBox(
@@ -104,6 +117,7 @@ class SongTile extends StatelessWidget {
               ],
             ),
             const SizedBox(width: AppSpacing.md),
+            ],
 
             // ── Title & Artist ─────────────────────────────────────────
             Expanded(
@@ -132,7 +146,7 @@ class SongTile extends StatelessWidget {
                         ),
                       ),
                       // Duration — hide if zero
-                      if (song.duration > Duration.zero)
+                      if (look.listShowDuration.value && song.duration > Duration.zero)
                         Text(
                           '  •  ${_formatDuration(song.duration)}',
                           style: AppText.tileSubtitle(cs),
@@ -144,6 +158,7 @@ class SongTile extends StatelessWidget {
             ),
 
             // ── More Options ───────────────────────────────────────────
+            if (showMenu)
             IconButton(
               tooltip: 'Altro',
               icon: Icon(AppIcons.more, size: 22, color: cs.onSurfaceVariant),
@@ -157,9 +172,9 @@ class SongTile extends StatelessWidget {
     return RepaintBoundary(
       child: Dismissible(
         key: ObjectKey(song),
-        direction: onRemove != null
-            ? DismissDirection.horizontal
-            : DismissDirection.startToEnd,
+        direction: look.listSwipeToQueue.value
+            ? (onRemove != null ? DismissDirection.horizontal : DismissDirection.startToEnd)
+            : (onRemove != null ? DismissDirection.endToStart : DismissDirection.none),
         dismissThresholds: const {
           DismissDirection.startToEnd: 0.22,
           DismissDirection.endToStart: 0.4,

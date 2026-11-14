@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../services/app_settings.dart';
+import '../ordered_choice.dart';
 import '../theme/app_icons.dart';
 
 /// Tab bar of the app: three glyphs with their labels. It has no surface of
@@ -22,31 +24,39 @@ class TotorifyNavBar extends StatelessWidget {
   static double totalHeight(BuildContext context) =>
       _barHeight + MediaQuery.paddingOf(context).bottom;
 
-  static const List<(NavGlyph, String)> _items = [
-    (NavGlyph.home, 'Home'),
-    (NavGlyph.search, 'Cerca'),
-    (NavGlyph.library, 'La tua libreria'),
+  // By name (`NavLayout`), with the position the shell knows each by.
+  static const Map<String, (NavGlyph, String, int)> _items = {
+    NavLayout.home: (NavGlyph.home, 'Home', 0),
+    NavLayout.search: (NavGlyph.search, 'Cerca', 1),
+    NavLayout.library: (NavGlyph.library, 'La tua libreria', 2),
     // Not a tab: it opens the menu to create or import, as Spotify's.
-    (NavGlyph.create, 'Crea'),
-  ];
+    NavLayout.create: (NavGlyph.create, 'Crea', createIndex),
+  };
 
   /// Position of "Crea" among the items.
   static const int createIndex = 3;
 
   @override
   Widget build(BuildContext context) {
+    // Read with the theme, which is made again when the user changes the
+    // tabs: the bar is then drawn again.
+    Theme.of(context);
+    final look = AppSettings.instance;
+    final tabs = NavLayout.tabs.visible(look.navTabs.value, look.navHiddenTabs.value);
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
       child: SizedBox(
         height: _barHeight,
         child: Row(
           children: [
-            for (var i = 0; i < _items.length; i++)
+            for (final (glyph, label, index) in [for (final id in tabs) _items[id]!])
               _NavItem(
-                glyph: _items[i].$1,
-                label: _items[i].$2,
-                selected: i == currentIndex,
-                onTap: () => onTap(i),
+                glyph: glyph,
+                label: label,
+                selected: index == currentIndex,
+                showLabel: look.navShowLabels.value,
+                activeStyle: look.navActiveStyle.value,
+                onTap: () => onTap(index),
               ),
           ],
         ),
@@ -59,19 +69,28 @@ class _NavItem extends StatelessWidget {
   final NavGlyph glyph;
   final String label;
   final bool selected;
+  final bool showLabel;
+
+  /// The tab one is on: 0 brighter, 1 in the color of the app, 2 in a pill.
+  final int activeStyle;
   final VoidCallback onTap;
 
   const _NavItem({
     required this.glyph,
     required this.label,
     required this.selected,
+    required this.showLabel,
+    required this.activeStyle,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final color = selected ? cs.onSurface : cs.onSurfaceVariant;
+    final color = !selected
+        ? cs.onSurfaceVariant
+        : (activeStyle == 1 ? cs.primary : cs.onSurface);
+    final pill = selected && activeStyle == 2;
     return Expanded(
       child: Semantics(
         button: true,
@@ -90,8 +109,17 @@ class _NavItem extends StatelessWidget {
                 scale: selected ? 1.0 : 0.94,
                 duration: const Duration(milliseconds: 180),
                 curve: Curves.easeOutBack,
-                child: NavGlyphIcon(glyph: glyph, active: selected, color: color),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: EdgeInsets.symmetric(horizontal: pill ? 16 : 0, vertical: pill ? 3 : 0),
+                  decoration: BoxDecoration(
+                    color: pill ? cs.primary.withValues(alpha: 0.26) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: NavGlyphIcon(glyph: glyph, active: selected, color: color),
+                ),
               ),
+              if (showLabel) ...[
               const SizedBox(height: 4),
               Text(
                 label,
@@ -103,6 +131,7 @@ class _NavItem extends StatelessWidget {
                   color: color,
                 ),
               ),
+              ],
             ],
           ),
         ),

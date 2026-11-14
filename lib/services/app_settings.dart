@@ -202,6 +202,78 @@ class AppSettings {
   /// The sections of the Home the user does not want to see.
   late final homeHiddenSections = _setting<List<String>>('home_hidden_sections', const []);
 
+  // Colors chosen one by one, as ARGB; 0 leaves the designed one.
+
+  /// The background of the pages.
+  late final colorBackground = _setting<int>('color_background', 0);
+
+  /// Cards, sheets and the other surfaces that stand on the background.
+  late final colorSurface = _setting<int>('color_surface', 0);
+
+  /// Titles and the main text.
+  late final colorText = _setting<int>('color_text', 0);
+
+  /// Subtitles and the text that stays in the background.
+  late final colorTextSecondary = _setting<int>('color_text_secondary', 0);
+
+  /// How fast the app moves: 0 fast, 1 as designed, 2 slow.
+  late final motionSpeed = _setting<int>('motion_speed', 1);
+
+  /// The looks the user saved, each as JSON (see `AppThemes`).
+  late final savedThemes = _setting<List<String>>('saved_themes', const []);
+
+  // ── Lists of songs ──────────────────────────────────────────────────────
+
+  /// How close the rows are: 0 compact, 1 as designed, 2 wide.
+  late final listDensity = _setting<int>('list_density', 1);
+
+  /// The cover of a row: 0 hidden, 1 small, 2 as designed, 3 large.
+  late final listCoverSize = _setting<int>('list_cover_size', 2);
+
+  /// The length of the song after the artist.
+  late final listShowDuration = _setting<bool>('list_show_duration', true);
+
+  /// The "..." button at the end of a row (a long press opens the menu too).
+  late final listShowMenu = _setting<bool>('list_show_menu', true);
+
+  /// A swipe to the right puts the song in the queue.
+  late final listSwipeToQueue = _setting<bool>('list_swipe_to_queue', true);
+
+  /// The cards of the Home and of the artist pages: 0 small, 1 as
+  /// designed, 2 large.
+  late final cardSize = _setting<int>('card_size', 1);
+
+  // ── Tab bar and mini player ─────────────────────────────────────────────
+
+  /// The tabs in the order the user wants them, by name (`NavLayout`);
+  /// empty for the designed order.
+  late final navTabs = _setting<List<String>>('nav_tabs', const []);
+
+  /// The tabs the user does not want in the bar. Home is always there.
+  late final navHiddenTabs = _setting<List<String>>('nav_hidden_tabs', const []);
+
+  /// The name of each tab under its icon.
+  late final navShowLabels = _setting<bool>('nav_show_labels', true);
+
+  /// The tab one is on: 0 brighter, 1 in the color of the app, 2 in a pill.
+  late final navActiveStyle = _setting<int>('nav_active_style', 0);
+
+  /// The mini player: 0 the colors of the cover, 1 a neutral surface,
+  /// 2 the color of the app.
+  late final miniPlayerStyle = _setting<int>('mini_player_style', 0);
+
+  /// The buttons of the mini player that are hidden, by name: `devices`,
+  /// `favorite`, `previous`, `next`. Previous and next start hidden.
+  late final miniHiddenButtons =
+      _setting<List<String>>('mini_hidden_buttons', const ['next', 'previous']);
+
+  /// The thin progress line under the mini player.
+  late final miniShowProgress = _setting<bool>('mini_show_progress', true);
+
+  /// The buttons under the transport of the player in the order the user
+  /// wants them, by name; empty for the designed order.
+  late final playerActionOrder = _setting<List<String>>('player_action_order', const []);
+
   // ── Listening together ──────────────────────────────────────────────────
 
   /// Who listens along may also play, pause, skip and propose songs.
@@ -259,27 +331,54 @@ class AppSettings {
       aiEndpoint,
       aiTranslation,
       checkUpdates,
-      playerBackground,
-      seekBarStyle,
-      showCodec,
       haptics,
       randomAccent,
-      fontFamily,
-      textScale,
-      dynamicColor,
-      cornerStyle,
-      playerCoverStyle,
-      playerTitleCentered,
-      playerShowSource,
-      playerHiddenActions,
-      playerShowModes,
-      homeSections,
-      homeHiddenSections,
+      savedThemes,
+      ...appearance,
       togetherGuestsControl,
       pauseListenHistory,
       pauseSearchHistory,
     ]) {}
   }
+
+  /// Every choice about how the app looks, in one list: what the theme is
+  /// rebuilt on, what "restore the designed look" puts back, and what a
+  /// saved look carries.
+  late final List<Setting<Object?>> appearance = [
+    playerBackground,
+    seekBarStyle,
+    showCodec,
+    fontFamily,
+    textScale,
+    dynamicColor,
+    cornerStyle,
+    playerCoverStyle,
+    playerTitleCentered,
+    playerShowSource,
+    playerHiddenActions,
+    playerShowModes,
+    playerActionOrder,
+    homeSections,
+    homeHiddenSections,
+    colorBackground,
+    colorSurface,
+    colorText,
+    colorTextSecondary,
+    motionSpeed,
+    listDensity,
+    listCoverSize,
+    listShowDuration,
+    listShowMenu,
+    listSwipeToQueue,
+    cardSize,
+    navTabs,
+    navHiddenTabs,
+    navShowLabels,
+    navActiveStyle,
+    miniPlayerStyle,
+    miniHiddenButtons,
+    miniShowProgress,
+  ];
 
   /// Everything as it is stored, for a backup.
   Map<String, Object?> export() => {for (final s in _all) s.key: s.value};

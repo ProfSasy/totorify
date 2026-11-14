@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../services/app_settings.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 import 'app_cover.dart';
@@ -26,7 +27,17 @@ class CoverCard extends StatelessWidget {
 
   /// Height of a card of [size], at the largest text size the app allows.
   static double heightFor(double size, {int subtitleLines = 1}) =>
-      size + 32 + 19.0 * subtitleLines;
+      size + (32 + 19.0 * subtitleLines) * (textScale < 1 ? 1 : textScale);
+
+  /// The size of a card in a row that scrolls sideways, from the size it
+  /// was designed with: as large as the user wants the cards
+  /// (`AppSettings.cardSize`). Cards in a grid take the room they are given.
+  static double rowSize(double designed) =>
+      designed * const [0.82, 1.0, 1.22][AppSettings.instance.cardSize.value.clamp(0, 2)];
+
+  /// The size of the text chosen in the app: a larger text needs more room
+  /// under the cover.
+  static double get textScale => AppSettings.instance.textScale.value.clamp(0.8, 1.4);
 
   final String? imageUrl;
   final String title;

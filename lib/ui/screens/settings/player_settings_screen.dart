@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../../services/app_settings.dart';
-import '../../../services/playback_log_service.dart';
 import '../../widgets/app_sheet.dart';
-import '../../widgets/player/player_actions_row.dart';
+import '../../ordered_choice.dart';
+import 'look_settings_screens.dart';
 import 'settings_kit.dart';
 
 /// Settings > Player: how the player looks.
@@ -18,23 +18,6 @@ class _PlayerSettingsScreenState extends State<PlayerSettingsScreen> {
   static const _backgrounds = ['I colori della copertina', 'La copertina sfocata', 'Nero'];
   static const _bars = ['Normale', 'Sottile', 'Spessa', 'Ondulata'];
   static const _covers = ['Predefinita', 'Disco', 'Piccola'];
-
-  // The buttons under the transport, by the name they are hidden by.
-  static const _actions = <(String, String, String?)>[
-    (PlayerActionsRow.devices, 'Dispositivi', 'Dove suona la musica'),
-    (PlayerActionsRow.sources, 'Fonti alternative', 'Per cambiare versione del brano'),
-    (PlayerActionsRow.lyrics, 'Testo', null),
-    (PlayerActionsRow.queue, 'Coda', null),
-  ];
-
-  Future<void> _showAction(String name, bool shown) async {
-    final setting = AppSettings.instance.playerHiddenActions;
-    final hidden = setting.value.toSet();
-    shown ? hidden.remove(name) : hidden.add(name);
-    PlaybackLogService.instance
-        .log('UI', 'player: pulsante $name ${shown ? 'mostrato' : 'nascosto'}');
-    await setting.set(hidden.toList()..sort());
-  }
 
   Future<void> _choose(Setting<int> setting, String title, List<String> labels) async {
     final value = await showChoiceSheet<int>(
@@ -96,24 +79,20 @@ class _PlayerSettingsScreenState extends State<PlayerSettingsScreen> {
         ),
         SettingsSection(
           title: 'Pulsanti',
-          footer: "Testo e coda restano raggiungibili scorrendo il player verso l'alto.",
+          footer: "Trascina una riga dalla maniglia per spostarla. Testo e coda restano "
+              "raggiungibili scorrendo il player verso l'alto.",
           children: [
             SettingSwitch(
               setting: settings.playerShowModes,
               title: 'Casuale e ripeti',
               subtitle: 'Accanto ai comandi di riproduzione',
             ),
-            for (final (name, title, subtitle) in _actions)
-              ValueListenableBuilder<List<String>>(
-                valueListenable: settings.playerHiddenActions,
-                builder: (context, hidden, _) => SwitchListTile.adaptive(
-                  title: Text(title),
-                  subtitle: subtitle == null ? null : Text(subtitle),
-                  value: !hidden.contains(name),
-                  activeTrackColor: Theme.of(context).colorScheme.primary,
-                  onChanged: (shown) => _showAction(name, shown),
-                ),
-              ),
+            OrderedToggleList(
+              choice: PlayerActions.buttons,
+              order: settings.playerActionOrder,
+              hidden: settings.playerHiddenActions,
+              labels: PlayerActions.labels,
+            ),
           ],
         ),
         SettingsSection(

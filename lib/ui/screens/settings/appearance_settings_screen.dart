@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../../services/app_settings.dart';
+import '../../../services/app_themes.dart';
 import '../../../services/font_library.dart';
 import '../../../services/playback_log_service.dart';
 import '../../../services/storage_service.dart';
@@ -10,6 +11,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/app_tokens.dart';
 import '../../widgets/app_sheet.dart';
 import 'home_settings_screen.dart';
+import 'look_settings_screens.dart';
 import 'player_settings_screen.dart';
 import 'settings_kit.dart';
 
@@ -50,11 +52,14 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<Color?> _pick(Color initial, {String title = 'Colore personalizzato', bool anyBrightness = false}) =>
+      showAppSheet<Color>(
+        context,
+        builder: (_) => _ColorSheet(initial: initial, title: title, anyBrightness: anyBrightness),
+      );
+
   Future<void> _pickColor() async {
-    final picked = await showAppSheet<Color>(
-      context,
-      builder: (_) => _ColorSheet(initial: StorageService.instance.accentColor),
-    );
+    final picked = await _pick(StorageService.instance.accentColor);
     if (picked == null) return;
     PlaybackLogService.instance
         .log('UI', 'aspetto: colore #${picked.toARGB32().toRadixString(16)}');
@@ -66,22 +71,13 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
     final sure = await confirmAction(
       context,
       title: 'Ripristinare l\'aspetto?',
-      message: 'Font, dimensione del testo, colori dinamici, forme e sezioni della Home '
-          'tornano come all\'inizio. I font importati restano.',
+      message: 'Tutto l\'aspetto torna come all\'inizio: colori, font, forme, player, Home, '
+          'liste, barra e mini player. I font importati e i temi salvati restano.',
       confirm: 'Ripristina',
     );
     if (!sure) return;
     PlaybackLogService.instance.log('UI', 'aspetto: ripristino');
-    for (final setting in <Setting<Object?>>[
-      _settings.fontFamily,
-      _settings.textScale,
-      _settings.dynamicColor,
-      _settings.cornerStyle,
-      _settings.homeSections,
-      _settings.homeHiddenSections,
-    ]) {
-      await setting.set(setting.fallback);
-    }
+    await AppThemes.instance.reset();
     if (mounted) setState(() {});
   }
 
@@ -92,6 +88,16 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
     return SettingsPage(
       title: 'Aspetto',
       children: [
+        SettingsSection(
+          children: [
+            SettingLink(
+              title: 'Temi',
+              subtitle: 'Aspetti già pronti, e i tuoi salvati',
+              icon: AppIcons.appearance,
+              onTap: () => SettingsPage.open(context, const ThemesScreen()),
+            ),
+          ],
+        ),
         SettingsSection(
           title: 'Colori',
           footer: dynamicLevel == 0
@@ -130,6 +136,33 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
           ],
         ),
         SettingsSection(
+          title: 'Colori uno per uno',
+          footer: 'Ogni colore lasciato su "Automatico" segue gli altri: con uno sfondo chiaro '
+              'il testo diventa scuro da solo. Il player resta scuro, con i colori della copertina.',
+          children: [
+            ColorSettingRow(
+              setting: _settings.colorBackground,
+              title: 'Sfondo',
+              onPick: (initial) => _pick(initial, title: 'Sfondo', anyBrightness: true),
+            ),
+            ColorSettingRow(
+              setting: _settings.colorSurface,
+              title: 'Riquadri e schede',
+              onPick: (initial) => _pick(initial, title: 'Riquadri e schede', anyBrightness: true),
+            ),
+            ColorSettingRow(
+              setting: _settings.colorText,
+              title: 'Testo',
+              onPick: (initial) => _pick(initial, title: 'Testo', anyBrightness: true),
+            ),
+            ColorSettingRow(
+              setting: _settings.colorTextSecondary,
+              title: 'Testo secondario',
+              onPick: (initial) => _pick(initial, title: 'Testo secondario', anyBrightness: true),
+            ),
+          ],
+        ),
+        SettingsSection(
           title: 'Carattere',
           children: [
             ValueListenableBuilder<String>(
@@ -144,8 +177,14 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
           ],
         ),
         SettingsSection(
-          title: 'Forme',
+          title: 'Forme e movimento',
           children: [
+            SettingChoice(
+              setting: _settings.motionSpeed,
+              title: 'Animazioni',
+              labels: const ['Veloci', 'Predefinite', 'Lente'],
+              sheetTitle: 'Velocità delle animazioni',
+            ),
             SettingLink(
               title: 'Angoli',
               subtitle: AppearanceSettingsScreen
@@ -170,6 +209,16 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
               title: 'Player',
               subtitle: 'Copertina, titolo, pulsanti, sfondo, barra di avanzamento',
               onTap: () => SettingsPage.open(context, const PlayerSettingsScreen()),
+            ),
+            SettingLink(
+              title: 'Liste e schede',
+              subtitle: 'Righe dei brani, copertine, dimensione delle schede',
+              onTap: () => SettingsPage.open(context, const ListsSettingsScreen()),
+            ),
+            SettingLink(
+              title: 'Barra e mini player',
+              subtitle: 'Schede in basso, il loro ordine, pulsanti del mini player',
+              onTap: () => SettingsPage.open(context, const NavigationSettingsScreen()),
             ),
           ],
         ),
@@ -362,9 +411,14 @@ class _FontPickerScreenState extends State<FontPickerScreen> {
 /// A sheet to choose any color: hue, saturation and brightness, with the
 /// color as it will look on a button.
 class _ColorSheet extends StatefulWidget {
-  const _ColorSheet({required this.initial});
+  const _ColorSheet({required this.initial, required this.title, this.anyBrightness = false});
 
   final Color initial;
+  final String title;
+
+  /// A background or a text can be black; a button in the color of the
+  /// app cannot, or it would be lost.
+  final bool anyBrightness;
 
   @override
   State<_ColorSheet> createState() => _ColorSheetState();
@@ -426,7 +480,7 @@ class _ColorSheetState extends State<_ColorSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const SheetTitle('Colore personalizzato'),
+          SheetTitle(widget.title),
           Container(
             height: 54,
             alignment: Alignment.center,
@@ -463,10 +517,13 @@ class _ColorSheetState extends State<_ColorSheet> {
             label: 'Luminosità',
             value: _color.value,
             max: 1,
-            // Never black: a button in the color of the background is lost.
-            colors: [_color.withValue(0.25).toColor(), _color.withValue(1).toColor()],
-            onChanged: (value) =>
-                setState(() => _color = _color.withValue(value.clamp(0.25, 1.0))),
+            colors: [
+              _color.withValue(widget.anyBrightness ? 0 : 0.25).toColor(),
+              _color.withValue(1).toColor(),
+            ],
+            onChanged: (value) => setState(
+              () => _color = _color.withValue(value.clamp(widget.anyBrightness ? 0.0 : 0.25, 1.0)),
+            ),
           ),
           FilledButton(
             style: FilledButton.styleFrom(

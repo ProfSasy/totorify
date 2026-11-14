@@ -4,6 +4,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show timeDilation;
 import 'package:flutter/services.dart';
 import 'services/ai_service.dart';
 import 'services/audio_handler.dart';
@@ -25,6 +26,7 @@ import 'services/storage_service.dart';
 import 'services/update_checker.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/main_shell.dart';
+import 'services/app_themes.dart';
 import 'services/font_library.dart';
 import 'ui/theme/app_theme.dart';
 import 'ui/theme/app_tokens.dart';
@@ -228,7 +230,6 @@ class TotorifyApp extends StatefulWidget {
 }
 
 class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
-  bool _isAmoled = false;
   // true after first-launch login is done (or skipped)
   bool _isLoggedIn = false;
   bool _wasSignedIn = false;
@@ -236,7 +237,6 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    _isAmoled = StorageService.instance.isAmoledTheme;
     // If already signed in from previous session, skip login screen. Where
     // there is no Google account to sign in with (Android), there is no
     // login screen at all.
@@ -282,9 +282,9 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
   }
 
   void _refreshTheme() {
-    setState(() {
-      _isAmoled = StorageService.instance.isAmoledTheme;
-    });
+    // The pure black background is read from the storage when the theme
+    // is made: making it again is enough.
+    setState(() {});
   }
 
   void _onLoginComplete() {
@@ -300,11 +300,9 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
     return ListenableBuilder(
       listenable: Listenable.merge([
         StorageService.instance.accentColorNotifier,
-        settings.fontFamily,
-        settings.textScale,
-        settings.dynamicColor,
-        settings.cornerStyle,
+        ...settings.appearance,
         DynamicColor.instance.palette,
+        AppThemes.instance.applied,
       ]),
       builder: (context, _) {
         final accentColor = StorageService.instance.accentColorNotifier.value;
@@ -312,6 +310,9 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
         // the app to follow the music.
         final dynamicLevel = settings.dynamicColor.value;
         final palette = dynamicLevel > 0 ? DynamicColor.instance.palette.value : null;
+        Color? chosen(Setting<int> color) => color.value == 0 ? null : Color(color.value);
+        // The whole app moves faster or slower, as the user likes it.
+        timeDilation = const [0.7, 1.0, 1.35][settings.motionSpeed.value.clamp(0, 2)];
         return MaterialApp(
           title: 'Totorify',
           debugShowCheckedModeBanner: false,
@@ -328,11 +329,20 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
             );
           },
           theme: AppTheme.getTheme(
-            isAmoled: _isAmoled,
+            isAmoled: StorageService.instance.isAmoledTheme,
             customAccent: palette?.accent ?? accentColor,
             fontFamily: settings.fontFamily.value,
             tint: dynamicLevel == 2 ? palette?.surface : null,
             cornerScale: AppRadius.scales[settings.cornerStyle.value.clamp(0, 3)],
+            background: chosen(settings.colorBackground),
+            surfaceColor: chosen(settings.colorSurface),
+            text: chosen(settings.colorText),
+            textSecondary: chosen(settings.colorTextSecondary),
+            // Any choice about the look makes a new theme: what is on
+            // screen is drawn again with it.
+            revision: Object.hashAll([
+              for (final setting in settings.appearance) '${setting.value}',
+            ]),
           ),
           // Listen to audio handler errors and show snackbars
           home: _isLoggedIn

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/audio_handler.dart';
+import '../../ordered_choice.dart';
 import '../../theme/app_ambience.dart';
 import '../../theme/app_icons.dart';
 import '../devices_sheet.dart';
@@ -43,69 +44,90 @@ class PlayerActionsRow extends StatelessWidget {
 
   Widget _row(BuildContext context, Set<String> hidden) {
     final quiet = playerInk.withValues(alpha: 0.72);
+    final order = PlayerActions.buttons
+        .visible(AppSettings.instance.playerActionOrder.value, hidden.toList());
+    final last = order.isNotEmpty && order.last == devices;
+
+    // The sleep timer, when it is set: it stands beside the room that the
+    // devices button (or the gap in its place) takes.
+    final sleepTimer = ValueListenableBuilder<String?>(
+      valueListenable: audioHandler.sleepTimerNotifier,
+      builder: (context, timerText, _) {
+        if (timerText == null) return const SizedBox.shrink();
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onSleepTimer,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(AppIcons.sleepTimer, size: 15, color: palette.accent),
+              const SizedBox(width: 4),
+              Text(
+                timerText,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: palette.accent,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    Widget button(String name) => switch (name) {
+          // Where the music plays: here, or on another device (its name
+          // then takes the room there is).
+          devices => Expanded(
+              child: Align(
+                alignment: order.first == devices
+                    ? Alignment.centerLeft
+                    : (last ? Alignment.centerRight : Alignment.center),
+                child: DevicesButton(
+                  remoteName: audioHandler.remoteNameNotifier,
+                  accent: palette.accent,
+                  idle: quiet,
+                ),
+              ),
+            ),
+          sources => IconButton(
+              tooltip: 'Fonti audio alternative',
+              onPressed: onSources,
+              icon: Icon(AppIcons.sources, color: quiet, size: 23),
+            ),
+          lyrics => IconButton(
+              tooltip: 'Testo',
+              onPressed: onLyrics,
+              icon: Icon(AppIcons.lyrics, color: quiet, size: 23),
+            ),
+          // At the end of the row it sits against the edge, in line with
+          // the heart and the end of the progress bar above it.
+          _ => order.last == queue
+              ? IconButton(
+                  tooltip: 'Coda',
+                  padding: EdgeInsets.zero,
+                  alignment: Alignment.centerRight,
+                  onPressed: onQueue,
+                  icon: Icon(AppIcons.queue, color: quiet, size: 25),
+                )
+              : IconButton(
+                  tooltip: 'Coda',
+                  onPressed: onQueue,
+                  icon: Icon(AppIcons.queue, color: quiet, size: 25),
+                ),
+        };
+
     return Row(
       children: [
-        // Where the music plays: here, or on another device
-        // (its name then takes the room there is). Hidden, it still keeps
-        // the other buttons on the right.
-        Expanded(
-          child: hidden.contains(devices)
-              ? const SizedBox(height: 48)
-              : Align(
-                  alignment: Alignment.centerLeft,
-                  child: DevicesButton(
-                    remoteName: audioHandler.remoteNameNotifier,
-                    accent: palette.accent,
-                    idle: quiet,
-                  ),
-                ),
-        ),
-        ValueListenableBuilder<String?>(
-          valueListenable: audioHandler.sleepTimerNotifier,
-          builder: (context, timerText, _) {
-            if (timerText == null) return const SizedBox.shrink();
-            return GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: onSleepTimer,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(AppIcons.sleepTimer,
-                      size: 15, color: palette.accent),
-                  const SizedBox(width: 4),
-                  Text(
-                    timerText,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: palette.accent,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-        if (!hidden.contains(sources))
-        IconButton(
-          tooltip: 'Fonti audio alternative',
-          onPressed: onSources,
-          icon: Icon(AppIcons.sources, color: quiet, size: 23),
-        ),
-        if (!hidden.contains(lyrics))
-        IconButton(
-          tooltip: 'Testo',
-          onPressed: onLyrics,
-          icon: Icon(AppIcons.lyrics, color: quiet, size: 23),
-        ),
-        if (!hidden.contains(queue))
-        IconButton(
-          tooltip: 'Coda',
-          padding: EdgeInsets.zero,
-          alignment: Alignment.centerRight,
-          onPressed: onQueue,
-          icon: Icon(AppIcons.queue, color: quiet, size: 25),
-        ),
+        // Without the devices button its room stays, and keeps the others
+        // on the right.
+        if (!order.contains(devices)) ...[const Expanded(child: SizedBox(height: 48)), sleepTimer],
+        for (final name in order) ...[
+          if (name == devices && last) sleepTimer,
+          button(name),
+          if (name == devices && !last) sleepTimer,
+        ],
       ],
     );
   }
