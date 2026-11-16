@@ -311,6 +311,56 @@ class AppSettings {
   /// The thin progress line under the mini player.
   late final miniShowProgress = _setting<bool>('mini_show_progress', true);
 
+  // ── Text and spacing of single elements ─────────────────────────────────
+  // The size of the text of one element: 0..4, 2 as designed (`ElementScale`).
+
+  /// The title of a song in the lists.
+  late final textSongTitle = _setting<int>('text_song_title', 2);
+
+  /// The artist (and the length) of a song in the lists.
+  late final textSongSubtitle = _setting<int>('text_song_subtitle', 2);
+
+  /// The title under a card.
+  late final textCardTitle = _setting<int>('text_card_title', 2);
+
+  /// The title of the song in the player.
+  late final textPlayerTitle = _setting<int>('text_player_title', 2);
+
+  /// The artist in the player.
+  late final textPlayerArtist = _setting<int>('text_player_artist', 2);
+
+  /// Title and artist in the mini player.
+  late final textMiniPlayer = _setting<int>('text_mini_player', 2);
+
+  /// The names of the tabs in the bar.
+  late final textNavLabels = _setting<int>('text_nav_labels', 2);
+
+  // The room around things: 0..3, 1 as designed (`PageSpacing`).
+
+  /// The side margin of the pages.
+  late final pageMargin = _setting<int>('page_margin', 1);
+
+  /// The space above the title of a section.
+  late final sectionGap = _setting<int>('section_gap', 1);
+
+  /// The space between the cards of a row that scrolls sideways.
+  late final cardGap = _setting<int>('card_gap', 1);
+
+  /// The sizes of text and the spacings above, for the settings that put
+  /// them back as designed all at once.
+  late final List<Setting<int>> elementLayout = [
+    textSongTitle,
+    textSongSubtitle,
+    textCardTitle,
+    textPlayerTitle,
+    textPlayerArtist,
+    textMiniPlayer,
+    textNavLabels,
+    pageMargin,
+    sectionGap,
+    cardGap,
+  ];
+
   // ── Pages ───────────────────────────────────────────────────────────────
 
   /// How many columns the grid of the Library has: 0 two, 1 three, 2 four.
@@ -447,6 +497,16 @@ class AppSettings {
     libraryColumns,
     collectionCoverSize,
     pageWash,
+    textSongTitle,
+    textSongSubtitle,
+    textCardTitle,
+    textPlayerTitle,
+    textPlayerArtist,
+    textMiniPlayer,
+    textNavLabels,
+    pageMargin,
+    sectionGap,
+    cardGap,
   ];
 
   /// Everything as it is stored, for a backup.

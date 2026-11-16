@@ -13,6 +13,7 @@ import '../ordered_choice.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import 'app_cover.dart';
 import 'devices_sheet.dart';
 import 'favorite_button.dart';
@@ -97,6 +98,7 @@ class _MiniPlayerBody extends StatelessWidget {
     // changes, and the mini player with it.
     final look = AppSettings.instance;
     final hidden = look.miniHiddenButtons.value;
+    final textScale = ElementScale.of(look.textMiniPlayer);
     // Always dark enough for its white text, whatever it takes its color
     // from: the cover, a neutral surface, or the color of the app.
     final themed = look.miniPlayerStyle.value == 3;
@@ -169,7 +171,7 @@ class _MiniPlayerBody extends StatelessWidget {
                         _MarqueeText(
                           mediaItem.title,
                           style: TextStyle(
-                            fontSize: 13.5,
+                            fontSize: 13.5 * textScale,
                             fontWeight: FontWeight.w700,
                             letterSpacing: -0.1,
                             color: _ink,
@@ -191,7 +193,7 @@ class _MiniPlayerBody extends StatelessWidget {
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
-                                          fontSize: 12.5,
+                                          fontSize: 12.5 * textScale,
                                           fontWeight: FontWeight.w700,
                                           color: palette.accent,
                                         ),
@@ -219,7 +221,7 @@ class _MiniPlayerBody extends StatelessWidget {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 12.5,
+                                  fontSize: 12.5 * textScale,
                                   color: _ink.withValues(alpha: 0.72),
                                 ),
                               ),

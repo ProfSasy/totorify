@@ -18,6 +18,7 @@ import '../app_navigation.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import '../widgets/app_empty_state.dart';
 import '../widgets/app_skeleton.dart';
 import '../widgets/collection_header.dart';
@@ -474,8 +475,8 @@ class _ArtistScreenState extends State<ArtistScreen> {
             ),
           ),
           Positioned(
-            left: AppSpacing.lg,
-            right: AppSpacing.lg,
+            left: PageSpacing.margin,
+            right: PageSpacing.margin,
             bottom: AppSpacing.sm,
             child: Text(
               artist.name,
@@ -504,8 +505,8 @@ class _ArtistScreenState extends State<ArtistScreen> {
     final playable = topSongs.isNotEmpty ? topSongs : _appearsOn;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg, AppSpacing.xs, AppSpacing.lg, 0),
+      padding: EdgeInsets.fromLTRB(
+          PageSpacing.margin, AppSpacing.xs, PageSpacing.margin, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -610,9 +611,9 @@ class _ArtistScreenState extends State<ArtistScreen> {
       height: AlbumCard.rowHeight,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+        padding: EdgeInsets.symmetric(horizontal: PageSpacing.margin),
         itemCount: releases.length,
-        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.lg),
+        separatorBuilder: (_, _) => SizedBox(width: PageSpacing.cardGap),
         itemBuilder: (context, index) => AlbumCard(
           album: releases[index],
           onTap: () =>
@@ -627,9 +628,9 @@ class _ArtistScreenState extends State<ArtistScreen> {
       height: ArtistChip.rowHeight,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+        padding: EdgeInsets.symmetric(horizontal: PageSpacing.margin),
         itemCount: related.length,
-        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.lg),
+        separatorBuilder: (_, _) => SizedBox(width: PageSpacing.cardGap),
         itemBuilder: (context, index) => ArtistChip(
           artist: related[index],
           onTap: () => ArtistScreen.open(
@@ -644,7 +645,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
 
   Widget _buildBio(String description, ColorScheme colorScheme) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      padding: EdgeInsets.symmetric(horizontal: PageSpacing.margin),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => setState(() => _showFullBio = !_showFullBio),

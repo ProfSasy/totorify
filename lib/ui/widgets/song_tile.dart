@@ -10,6 +10,7 @@ import '../../services/storage_service.dart';
 import '../../services/app_settings.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import 'app_cover.dart';
 import 'song_options_sheet.dart';
 
@@ -59,6 +60,10 @@ class SongTile extends StatelessWidget {
     final gap = const [3.0, 7.0, 11.0][look.listDensity.value.clamp(0, 2)];
     final coverSize = const [0.0, 40.0, 50.0, 60.0][look.listCoverSize.value.clamp(0, 3)];
     final showMenu = look.listShowMenu.value;
+    final margin = PageSpacing.margin;
+    final titleStyle = ElementScale.scaled(AppText.tileTitle(cs), ElementScale.of(look.textSongTitle));
+    final subtitleStyle =
+        ElementScale.scaled(AppText.tileSubtitle(cs), ElementScale.of(look.textSongSubtitle));
 
     String thumbUrl = song.thumbnailUrl;
     if (song.spotifyTrackId != null &&
@@ -80,9 +85,9 @@ class SongTile extends StatelessWidget {
       },
       child: Padding(
         padding: EdgeInsets.fromLTRB(
-          AppSpacing.lg,
+          margin,
           gap,
-          showMenu ? AppSpacing.xs : AppSpacing.lg,
+          showMenu ? AppSpacing.xs : margin,
           gap,
         ),
         child: Row(
@@ -129,7 +134,7 @@ class SongTile extends StatelessWidget {
                     song.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppText.tileTitle(cs).copyWith(
+                    style: titleStyle.copyWith(
                       color: isPlaying ? accent : cs.onSurface,
                     ),
                   ),
@@ -142,14 +147,14 @@ class SongTile extends StatelessWidget {
                           song.artist,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: AppText.tileSubtitle(cs),
+                          style: subtitleStyle,
                         ),
                       ),
                       // Duration — hide if zero
                       if (look.listShowDuration.value && song.duration > Duration.zero)
                         Text(
                           '  •  ${_formatDuration(song.duration)}',
-                          style: AppText.tileSubtitle(cs),
+                          style: subtitleStyle,
                         ),
                     ],
                   ),

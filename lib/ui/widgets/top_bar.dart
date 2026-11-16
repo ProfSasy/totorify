@@ -9,6 +9,7 @@ import '../../services/playback_log_service.dart';
 import '../app_navigation.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import 'app_cover.dart';
 import '../theme/app_route.dart';
 
@@ -110,7 +111,7 @@ class TopBar extends StatelessWidget {
                 SizedBox(
                   height: height,
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    padding: EdgeInsets.symmetric(horizontal: PageSpacing.margin),
                     child: child,
                   ),
                 ),

@@ -9,6 +9,7 @@ import '../../../services/storage_service.dart';
 import '../../theme/app_icons.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/app_tokens.dart';
+import '../../theme/element_scale.dart';
 import '../../widgets/app_sheet.dart';
 import 'home_settings_screen.dart';
 import 'look_settings_screens.dart';
@@ -71,13 +72,24 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
     final sure = await confirmAction(
       context,
       title: 'Ripristinare l\'aspetto?',
-      message: 'Tutto l\'aspetto torna come all\'inizio: colori, font, forme, player, Home, '
-          'liste, barra e mini player. I font importati e i temi salvati restano.',
+      message: 'Tutto l\'aspetto torna come all\'inizio: colori, font, forme, testi e '
+          'spaziature, player, Home, liste, barra e mini player. I font importati e i temi '
+          'salvati restano.',
       confirm: 'Ripristina',
     );
     if (!sure) return;
     PlaybackLogService.instance.log('UI', 'aspetto: ripristino');
     await AppThemes.instance.reset();
+    if (mounted) setState(() {});
+  }
+
+  /// Only the sizes of text and the spacings of single elements back as
+  /// designed; the rest of the look stays.
+  Future<void> _resetElements() async {
+    PlaybackLogService.instance.log('UI', 'aspetto: testi e spaziature predefiniti');
+    for (final setting in _settings.elementLayout) {
+      await setting.set(setting.fallback);
+    }
     if (mounted) setState(() {});
   }
 
@@ -201,6 +213,55 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
               sheetTitle: 'Quanto sono grandi i titoli',
             ),
             SettingSwitch(setting: _settings.boldText, title: 'Testo in grassetto'),
+          ],
+        ),
+        SettingsSection(
+          title: 'Testi per elemento',
+          footer: 'Ogni testo si ingrandisce o si rimpicciolisce da solo, sopra la '
+              'dimensione del testo scelta qui sopra.',
+          children: [
+            for (final (setting, title) in [
+              (_settings.textSongTitle, 'Titolo dei brani nelle liste'),
+              (_settings.textSongSubtitle, 'Artista nelle liste'),
+              (_settings.textCardTitle, 'Titolo delle schede'),
+              (_settings.textPlayerTitle, 'Titolo nel player'),
+              (_settings.textPlayerArtist, 'Artista nel player'),
+              (_settings.textMiniPlayer, 'Titolo e artista nel mini player'),
+              (_settings.textNavLabels, 'Nomi delle schede in basso'),
+            ])
+              SettingChoice(
+                setting: setting,
+                title: title,
+                labels: ElementScale.labels,
+              ),
+          ],
+        ),
+        SettingsSection(
+          title: 'Spaziature',
+          footer: 'Il margine vale per Home, Cerca, Libreria, pagine degli artisti e liste '
+              'di brani; la distanza fra le sezioni per i titoli di Home, Cerca e artisti.',
+          children: [
+            SettingChoice(
+              setting: _settings.pageMargin,
+              title: 'Margine laterale delle pagine',
+              labels: PageSpacing.marginLabels,
+            ),
+            SettingChoice(
+              setting: _settings.sectionGap,
+              title: 'Distanza fra le sezioni',
+              labels: PageSpacing.gapLabels,
+            ),
+            SettingChoice(
+              setting: _settings.cardGap,
+              title: 'Distanza fra le schede in fila',
+              labels: PageSpacing.gapLabels,
+            ),
+            SettingLink(
+              title: 'Ripristina testi e spaziature',
+              subtitle: 'Solo questi valori, il resto dell\'aspetto resta',
+              trailing: const SizedBox.shrink(),
+              onTap: _resetElements,
+            ),
           ],
         ),
         SettingsSection(

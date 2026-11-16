@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/app_settings.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import 'app_cover.dart';
 import 'bounce_button.dart';
 
@@ -24,9 +25,16 @@ class CoverCard extends StatelessWidget {
     this.cover,
   });
 
-  /// Height of a card of [size], at the largest text size the app allows.
+  /// Height of a card of [size], at the largest text size the app allows,
+  /// and with the room a larger title needs (`AppSettings.textCardTitle`).
   static double heightFor(double size, {int subtitleLines = 1}) =>
-      size + (32 + 19.0 * subtitleLines) * (textScale < 1 ? 1 : textScale);
+      size +
+      (32 + 19.0 * subtitleLines) *
+          (textScale < 1 ? 1 : textScale) *
+          (titleScale < 1 ? 1 : titleScale);
+
+  /// How large the title of a card is, on top of the size of the text.
+  static double get titleScale => ElementScale.of(AppSettings.instance.textCardTitle);
 
   /// The size of a card in a row that scrolls sideways, from the size it
   /// was designed with: as large as the user wants the cards
@@ -128,7 +136,7 @@ class CoverCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               textAlign: align,
               style: TextStyle(
-                fontSize: 13.5,
+                fontSize: 13.5 * titleScale,
                 fontWeight: FontWeight.w600,
                 height: 1.25,
                 color: cs.onSurface,

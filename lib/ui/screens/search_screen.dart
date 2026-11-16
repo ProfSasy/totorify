@@ -7,6 +7,7 @@ import '../../models/album.dart';
 import '../../models/artist.dart';
 import '../../models/playlist.dart';
 import '../../models/song.dart';
+import '../../services/app_settings.dart';
 import '../../services/audio_handler.dart';
 import '../../services/cover_art_service.dart';
 import '../../services/playback_log_service.dart';
@@ -21,6 +22,7 @@ import '../../services/spotify_internal_auth_service.dart';
 import '../app_navigation.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import '../widgets/app_cover.dart';
 import '../widgets/app_empty_state.dart';
 import '../widgets/app_skeleton.dart';
@@ -355,8 +357,8 @@ class _SearchScreenState extends State<SearchScreen> {
                       : SizedBox(
                           height: TopBar.height,
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: AppSpacing.lg),
+                            padding: EdgeInsets.symmetric(
+                                horizontal: PageSpacing.margin),
                             child: Row(
                               children: [
                                 const ProfileButton(),
@@ -371,8 +373,8 @@ class _SearchScreenState extends State<SearchScreen> {
                         ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.lg, AppSpacing.xs, AppSpacing.lg, 0),
+                  padding: EdgeInsets.fromLTRB(
+                      PageSpacing.margin, AppSpacing.xs, PageSpacing.margin, 0),
                   child: _buildSearchField(cs),
                 ),
                 if (_hasResults) _buildResultFilters(),
@@ -516,7 +518,7 @@ class _SearchScreenState extends State<SearchScreen> {
       height: 46,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.md, AppSpacing.lg, 0),
+        padding: EdgeInsets.fromLTRB(PageSpacing.margin, AppSpacing.md, PageSpacing.margin, 0),
         itemCount: kinds.length,
         separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
         itemBuilder: (context, index) => FilterPill(
@@ -592,11 +594,7 @@ class _SearchScreenState extends State<SearchScreen> {
             if (visible('Artisti') && _artistResults.isNotEmpty) ...[
               if (all)
                 const SliverToBoxAdapter(
-                  child: SectionHeader(
-                    'Artisti',
-                    padding: EdgeInsets.fromLTRB(
-                        AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.md),
-                  ),
+                  child: SectionHeader('Artisti', top: AppSpacing.md),
                 ),
               if (all)
                 SliverToBoxAdapter(
@@ -605,10 +603,10 @@ class _SearchScreenState extends State<SearchScreen> {
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       padding:
-                          const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                          EdgeInsets.symmetric(horizontal: PageSpacing.margin),
                       itemCount: _artistResults.length,
                       separatorBuilder: (_, _) =>
-                          const SizedBox(width: AppSpacing.lg),
+                          SizedBox(width: PageSpacing.cardGap),
                       itemBuilder: (context, index) => ArtistChip(
                         artist: _artistResults[index],
                         onTap: () => ArtistScreen.open(
@@ -647,11 +645,7 @@ class _SearchScreenState extends State<SearchScreen> {
             if (visible('Brani') && _results.isNotEmpty) ...[
               if (all)
                 const SliverToBoxAdapter(
-                  child: SectionHeader(
-                    'Brani',
-                    padding: EdgeInsets.fromLTRB(
-                        AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.sm),
-                  ),
+                  child: SectionHeader('Brani', top: AppSpacing.md, bottom: AppSpacing.sm),
                 ),
               SliverList(
                 delegate: SliverChildBuilderDelegate(
@@ -681,10 +675,10 @@ class _SearchScreenState extends State<SearchScreen> {
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       padding:
-                          const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                          EdgeInsets.symmetric(horizontal: PageSpacing.margin),
                       itemCount: _albumResults.length,
                       separatorBuilder: (_, _) =>
-                          const SizedBox(width: AppSpacing.lg),
+                          SizedBox(width: PageSpacing.cardGap),
                       itemBuilder: (context, index) => AlbumCard(
                         album: _albumResults[index],
                         onTap: () => AlbumScreen.open(
@@ -833,8 +827,7 @@ class _SearchScreenState extends State<SearchScreen> {
           SliverToBoxAdapter(
             child: SectionHeader(
               'Ricerche recenti',
-              padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.md),
+              top: AppSpacing.md,
               trailing: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: _clearRecentSearches,
@@ -847,7 +840,7 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+              padding: EdgeInsets.symmetric(horizontal: PageSpacing.margin),
               child: Wrap(
                 spacing: AppSpacing.sm,
                 runSpacing: AppSpacing.sm,
@@ -860,15 +853,11 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         ],
         const SliverToBoxAdapter(
-          child: SectionHeader(
-            'Prova a cercare',
-            padding: EdgeInsets.fromLTRB(
-                AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.md),
-          ),
+          child: SectionHeader('Prova a cercare', top: AppSpacing.lg),
         ),
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+            padding: EdgeInsets.symmetric(horizontal: PageSpacing.margin),
             child: Wrap(
               spacing: AppSpacing.sm,
               runSpacing: AppSpacing.sm,
@@ -878,8 +867,8 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
         const SliverToBoxAdapter(child: SectionHeader('Sfoglia tutto')),
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.bottomContentInset),
+          padding: EdgeInsets.fromLTRB(
+              PageSpacing.margin, 0, PageSpacing.margin, AppSpacing.bottomContentInset),
           sliver: SliverGrid.count(
             crossAxisCount: 2,
             mainAxisSpacing: AppSpacing.md,
@@ -977,7 +966,7 @@ class _ResultTile extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 7),
+        padding: EdgeInsets.symmetric(horizontal: PageSpacing.margin, vertical: 7),
         child: Row(
           children: [
             AppCover(url: coverUrl, size: 50, circle: round, icon: icon),
@@ -991,14 +980,17 @@ class _ResultTile extends StatelessWidget {
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppText.tileTitle(cs),
+                    // As the rows of songs (`AppSettings.textSongTitle`).
+                    style: ElementScale.scaled(AppText.tileTitle(cs),
+                        ElementScale.of(AppSettings.instance.textSongTitle)),
                   ),
                   const SizedBox(height: 3),
                   Text(
                     subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppText.tileSubtitle(cs),
+                    style: ElementScale.scaled(AppText.tileSubtitle(cs),
+                        ElementScale.of(AppSettings.instance.textSongSubtitle)),
                   ),
                 ],
               ),

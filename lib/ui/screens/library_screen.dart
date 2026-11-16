@@ -13,6 +13,7 @@ import '../../services/storage_service.dart';
 import '../app_navigation.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import '../widgets/app_cover.dart';
 import '../widgets/app_empty_state.dart';
 import '../widgets/app_sheet.dart';
@@ -261,7 +262,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Widget _buildChips(ColorScheme cs) {
     return ListView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 4, AppSpacing.lg, 8),
+      padding: EdgeInsets.fromLTRB(PageSpacing.margin, 4, PageSpacing.margin, 8),
       children: [
         if (_filter != null) ...[
           Semantics(
@@ -298,7 +299,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Widget _buildSortRow(ColorScheme cs) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 2, AppSpacing.xs, 2),
+      padding: EdgeInsets.fromLTRB(PageSpacing.margin, 2, AppSpacing.xs, 2),
       child: Row(
         children: [
           GestureDetector(
@@ -451,12 +452,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
       const spacing = AppSpacing.md;
       // As many columns as the user wants.
       final columns = const [2, 3, 4][AppSettings.instance.libraryColumns.value.clamp(0, 2)];
+      final margin = PageSpacing.margin;
       final width =
-          (MediaQuery.sizeOf(context).width - 2 * AppSpacing.lg - (columns - 1) * spacing) / columns;
+          (MediaQuery.sizeOf(context).width - 2 * margin - (columns - 1) * spacing) / columns;
       return [
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
+          padding: EdgeInsets.fromLTRB(margin, AppSpacing.sm, margin, 0),
           sliver: SliverGrid(
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: columns,
@@ -495,8 +496,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (_filter != 'Artisti' && StorageService.instance.playlistsNotifier.value.isEmpty)
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-                AppSpacing.lg, AppSpacing.xl, AppSpacing.lg, 0),
+            padding: EdgeInsets.fromLTRB(
+                PageSpacing.margin, AppSpacing.xl, PageSpacing.margin, 0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -657,10 +658,12 @@ class _EntryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // Margin and text as in the lists of songs.
+    final look = AppSettings.instance;
     return InkWell(
       onTap: entry.onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 7),
+        padding: EdgeInsets.symmetric(horizontal: PageSpacing.margin, vertical: 7),
         child: Row(
           children: [
             entry.cover(60),
@@ -674,14 +677,16 @@ class _EntryRow extends StatelessWidget {
                     entry.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppText.tileTitle(cs),
+                    style: ElementScale.scaled(
+                        AppText.tileTitle(cs), ElementScale.of(look.textSongTitle)),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     entry.subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppText.tileSubtitle(cs),
+                    style: ElementScale.scaled(
+                        AppText.tileSubtitle(cs), ElementScale.of(look.textSongSubtitle)),
                   ),
                 ],
               ),

@@ -8,6 +8,7 @@ import '../../../services/storage_service.dart';
 import '../../theme/app_ambience.dart';
 import '../../theme/app_icons.dart';
 import '../../theme/app_tokens.dart';
+import '../../theme/element_scale.dart';
 import '../favorite_button.dart';
 import 'player_style.dart';
 
@@ -32,16 +33,29 @@ class PlayerTitleRow extends StatelessWidget {
     final settings = AppSettings.instance;
     // Redrawn when the user changes how the title is shown.
     return ListenableBuilder(
-      listenable: Listenable.merge([settings.playerTitleCentered, settings.playerShowSource]),
+      listenable: Listenable.merge([
+        settings.playerTitleCentered,
+        settings.playerShowSource,
+        settings.textPlayerTitle,
+        settings.textPlayerArtist,
+      ]),
       builder: (context, _) => _row(
         context,
         centered: settings.playerTitleCentered.value,
         showSource: settings.playerShowSource.value,
+        titleScale: ElementScale.of(settings.textPlayerTitle),
+        artistScale: ElementScale.of(settings.textPlayerArtist),
       ),
     );
   }
 
-  Widget _row(BuildContext context, {required bool centered, required bool showSource}) {
+  Widget _row(
+    BuildContext context, {
+    required bool centered,
+    required bool showSource,
+    required double titleScale,
+    required double artistScale,
+  }) {
     final quiet = playerInk.withValues(alpha: 0.72);
     return Row(
       children: [
@@ -72,7 +86,7 @@ class PlayerTitleRow extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 22,
+                    fontSize: 22 * titleScale,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -0.5,
                     color: playerInk,
@@ -105,7 +119,7 @@ class PlayerTitleRow extends StatelessWidget {
                           mediaItem.artist ?? 'Artista',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 16, color: quiet),
+                          style: TextStyle(fontSize: 16 * artistScale, color: quiet),
                         ),
                       ),
                     ),

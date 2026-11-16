@@ -19,6 +19,7 @@ import '../home_layout.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import '../widgets/app_cover.dart';
 import '../widgets/app_sheet.dart';
 import '../widgets/app_skeleton.dart';
@@ -424,7 +425,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   // ── Quick access: favourites, recents, charts ───────────
                   if (_feed == null)
                   SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    padding: EdgeInsets.symmetric(horizontal: PageSpacing.margin),
                     sliver: ListenableBuilder(
                       listenable: Listenable.merge([
                         storage.historyNotifier,
@@ -486,8 +487,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       builder: (context, configured, _) {
                         if (!configured) return const SizedBox.shrink();
                         return Padding(
-                          padding: const EdgeInsets.fromLTRB(
-                              AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, 0),
+                          padding: EdgeInsets.fromLTRB(
+                              PageSpacing.margin, AppSpacing.lg, PageSpacing.margin, 0),
                           child: Material(
                             color: cs.surfaceContainerHigh,
                             borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -724,7 +725,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       height: 34,
                       child: ListView.separated(
                         padding:
-                            const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                            EdgeInsets.symmetric(horizontal: PageSpacing.margin),
                         scrollDirection: Axis.horizontal,
                         itemCount: _categories.length,
                         separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
@@ -1008,10 +1009,11 @@ class _CardRow extends StatelessWidget {
     return SizedBox(
       height: height,
       child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+        padding: EdgeInsets.symmetric(horizontal: PageSpacing.margin),
         scrollDirection: Axis.horizontal,
         itemCount: itemCount,
-        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.lg),
+        // As far apart as the user wants the cards.
+        separatorBuilder: (_, _) => SizedBox(width: PageSpacing.cardGap),
         itemBuilder: itemBuilder,
       ),
     );

@@ -1,9 +1,12 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../services/app_settings.dart';
 import '../ordered_choice.dart';
 import '../theme/app_icons.dart';
+import '../theme/element_scale.dart';
 
 /// Tab bar of the app: three glyphs with their labels. It has no surface of
 /// its own; the shell fades the content to black underneath it.
@@ -84,6 +87,16 @@ class _NavItem extends StatelessWidget {
     required this.onTap,
   });
 
+  /// The size of the name, as large as the user wants it. A larger name
+  /// does not add up with a large size of the text, which is already
+  /// applied: the bar keeps its height.
+  static double _labelSize(BuildContext context) {
+    final factor = ElementScale.of(AppSettings.instance.textNavLabels);
+    if (factor <= 1) return 10.5 * factor;
+    final text = MediaQuery.textScalerOf(context).scale(1);
+    return 10.5 * math.max(factor, text) / text;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -126,7 +139,7 @@ class _NavItem extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 10.5,
+                  fontSize: _labelSize(context),
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                   color: color,
                 ),
