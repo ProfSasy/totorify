@@ -57,9 +57,15 @@ class AppMotion {
 /// Typography tokens. They always resolve colors from the active
 /// [ColorScheme] so AMOLED, dark and custom accents stay coherent.
 class AppText {
+  /// How much the big titles are scaled, set with the theme.
+  static double titleScale = 1.0;
+
+  /// The values of [titleScale] the user can choose from, by `titleSize`.
+  static const List<double> titleScales = [0.85, 1.0, 1.2, 1.4];
+
   /// Largest editorial voice, used sparingly (login, hero titles).
   static TextStyle display(ColorScheme cs) => TextStyle(
-        fontSize: 32,
+        fontSize: 32 * titleScale,
         fontWeight: FontWeight.w800,
         letterSpacing: -1.0,
         height: 1.15,
@@ -67,14 +73,14 @@ class AppText {
       );
 
   static TextStyle screenTitle(ColorScheme cs) => TextStyle(
-        fontSize: 24,
+        fontSize: 24 * titleScale,
         fontWeight: FontWeight.w800,
         letterSpacing: -0.6,
         color: cs.onSurface,
       );
 
   static TextStyle sectionTitle(ColorScheme cs) => TextStyle(
-        fontSize: 21,
+        fontSize: 21 * titleScale,
         fontWeight: FontWeight.w800,
         letterSpacing: -0.5,
         color: cs.onSurface,

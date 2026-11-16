@@ -328,6 +328,7 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
             return MediaQuery(
               data: MediaQuery.of(context).copyWith(
                 textScaler: TextScaler.linear(system * chosen),
+                boldText: MediaQuery.boldTextOf(context) || settings.boldText.value,
               ),
               child: child!,
             );
@@ -338,6 +339,8 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
             fontFamily: settings.fontFamily.value,
             tint: dynamicLevel == 2 ? palette?.surface : null,
             cornerScale: AppRadius.scales[settings.cornerStyle.value.clamp(0, 3)],
+            titleScale: AppText.titleScales[settings.titleSize.value.clamp(0, 3)],
+            density: settings.uiDensity.value,
             background: chosen(settings.colorBackground),
             surfaceColor: chosen(settings.colorSurface),
             text: chosen(settings.colorText),

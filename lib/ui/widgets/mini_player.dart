@@ -24,14 +24,18 @@ import 'player_sheet.dart';
 class MiniPlayer extends StatelessWidget {
   final AudioPlayerHandler audioHandler;
 
-  const MiniPlayer({super.key, required this.audioHandler});
+  /// Shown when nothing is playing any more, while the bar slides away: the
+  /// last song it showed, held by whoever animates its exit.
+  final MediaItem? leaving;
+
+  const MiniPlayer({super.key, required this.audioHandler, this.leaving});
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<MediaItem?>(
       stream: audioHandler.mediaItem,
       builder: (context, mediaSnapshot) {
-        final mediaItem = mediaSnapshot.data;
+        final mediaItem = mediaSnapshot.data ?? leaving;
         if (mediaItem == null) return const SizedBox.shrink();
 
         return StreamBuilder<PlaybackState>(

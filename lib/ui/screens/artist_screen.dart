@@ -585,22 +585,23 @@ class _ArtistScreenState extends State<ArtistScreen> {
   }
 
   Widget _buildSongs(List<Song> visible, List<Song> queue, {bool numbered = false}) {
-    return ValueListenableBuilder<(String?, bool)>(
-      valueListenable: widget.audioHandler.playbackIndicator,
-      builder: (context, indicator, _) {
-        final playingId = indicator.$2 ? indicator.$1 : null;
-        return SliverList(
-          delegate: SliverChildListDelegate([
-            for (final (i, song) in visible.indexed)
-              SongTile(
-                song: song,
-                index: numbered ? i + 1 : null,
-                isPlaying: playingId == song.id,
-                onTap: () => _play(song, queue),
-              ),
-          ]),
-        );
-      },
+    // Built lazily; play and pause redraw only the rows.
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (context, i) {
+          final song = visible[i];
+          return ValueListenableBuilder<(String?, bool)>(
+            valueListenable: widget.audioHandler.playbackIndicator,
+            builder: (context, indicator, _) => SongTile(
+              song: song,
+              index: numbered ? i + 1 : null,
+              isPlaying: indicator.$2 && indicator.$1 == song.id,
+              onTap: () => _play(song, queue),
+            ),
+          );
+        },
+        childCount: visible.length,
+      ),
     );
   }
 

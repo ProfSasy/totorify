@@ -170,6 +170,8 @@ class AppTheme {
     String? fontFamily,
     Color? tint,
     double cornerScale = 1.0,
+    double titleScale = 1.0,
+    int density = 1,
     Color? background,
     Color? surfaceColor,
     Color? text,
@@ -187,6 +189,7 @@ class AppTheme {
     );
     final bg = cs.surfaceDim;
     AppRadius.scale = cornerScale;
+    AppText.titleScale = titleScale;
     final chosenFont = (fontFamily == null || fontFamily.isEmpty) ? null : fontFamily;
     // The text styles given to components below replace the ones of the
     // theme instead of building on them: they are given the font here, like
@@ -204,6 +207,11 @@ class AppTheme {
       brightness: cs.brightness,
       colorScheme: cs,
       fontFamily: chosenFont,
+      visualDensity: switch (density) {
+        0 => VisualDensity.compact,
+        2 => const VisualDensity(horizontal: 1, vertical: 1),
+        _ => VisualDensity.standard,
+      },
       // Part of the theme, so that what is drawn with it is drawn again
       // when it changes.
       extensions: [AppShape(cornerScale, revision: revision)],

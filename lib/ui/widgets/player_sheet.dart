@@ -94,6 +94,7 @@ class _PlayerSheetState extends State<PlayerSheet>
   late TabController _tabController;
   late final AnimationController _enterController;
   late final Animation<double> _enterCurve;
+  late final Animation<Offset> _enterOffset;
   String? _lastLoadedSongId;
 
   StreamSubscription<String>? _errorSub;
@@ -143,6 +144,10 @@ class _PlayerSheetState extends State<PlayerSheet>
       parent: _enterController,
       curve: Curves.easeOutCubic,
     );
+    _enterOffset = Tween<Offset>(
+      begin: const Offset(0, 0.04),
+      end: Offset.zero,
+    ).animate(_enterCurve);
     _enterController.forward();
     _tabController = TabController(length: 3, vsync: this);
     _tabController.addListener(() {
@@ -304,10 +309,11 @@ class _PlayerSheetState extends State<PlayerSheet>
           fallback: colorScheme.primary,
           builder: (context, coverPalette) => ((AmbientPalette palette) => SizedBox(
             height: MediaQuery.sizeOf(context).height,
-            child: StreamBuilder<PlaybackState>(
-              stream: widget.audioHandler.playbackState,
-              builder: (context, playbackSnapshot) {
-                final isPlaying = playbackSnapshot.data?.playing ?? false;
+            // The playback state is listened to only by what shows it (the
+            // Canvas, the cover, the progress bar, the controls, the queue
+            // and its card): its changes do not rebuild the whole player.
+            child: Builder(
+              builder: (context) {
                 final canvasAvailable =
                     _showCanvas && _currentCanvasUrl != null;
                 // Already warm (the track was prepared ahead, or the player
@@ -356,7 +362,9 @@ class _PlayerSheetState extends State<PlayerSheet>
                             opacity: canvasVisible ? 1 : 0,
                             duration: playerCanvasFade,
                             curve: Curves.easeOut,
-                            child: _buildFullscreenCanvas(isPlaying),
+                            child: _onPlayback(
+                              (playback) => _buildFullscreenCanvas(playback?.playing ?? false),
+                            ),
                           ),
                         ),
                       ),
@@ -404,7 +412,6 @@ class _PlayerSheetState extends State<PlayerSheet>
                               children: [
                                 _buildMainPlayerTab(
                                   mediaItem,
-                                  playbackSnapshot.data,
                                   palette,
                                   bottomInset,
                                 ),
@@ -506,28 +513,32 @@ class _PlayerSheetState extends State<PlayerSheet>
     );
   }
 
+  /// Rebuilds only [builder] at every change of the playback state.
+  Widget _onPlayback(Widget Function(PlaybackState? playback) builder) {
+    return StreamBuilder<PlaybackState>(
+      stream: widget.audioHandler.playbackState,
+      initialData: widget.audioHandler.playbackState.value,
+      builder: (context, snapshot) => builder(snapshot.data),
+    );
+  }
+
   /// Animates the whole player block when the sheet opens.
   Widget _buildMainPlayerTab(
     MediaItem mediaItem,
-    PlaybackState? playback,
     AmbientPalette palette,
     double bottomInset,
   ) {
     return FadeTransition(
       opacity: _enterCurve,
       child: SlideTransition(
-        position: Tween<Offset>(
-          begin: const Offset(0, 0.04),
-          end: Offset.zero,
-        ).animate(_enterCurve),
-        child: _buildMainPlayerTabContent(mediaItem, playback, palette, bottomInset),
+        position: _enterOffset,
+        child: _buildMainPlayerTabContent(mediaItem, palette, bottomInset),
       ),
     );
   }
 
   Widget _buildMainPlayerTabContent(
     MediaItem mediaItem,
-    PlaybackState? playback,
     AmbientPalette palette,
     double bottomInset,
   ) {
@@ -538,20 +549,18 @@ class _PlayerSheetState extends State<PlayerSheet>
         final hasCanvas = _canvasShown;
         // Room for the Canvas / cover switch, which floats over this tab.
         final hasSwitch = _currentCanvasUrl != null || _isLoadingCanvas;
-        final isPlaying = playback?.playing ?? false;
-        final isLoading =
-            playback?.processingState == AudioProcessingState.loading ||
-                playback?.processingState == AudioProcessingState.buffering;
 
         final song = widget.audioHandler.currentSong;
         final page = Column(
             children: [
               Expanded(
-                child: PlayerCover(
-                  mediaItem: mediaItem,
-                  hasCanvas: hasCanvas,
-                  hasSwitch: hasSwitch,
-                  isPlaying: isPlaying,
+                child: _onPlayback(
+                  (playback) => PlayerCover(
+                    mediaItem: mediaItem,
+                    hasCanvas: hasCanvas,
+                    hasSwitch: hasSwitch,
+                    isPlaying: playback?.playing ?? false,
+                  ),
                 ),
               ),
               Padding(
@@ -573,19 +582,27 @@ class _PlayerSheetState extends State<PlayerSheet>
                       onArtist: _openArtist,
                     ),
                     SizedBox(height: gap),
-                    PlayerSeekBar(
-                      audioHandler: widget.audioHandler,
-                      mediaItem: mediaItem,
+                    // Under the playback state as well: the format of the
+                    // stream shows up when a track is ready, even paused.
+                    _onPlayback(
+                      (_) => PlayerSeekBar(
+                        audioHandler: widget.audioHandler,
+                        mediaItem: mediaItem,
+                      ),
                     ),
                     SizedBox(height: isShortScreen ? 0 : 6),
 
-                    PlayerTransportControls(
-                      audioHandler: widget.audioHandler,
-                      playback: playback,
-                      palette: palette,
-                      isPlaying: isPlaying,
-                      isLoading: isLoading,
-                      notify: _showNotice,
+                    _onPlayback(
+                      (playback) => PlayerTransportControls(
+                        audioHandler: widget.audioHandler,
+                        playback: playback,
+                        palette: palette,
+                        isPlaying: playback?.playing ?? false,
+                        isLoading:
+                            playback?.processingState == AudioProcessingState.loading ||
+                                playback?.processingState == AudioProcessingState.buffering,
+                        notify: _showNotice,
+                      ),
                     ),
                     SizedBox(height: isShortScreen ? 2 : 8),
 

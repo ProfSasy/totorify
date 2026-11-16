@@ -174,6 +174,13 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
               ),
             ),
             _TextScaleRow(setting: _settings.textScale),
+            SettingChoice(
+              setting: _settings.titleSize,
+              title: 'Dimensione dei titoli',
+              labels: const ['Piccoli', 'Predefiniti', 'Grandi', 'Enormi'],
+              sheetTitle: 'Quanto sono grandi i titoli',
+            ),
+            SettingSwitch(setting: _settings.boldText, title: 'Testo in grassetto'),
           ],
         ),
         SettingsSection(
@@ -190,6 +197,12 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
               title: 'Animazioni',
               labels: const ['Veloci', 'Predefinite', 'Lente'],
               sheetTitle: 'Velocità delle animazioni',
+            ),
+            SettingChoice(
+              setting: _settings.uiDensity,
+              title: 'Spaziatura dei controlli',
+              labels: const ['Compatta', 'Predefinita', 'Ampia'],
+              sheetTitle: 'Quanto sono vicini i controlli',
             ),
             SettingChoice(
               setting: _settings.pageTransition,

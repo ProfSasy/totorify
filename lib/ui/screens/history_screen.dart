@@ -76,10 +76,11 @@ class HistoryScreen extends StatelessWidget {
         title: Text('Cronologia', style: AppText.screenTitle(cs).copyWith(fontSize: 20)),
       ),
       body: ListenableBuilder(
+        // Play and pause do not regroup the history: only the rows listen
+        // to the indicator.
         listenable: Listenable.merge([
           ListeningStats.instance.changes,
           StorageService.instance.historyNotifier,
-          audioHandler.playbackIndicator,
         ]),
         builder: (context, _) {
           final groups = HistoryScreen.groups();
@@ -90,12 +91,30 @@ class HistoryScreen extends StatelessWidget {
               subtitle: 'Qui trovi i brani che ascolti, giorno per giorno.',
             );
           }
-          final indicator = audioHandler.playbackIndicator.value;
-          return ListView(
+          // The groups flattened into rows (a title, then its songs), built
+          // lazily: the history can hold thousands of listens.
+          final rows = <(String, Song?, List<Song>)>[
+            for (final (label, songs) in groups) ...[
+              (label, null, songs),
+              for (final song in songs) (label, song, songs),
+            ],
+          ];
+          // A new listen adds a row on top: the rows below keep their tiles,
+          // found again by their key.
+          final indexOf = <String, int>{
+            for (final (i, (label, song, _)) in rows.indexed)
+              song == null ? 'group_$label' : '${label}_${song.id}': i,
+          };
+          return ListView.builder(
             padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xl),
-            children: [
-              for (final (label, songs) in groups) ...[
-                Padding(
+            itemCount: rows.length,
+            findChildIndexCallback: (key) =>
+                key is ValueKey<String> ? indexOf[key.value] : null,
+            itemBuilder: (context, index) {
+              final (label, song, songs) = rows[index];
+              if (song == null) {
+                return Padding(
+                  key: ValueKey('group_$label'),
                   padding: const EdgeInsets.fromLTRB(
                     AppSpacing.lg,
                     AppSpacing.lg,
@@ -103,20 +122,22 @@ class HistoryScreen extends StatelessWidget {
                     AppSpacing.xs,
                   ),
                   child: Text(label, style: AppText.sectionTitle(cs).copyWith(fontSize: 17)),
+                );
+              }
+              return ValueListenableBuilder<(String?, bool)>(
+                key: ValueKey('${label}_${song.id}'),
+                valueListenable: audioHandler.playbackIndicator,
+                builder: (context, indicator, _) => SongTile(
+                  song: song,
+                  isPlaying: indicator.$2 && indicator.$1 == song.id,
+                  onTap: () {
+                    audioHandler.playSong(song, queue: songs);
+                    PlayerSheet.showOnPlay(context, audioHandler);
+                  },
+                  onRemove: () => _remove(context, song),
                 ),
-                for (final song in songs)
-                  SongTile(
-                    key: ValueKey('${label}_${song.id}'),
-                    song: song,
-                    isPlaying: indicator.$2 && indicator.$1 == song.id,
-                    onTap: () {
-                      audioHandler.playSong(song, queue: songs);
-                      PlayerSheet.showOnPlay(context, audioHandler);
-                    },
-                    onRemove: () => _remove(context, song),
-                  ),
-              ],
-            ],
+              );
+            },
           );
         },
       ),

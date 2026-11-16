@@ -531,210 +531,245 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  /// What the body showed last, and a number that starts the switch between
+  /// skeleton and results over: only the skeleton giving way to the results
+  /// is animated.
+  String? _lastBody;
+  int _bodySwitcher = 0;
+
   Widget _buildBody() {
-    if (_isSearching && _results.isEmpty) {
-      return const SingleChildScrollView(
-        physics: NeverScrollableScrollPhysics(),
-        child: SongListSkeleton(count: 7),
-      );
-    }
+    final skeleton = _isSearching && _results.isEmpty;
+    final body = skeleton ? 'skeleton' : (_hasResults ? 'results' : 'other');
+    // Results giving way to the skeleton again: at once, as before.
+    if (body == 'skeleton' && _lastBody == 'results') _bodySwitcher++;
+    _lastBody = body;
+    if (body == 'other') return _buildOtherBody();
 
-    if (_hasResults) {
-      final userPlaylists = _playlistMatches;
-      final categories = _categoryMatches;
-      final playlistMatches = userPlaylists.length + categories.length;
-      final kind = _activeKind;
-      final all = kind == _allKinds;
-      bool visible(String wanted) => all || kind == wanted;
+    // Only the results hold the tab's scroll controller (the browse view
+    // holds it as well, but it is never in this switcher): the skeleton and
+    // the results never use it together.
+    return AnimatedSwitcher(
+      key: ValueKey('body_switcher_$_bodySwitcher'),
+      duration: AppMotion.base,
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      layoutBuilder: (current, previous) => Stack(
+        fit: StackFit.expand,
+        children: [...previous, ?current],
+      ),
+      child: skeleton
+          ? const KeyedSubtree(
+              key: ValueKey('skeleton'),
+              child: SingleChildScrollView(
+                physics: NeverScrollableScrollPhysics(),
+                child: SongListSkeleton(count: 7),
+              ),
+            )
+          : KeyedSubtree(
+              key: const ValueKey('results'),
+              child: _buildResults(),
+            ),
+    );
+  }
 
-      return ValueListenableBuilder<(String?, bool)>(
-        valueListenable: widget.audioHandler.playbackIndicator,
-        builder: (context, indicator, _) {
-          final currentId = indicator.$2 ? indicator.$1 : null;
+  Widget _buildResults() {
+    final userPlaylists = _playlistMatches;
+    final categories = _categoryMatches;
+    final playlistMatches = userPlaylists.length + categories.length;
+    final kind = _activeKind;
+    final all = kind == _allKinds;
+    bool visible(String wanted) => all || kind == wanted;
 
-          return CustomScrollView(
-            controller: AppNavigation.rootScrollers[AppNavigation.searchTab],
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            slivers: [
-              if (visible('Artisti') && _artistResults.isNotEmpty) ...[
-                if (all)
-                  const SliverToBoxAdapter(
-                    child: SectionHeader(
-                      'Artisti',
-                      padding: EdgeInsets.fromLTRB(
-                          AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.md),
-                    ),
+    return ValueListenableBuilder<(String?, bool)>(
+      valueListenable: widget.audioHandler.playbackIndicator,
+      builder: (context, indicator, _) {
+        final currentId = indicator.$2 ? indicator.$1 : null;
+
+        return CustomScrollView(
+          controller: AppNavigation.rootScrollers[AppNavigation.searchTab],
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          slivers: [
+            if (visible('Artisti') && _artistResults.isNotEmpty) ...[
+              if (all)
+                const SliverToBoxAdapter(
+                  child: SectionHeader(
+                    'Artisti',
+                    padding: EdgeInsets.fromLTRB(
+                        AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.md),
                   ),
-                if (all)
-                  SliverToBoxAdapter(
-                    child: SizedBox(
-                      height: ArtistChip.rowHeight,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                        itemCount: _artistResults.length,
-                        separatorBuilder: (_, _) =>
-                            const SizedBox(width: AppSpacing.lg),
-                        itemBuilder: (context, index) => ArtistChip(
+                ),
+              if (all)
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: ArtistChip.rowHeight,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                      itemCount: _artistResults.length,
+                      separatorBuilder: (_, _) =>
+                          const SizedBox(width: AppSpacing.lg),
+                      itemBuilder: (context, index) => ArtistChip(
+                        artist: _artistResults[index],
+                        onTap: () => ArtistScreen.open(
+                          context,
+                          widget.audioHandler,
                           artist: _artistResults[index],
-                          onTap: () => ArtistScreen.open(
-                            context,
-                            widget.audioHandler,
-                            artist: _artistResults[index],
-                          ),
                         ),
                       ),
                     ),
-                  )
-                else
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final artist = _artistResults[index];
-                        return _ResultTile(
-                          title: artist.name,
-                          subtitle: artist.audience.isEmpty
-                              ? 'Artista'
-                              : 'Artista • ${artist.audience}',
-                          coverUrl: artist.imageUrl,
-                          icon: AppIcons.artist,
-                          round: true,
-                          onTap: () => ArtistScreen.open(
-                            context,
-                            widget.audioHandler,
-                            artist: artist,
-                          ),
-                        );
-                      },
-                      childCount: _artistResults.length,
-                    ),
                   ),
-              ],
-              if (visible('Brani') && _results.isNotEmpty) ...[
-                if (all)
-                  const SliverToBoxAdapter(
-                    child: SectionHeader(
-                      'Brani',
-                      padding: EdgeInsets.fromLTRB(
-                          AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.sm),
-                    ),
-                  ),
+                )
+              else
                 SliverList(
                   delegate: SliverChildBuilderDelegate(
                     (context, index) {
-                      final song = _results[index];
-                      return SongTile(
-                        song: song,
-                        isPlaying: currentId == song.id,
+                      final artist = _artistResults[index];
+                      return _ResultTile(
+                        title: artist.name,
+                        subtitle: artist.audience.isEmpty
+                            ? 'Artista'
+                            : 'Artista • ${artist.audience}',
+                        coverUrl: artist.imageUrl,
+                        icon: AppIcons.artist,
+                        round: true,
+                        onTap: () => ArtistScreen.open(
+                          context,
+                          widget.audioHandler,
+                          artist: artist,
+                        ),
+                      );
+                    },
+                    childCount: _artistResults.length,
+                  ),
+                ),
+            ],
+            if (visible('Brani') && _results.isNotEmpty) ...[
+              if (all)
+                const SliverToBoxAdapter(
+                  child: SectionHeader(
+                    'Brani',
+                    padding: EdgeInsets.fromLTRB(
+                        AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.sm),
+                  ),
+                ),
+              SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final song = _results[index];
+                    return SongTile(
+                      song: song,
+                      isPlaying: currentId == song.id,
+                      onTap: () {
+                        widget.audioHandler.playSong(song, queue: _results);
+                        PlayerSheet.showOnPlay(context, widget.audioHandler);
+                      },
+                    );
+                  },
+                  childCount: _results.length,
+                ),
+              ),
+            ],
+            if (visible('Album') && _albumResults.isNotEmpty) ...[
+              if (all)
+                const SliverToBoxAdapter(
+                    child: SectionHeader('Album, singoli ed EP')),
+              if (all)
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: AlbumCard.rowHeight,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                      itemCount: _albumResults.length,
+                      separatorBuilder: (_, _) =>
+                          const SizedBox(width: AppSpacing.lg),
+                      itemBuilder: (context, index) => AlbumCard(
+                        album: _albumResults[index],
+                        onTap: () => AlbumScreen.open(
+                          context,
+                          widget.audioHandler,
+                          _albumResults[index],
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              else
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final album = _albumResults[index];
+                      return _ResultTile(
+                        title: album.title,
+                        subtitle: [
+                          album.caption,
+                          if (album.artist.isNotEmpty) album.artist,
+                        ].join(' • '),
+                        coverUrl: album.coverUrl,
+                        icon: AppIcons.album,
+                        onTap: () => AlbumScreen.open(
+                          context,
+                          widget.audioHandler,
+                          album,
+                        ),
+                      );
+                    },
+                    childCount: _albumResults.length,
+                  ),
+                ),
+            ],
+            if (visible('Playlist') && playlistMatches > 0) ...[
+              if (all) const SliverToBoxAdapter(child: SectionHeader('Playlist')),
+              SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    if (index < userPlaylists.length) {
+                      final playlist = userPlaylists[index];
+                      return _ResultTile(
+                        title: playlist.title,
+                        subtitle: 'Playlist • ${playlist.songs.length} brani',
+                        coverUrl: playlistCoverUrl(playlist),
+                        icon: AppIcons.playlist,
                         onTap: () {
-                          widget.audioHandler.playSong(song, queue: _results);
-                          PlayerSheet.showOnPlay(context, widget.audioHandler);
+                          PlaybackLogService.instance.log('UI',
+                              'search: apri playlist "${playlist.title}"');
+                          Navigator.push(
+                            context,
+                            appRoute<void>(
+                              builder: (_) => PlaylistScreen(
+                                playlist: playlist,
+                                audioHandler: widget.audioHandler,
+                              ),
+                            ),
+                          );
                         },
                       );
-                    },
-                    childCount: _results.length,
-                  ),
+                    }
+                    final category = categories[index - userPlaylists.length];
+                    return _ResultTile(
+                      title: category.title,
+                      subtitle: 'Playlist • Spotify',
+                      coverUrl: category.coverUrl,
+                      icon: AppIcons.playlist,
+                      onTap: () => _openCategory(category),
+                    );
+                  },
+                  childCount: playlistMatches,
                 ),
-              ],
-              if (visible('Album') && _albumResults.isNotEmpty) ...[
-                if (all)
-                  const SliverToBoxAdapter(
-                      child: SectionHeader('Album, singoli ed EP')),
-                if (all)
-                  SliverToBoxAdapter(
-                    child: SizedBox(
-                      height: AlbumCard.rowHeight,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                        itemCount: _albumResults.length,
-                        separatorBuilder: (_, _) =>
-                            const SizedBox(width: AppSpacing.lg),
-                        itemBuilder: (context, index) => AlbumCard(
-                          album: _albumResults[index],
-                          onTap: () => AlbumScreen.open(
-                            context,
-                            widget.audioHandler,
-                            _albumResults[index],
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-                else
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final album = _albumResults[index];
-                        return _ResultTile(
-                          title: album.title,
-                          subtitle: [
-                            album.caption,
-                            if (album.artist.isNotEmpty) album.artist,
-                          ].join(' • '),
-                          coverUrl: album.coverUrl,
-                          icon: AppIcons.album,
-                          onTap: () => AlbumScreen.open(
-                            context,
-                            widget.audioHandler,
-                            album,
-                          ),
-                        );
-                      },
-                      childCount: _albumResults.length,
-                    ),
-                  ),
-              ],
-              if (visible('Playlist') && playlistMatches > 0) ...[
-                if (all) const SliverToBoxAdapter(child: SectionHeader('Playlist')),
-                SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      if (index < userPlaylists.length) {
-                        final playlist = userPlaylists[index];
-                        return _ResultTile(
-                          title: playlist.title,
-                          subtitle: 'Playlist • ${playlist.songs.length} brani',
-                          coverUrl: playlistCoverUrl(playlist),
-                          icon: AppIcons.playlist,
-                          onTap: () {
-                            PlaybackLogService.instance.log('UI',
-                                'search: apri playlist "${playlist.title}"');
-                            Navigator.push(
-                              context,
-                              appRoute<void>(
-                                builder: (_) => PlaylistScreen(
-                                  playlist: playlist,
-                                  audioHandler: widget.audioHandler,
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      }
-                      final category = categories[index - userPlaylists.length];
-                      return _ResultTile(
-                        title: category.title,
-                        subtitle: 'Playlist • Spotify',
-                        coverUrl: category.coverUrl,
-                        icon: AppIcons.playlist,
-                        onTap: () => _openCategory(category),
-                      );
-                    },
-                    childCount: playlistMatches,
-                  ),
-                ),
-              ],
-              const SliverToBoxAdapter(
-                  child: SizedBox(height: AppSpacing.bottomContentInset)),
+              ),
             ],
-          );
-        },
-      );
-    }
+            const SliverToBoxAdapter(
+                child: SizedBox(height: AppSpacing.bottomContentInset)),
+          ],
+        );
+      },
+    );
+  }
 
+  /// No results, or the browse view before a search.
+  Widget _buildOtherBody() {
     if (_hasSearched) {
       return AppEmptyState(
         icon: AppIcons.search,

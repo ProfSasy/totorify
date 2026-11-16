@@ -92,6 +92,26 @@ class _LibraryScreenState extends State<LibraryScreen> {
     super.dispose();
   }
 
+  /// How many times each song was listened to, counted once for every change
+  /// of the statistics and not on every build. The number of listens is part
+  /// of the key: loading them at start does not bump [ListeningStats.changes].
+  Map<String, int>? _playCounts;
+  (int, int)? _playCountsKey;
+
+  Map<String, int> get _plays {
+    final stats = ListeningStats.instance;
+    final events = stats.events;
+    final key = (stats.changes.value, events.length);
+    final cached = _playCounts;
+    if (cached != null && key == _playCountsKey) return cached;
+    final plays = <String, int>{};
+    for (final event in events) {
+      plays[event.song.id] = (plays[event.song.id] ?? 0) + 1;
+    }
+    _playCountsKey = key;
+    return _playCounts = plays;
+  }
+
   /// Applies the selected ordering to a song list without mutating it.
   List<Song> _sortSongs(List<Song> songs) {
     final list = List<Song>.from(songs);
@@ -101,10 +121,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       case 'Artista':
         list.sort((a, b) => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()));
       case 'Più ascoltati':
-        final plays = <String, int>{};
-        for (final event in ListeningStats.instance.events) {
-          plays[event.song.id] = (plays[event.song.id] ?? 0) + 1;
-        }
+        final plays = _plays;
         list.sort((a, b) => (plays[b.id] ?? 0).compareTo(plays[a.id] ?? 0));
     }
     return list;
@@ -117,10 +134,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
     }
     if (_sortMode == 'Più ascoltati') {
-      final plays = <String, int>{};
-      for (final event in ListeningStats.instance.events) {
-        plays[event.song.id] = (plays[event.song.id] ?? 0) + 1;
-      }
+      final plays = _plays;
       int score(Playlist p) => p.songs.fold(0, (sum, s) => sum + (plays[s.id] ?? 0));
       return List<Playlist>.from(input)..sort((a, b) => score(b).compareTo(score(a)));
     }
@@ -186,8 +200,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 storage.favoritesNotifier,
                 storage.downloadsNotifier,
                 storage.followedArtistsNotifier,
-                widget.audioHandler.playbackIndicator,
                 LibraryExtras.instance.hiddenPlaylists,
+                // Play and pause redraw only the rows (see _buildSongs); the
+                // counts reorder the library when they change.
+                if (_sortMode == 'Più ascoltati') ListeningStats.instance.changes,
               ]),
               builder: (context, _) => CustomScrollView(
                 controller: AppNavigation.rootScrollers[AppNavigation.libraryTab],
@@ -523,20 +539,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ),
       );
     }
-    final indicator = widget.audioHandler.playbackIndicator.value;
-    final playingId = indicator.$2 ? indicator.$1 : null;
-
     return SliverList(
       delegate: SliverChildBuilderDelegate(
         (context, index) {
           final song = songs[index];
-          return SongTile(
-            song: song,
-            isPlaying: playingId == song.id,
-            onTap: () {
-              widget.audioHandler.playSong(song, queue: songs);
-              PlayerSheet.showOnPlay(context, widget.audioHandler);
-            },
+          return ValueListenableBuilder<(String?, bool)>(
+            valueListenable: widget.audioHandler.playbackIndicator,
+            builder: (context, indicator, _) => SongTile(
+              song: song,
+              isPlaying: indicator.$2 && indicator.$1 == song.id,
+              onTap: () {
+                widget.audioHandler.playSong(song, queue: songs);
+                PlayerSheet.showOnPlay(context, widget.audioHandler);
+              },
+            ),
           );
         },
         childCount: songs.length,

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/artist.dart';
@@ -41,7 +42,7 @@ class PlayerCards extends StatefulWidget {
 
 class _PlayerCardsState extends State<PlayerCards> {
   // One look-up per artist while the app is open: the cards are rebuilt at
-  // every tick of the player.
+  // every change of song.
   static final Map<String, Future<Artist?>> _artists = {};
 
   Future<Lyrics>? _lyrics;
@@ -134,42 +135,47 @@ class _PlayerCardsState extends State<PlayerCards> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _cardTitle('Anteprima del testo', action: 'Mostra testo', onAction: widget.onLyrics),
-          FutureBuilder<Lyrics>(
-            future: _lyrics,
-            builder: (context, snapshot) {
-              final lyrics = snapshot.data;
-              final lines = lyrics == null
-                  ? const <String>[]
-                  : (lyrics.syncedLyrics.isNotEmpty
-                          ? lyrics.syncedLyrics.map((l) => l.text)
-                          : lyrics.plainLyrics.split('\n'))
-                      .map((l) => l.trim())
-                      .where((l) => l.isNotEmpty)
-                      .take(6)
-                      .toList();
-              final text = snapshot.connectionState != ConnectionState.done
-                  ? null
-                  : lines.isEmpty
-                      ? 'Il testo di questo brano non è disponibile.'
-                      : lines.join('\n');
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.xl),
-                child: text == null
-                    ? SizedBox(
-                        height: 60,
-                        child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: _ink)),
-                      )
-                    : Text(
-                        text,
-                        style: TextStyle(
-                          color: _ink,
-                          fontSize: lines.isEmpty ? 15 : 21,
-                          height: 1.35,
-                          fontWeight: lines.isEmpty ? FontWeight.w500 : FontWeight.w800,
+          // The card grows to the lyrics instead of jumping when they come.
+          AnimatedSize(
+            duration: AppMotion.base,
+            alignment: Alignment.topCenter,
+            child: FutureBuilder<Lyrics>(
+              future: _lyrics,
+              builder: (context, snapshot) {
+                final lyrics = snapshot.data;
+                final lines = lyrics == null
+                    ? const <String>[]
+                    : (lyrics.syncedLyrics.isNotEmpty
+                            ? lyrics.syncedLyrics.map((l) => l.text)
+                            : lyrics.plainLyrics.split('\n'))
+                        .map((l) => l.trim())
+                        .where((l) => l.isNotEmpty)
+                        .take(6)
+                        .toList();
+                final text = snapshot.connectionState != ConnectionState.done
+                    ? null
+                    : lines.isEmpty
+                        ? 'Il testo di questo brano non è disponibile.'
+                        : lines.join('\n');
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.xl),
+                  child: text == null
+                      ? SizedBox(
+                          height: 60,
+                          child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: _ink)),
+                        )
+                      : Text(
+                          text,
+                          style: TextStyle(
+                            color: _ink,
+                            fontSize: lines.isEmpty ? 15 : 21,
+                            height: 1.35,
+                            fontWeight: lines.isEmpty ? FontWeight.w500 : FontWeight.w800,
+                          ),
                         ),
-                      ),
-              );
-            },
+                );
+              },
+            ),
           ),
         ],
       ),
@@ -257,7 +263,20 @@ class _PlayerCardsState extends State<PlayerCards> {
 
   // ── Up next ─────────────────────────────────────────────────────────────
 
+  /// The player no longer rebuilds its cards at every change of the playback
+  /// state: this one follows that state (shuffle reorders what comes next)
+  /// and the queue itself.
   Widget _nextCard() {
+    return StreamBuilder<PlaybackState>(
+      stream: widget.audioHandler.playbackState,
+      builder: (context, _) => StreamBuilder<List<MediaItem>>(
+        stream: widget.audioHandler.queue,
+        builder: (context, _) => _nextCardContent(),
+      ),
+    );
+  }
+
+  Widget _nextCardContent() {
     final queue = widget.audioHandler.queueSnapshot;
     final next = queue.index < 0
         ? const <Song>[]

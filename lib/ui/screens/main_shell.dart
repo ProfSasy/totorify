@@ -33,6 +33,11 @@ class _MainShellState extends State<MainShell> {
 
   int _currentIndex = 0;
 
+  // The last song the mini player showed, kept while it slides away when
+  // nothing plays any more (it would otherwise vanish at once).
+  MediaItem? _lastMediaItem;
+  bool _hasSong = false;
+
   late final List<Widget> _tabs;
 
   @override
@@ -141,15 +146,32 @@ class _MainShellState extends State<MainShell> {
             child: StreamBuilder<MediaItem?>(
               stream: widget.audioHandler.mediaItem,
               builder: (context, snapshot) {
-                final hasSong = snapshot.data != null;
+                final item = snapshot.data;
+                final hasSong = item != null;
+                _hasSong = hasSong;
+                if (hasSong) _lastMediaItem = item;
                 return AnimatedSlide(
                   offset: hasSong ? Offset.zero : const Offset(0, 1.5),
                   duration: const Duration(milliseconds: 320),
                   curve: Curves.easeOutCubic,
+                  // Gone: the song it kept for its exit is let go.
+                  onEnd: () {
+                    if (!_hasSong && _lastMediaItem != null && mounted) {
+                      setState(() => _lastMediaItem = null);
+                    }
+                  },
                   child: AnimatedOpacity(
                     opacity: hasSong ? 1.0 : 0.0,
                     duration: const Duration(milliseconds: 200),
-                    child: MiniPlayer(audioHandler: widget.audioHandler),
+                    // While it leaves it still shows the last song, but a
+                    // tap would open a player with nothing to play.
+                    child: IgnorePointer(
+                      ignoring: !hasSong,
+                      child: MiniPlayer(
+                        audioHandler: widget.audioHandler,
+                        leaving: _lastMediaItem,
+                      ),
+                    ),
                   ),
                 );
               },

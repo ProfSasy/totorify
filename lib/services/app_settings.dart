@@ -222,6 +222,16 @@ class AppSettings {
   /// How fast the app moves: 0 fast, 1 as designed, 2 slow.
   late final motionSpeed = _setting<int>('motion_speed', 1);
 
+  /// How close the controls and rows of the app are: 0 compact, 1 as
+  /// designed, 2 wide.
+  late final uiDensity = _setting<int>('ui_density', 1);
+
+  /// The size of the big titles: 0 small, 1 as designed, 2 large, 3 huge.
+  late final titleSize = _setting<int>('title_size', 1);
+
+  /// All the text of the app in bold.
+  late final boldText = _setting<bool>('bold_text', false);
+
   /// How a screen comes in: 0 slide (with the swipe back), 1 fade, 2 zoom,
   /// 3 from the bottom, 4 none.
   late final pageTransition = _setting<int>('page_transition', 0);
@@ -392,6 +402,9 @@ class AppSettings {
     colorText,
     colorTextSecondary,
     motionSpeed,
+    uiDensity,
+    titleSize,
+    boldText,
     pageTransition,
     tapFeedback,
     scrollFeel,
