@@ -260,6 +260,10 @@ class AppSettings {
   /// quickly (a firmer scroll).
   late final scrollFeel = _setting<int>('scroll_feel', 0);
 
+  /// How the Canvas video sits in the full-screen player: 0 fills the screen
+  /// (cropping the sides), 1 fits the width (sharper, bands above and below).
+  late final canvasFit = _setting<int>('canvas_fit', 0);
+
   /// The looks the user saved, each as JSON (see `AppThemes`).
   late final savedThemes = _setting<List<String>>('saved_themes', const []);
 
@@ -490,6 +494,7 @@ class AppSettings {
     pageTransition,
     tapFeedback,
     scrollFeel,
+    canvasFit,
     iconStyle,
     listDensity,
     listCoverSize,

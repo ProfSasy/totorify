@@ -41,6 +41,9 @@ extension CanvasOfTrack on CanvasService {
         'CanvasService._fromSpotify: ${found.length} canvas su ${trackIds.length} '
         'brani chiesti (${response.bodyBytes.length} byte)',
       );
+      if (found.isNotEmpty) {
+        debugPrint('CANVAS sorgente Spotify, host ${Uri.tryParse(found.values.first)?.host}');
+      }
       return found;
     } catch (e) {
       debugPrint('CanvasService._fromSpotify: $e');
@@ -64,7 +67,9 @@ extension CanvasOfTrack on CanvasService {
       final match = CanvasService._sourceTag.firstMatch(response.body);
       if (match == null) return (value: null, failed: false);
       // The page appends a media fragment that AVPlayer rejects.
-      return (value: match.group(1)!.split('#').first, failed: false);
+      final url = match.group(1)!.split('#').first;
+      debugPrint('CANVAS sorgente canvasdownloader, host ${Uri.tryParse(url)?.host}');
+      return (value: url, failed: false);
     } catch (e) {
       debugPrint('CanvasService._fromCanvasDownloader: $e');
       return (value: null, failed: true);

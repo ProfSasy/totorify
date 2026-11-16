@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../services/app_settings.dart';
 import '../../services/canvas_video_pool.dart';
 import '../../services/playback_log_service.dart';
 
@@ -230,8 +231,12 @@ class _CanvasPlayerWidgetState extends State<CanvasPlayerWidget> {
                   : const Duration(milliseconds: 500),
               curve: Curves.easeInOut,
               child: SizedBox.expand(
-                child: FittedBox(
-                  fit: BoxFit.cover,
+                child: ValueListenableBuilder<int>(
+                  valueListenable: AppSettings.instance.canvasFit,
+                  builder: (_, fit, child) => FittedBox(
+                    fit: fit == 1 ? BoxFit.fitWidth : BoxFit.cover,
+                    child: child,
+                  ),
                   child: SizedBox(
                     width: _controller!.value.size.width > 0
                         ? _controller!.value.size.width

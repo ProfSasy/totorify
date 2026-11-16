@@ -315,6 +315,12 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
               labels: const ['Con rimbalzo', 'Senza rimbalzo', 'Rimbalzo secco'],
               sheetTitle: 'Come scorrono le liste',
             ),
+            SettingChoice(
+              setting: _settings.canvasFit,
+              title: 'Canvas nel player',
+              labels: const ['Riempi lo schermo', 'Adatta alla larghezza'],
+              sheetTitle: 'Come si vede il video Canvas (adatta: più nitido, con bande)',
+            ),
             SettingLink(
               title: 'Angoli',
               subtitle: AppearanceSettingsScreen
