@@ -167,7 +167,7 @@ class DownloadService {
 
           final bytes = await tempFile.length();
           // Deleted while it was coming down: it must not come back.
-          if (_cancelled.contains(song.id)) return _dropCancelled(song, [tempFile]);
+          if (_cancelled.contains(song.id)) return await _dropCancelled(song, [tempFile]);
           if (await finalFile.exists()) await finalFile.delete();
           await tempFile.rename(filePath);
           try {
@@ -176,7 +176,7 @@ class DownloadService {
           } catch (e) {
             log.log('DOWNLOAD', '"${song.title}": vecchio .flac non eliminato: $e');
           }
-          if (_cancelled.contains(song.id)) return _dropCancelled(song, [finalFile]);
+          if (_cancelled.contains(song.id)) return await _dropCancelled(song, [finalFile]);
           _updateProgress(song.id, 1.0);
           await storage.saveDownloadedSong(song);
           // The exact length, so playback does not have to trust the
