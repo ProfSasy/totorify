@@ -373,7 +373,13 @@ class _PlayerSheetState extends State<PlayerSheet>
                     if (canvasAvailable)
                       Positioned.fill(
                         child: IgnorePointer(
-                          child: AnimatedOpacity(
+                          // How much the scrim darkens the Canvas: 0 dark,
+                          // 1 light, 2 none.
+                          child: ValueListenableBuilder<int>(
+                            valueListenable: AppSettings.instance.canvasVeil,
+                            builder: (_, veil, _) => veil >= 2
+                                ? const SizedBox.shrink()
+                                : AnimatedOpacity(
                             opacity: canvasVisible ? 1 : 0,
                             duration: playerCanvasFade,
                             curve: Curves.easeOut,
@@ -383,14 +389,15 @@ class _PlayerSheetState extends State<PlayerSheet>
                                   begin: Alignment.topCenter,
                                   end: Alignment.bottomCenter,
                                   colors: [
-                                    PlayerStyle.shade.withValues(alpha: 0.5),
-                                    PlayerStyle.shade.withValues(alpha: 0.08),
-                                    PlayerStyle.shade.withValues(alpha: 0.86),
+                                    PlayerStyle.shade.withValues(alpha: veil == 1 ? 0.3 : 0.5),
+                                    PlayerStyle.shade.withValues(alpha: veil == 1 ? 0.0 : 0.08),
+                                    PlayerStyle.shade.withValues(alpha: veil == 1 ? 0.55 : 0.86),
                                   ],
                                   stops: const [0.0, 0.42, 1.0],
                                 ),
                               ),
                             ),
+                          ),
                           ),
                         ),
                       ),

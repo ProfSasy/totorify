@@ -264,6 +264,10 @@ class AppSettings {
   /// (cropping the sides), 1 fits the width (sharper, bands above and below).
   late final canvasFit = _setting<int>('canvas_fit', 0);
 
+  /// The scrim over the Canvas that keeps titles and controls readable:
+  /// 0 dark (as designed), 1 light, 2 none.
+  late final canvasVeil = _setting<int>('canvas_veil', 0);
+
   /// The looks the user saved, each as JSON (see `AppThemes`).
   late final savedThemes = _setting<List<String>>('saved_themes', const []);
 
@@ -495,6 +499,7 @@ class AppSettings {
     tapFeedback,
     scrollFeel,
     canvasFit,
+    canvasVeil,
     iconStyle,
     listDensity,
     listCoverSize,

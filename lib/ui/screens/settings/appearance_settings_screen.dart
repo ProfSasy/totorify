@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../../services/app_settings.dart';
 import '../../../services/app_themes.dart';
+import '../../../services/canvas_service.dart';
 import '../../../services/font_library.dart';
 import '../../../services/playback_log_service.dart';
 import '../../../services/storage_service.dart';
@@ -277,6 +278,38 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
           ],
         ),
         SettingsSection(
+          title: 'Canvas',
+          children: [
+            ListenableBuilder(
+              listenable: CanvasService.instance.isCanvasEnabledNotifier,
+              builder: (context, _) => SwitchListTile.adaptive(
+                title: const Text('Canvas'),
+                subtitle: const Text(
+                  'Il breve video in loop del brano, al posto della copertina nel player',
+                ),
+                value: CanvasService.instance.isCanvasEnabledNotifier.value,
+                activeTrackColor: Theme.of(context).colorScheme.primary,
+                onChanged: (value) {
+                  PlaybackLogService.instance.log('UI', 'impostazioni: canvas = $value');
+                  CanvasService.instance.setCanvasEnabled(value);
+                },
+              ),
+            ),
+            SettingChoice(
+              setting: _settings.canvasFit,
+              title: 'Adattamento',
+              labels: const ['Riempi lo schermo', 'Adatta alla larghezza'],
+              sheetTitle: 'Come si vede il video Canvas (adatta: più nitido, con bande)',
+            ),
+            SettingChoice(
+              setting: _settings.canvasVeil,
+              title: 'Velo sul video',
+              labels: const ['Scuro', 'Leggero', 'Nessuno'],
+              sheetTitle: 'Quanto viene scurito il video sotto titoli e comandi',
+            ),
+          ],
+        ),
+        SettingsSection(
           title: 'Forme, icone e movimento',
           children: [
             SettingChoice(
@@ -314,12 +347,6 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
               title: 'Scorrimento',
               labels: const ['Con rimbalzo', 'Senza rimbalzo', 'Rimbalzo secco'],
               sheetTitle: 'Come scorrono le liste',
-            ),
-            SettingChoice(
-              setting: _settings.canvasFit,
-              title: 'Canvas nel player',
-              labels: const ['Riempi lo schermo', 'Adatta alla larghezza'],
-              sheetTitle: 'Come si vede il video Canvas (adatta: più nitido, con bande)',
             ),
             SettingLink(
               title: 'Angoli',

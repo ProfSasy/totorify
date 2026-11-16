@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../../services/app_settings.dart';
-import '../../../services/canvas_service.dart';
 import '../../../services/playback_log_service.dart';
 import '../../../services/sponsor_block_service.dart';
 import '../../../services/storage_service.dart';
@@ -183,27 +182,12 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
           ],
         ),
         SettingsSection(
-          title: 'Download e Canvas',
+          title: 'Download',
           children: [
             SettingSwitch(
               setting: settings.downloadOnLike,
               title: 'Scarica i brani che ti piacciono',
               subtitle: 'Ogni brano a cui metti il cuore viene salvato per l\'ascolto offline',
-            ),
-            ListenableBuilder(
-              listenable: CanvasService.instance.isCanvasEnabledNotifier,
-              builder: (context, _) => SwitchListTile.adaptive(
-                title: const Text('Canvas'),
-                subtitle: const Text(
-                  'Il breve video in loop del brano, al posto della copertina nel player',
-                ),
-                value: CanvasService.instance.isCanvasEnabledNotifier.value,
-                activeTrackColor: primary,
-                onChanged: (value) {
-                  PlaybackLogService.instance.log('UI', 'impostazioni: canvas = $value');
-                  CanvasService.instance.setCanvasEnabled(value);
-                },
-              ),
             ),
           ],
         ),
