@@ -407,10 +407,10 @@ class _SearchScreenState extends State<SearchScreen> {
             child: _searching
                 ? IconButton(
                     tooltip: 'Chiudi la ricerca',
-                    icon: const Icon(AppIcons.back, color: ink, size: 19),
+                    icon: Icon(AppIcons.back, color: ink, size: 19),
                     onPressed: _leaveSearch,
                   )
-                : const Icon(AppIcons.search, color: ink, size: 24),
+                : Icon(AppIcons.search, color: ink, size: 24),
           ),
           Expanded(
             key: const ValueKey('search_field'),
@@ -456,7 +456,7 @@ class _SearchScreenState extends State<SearchScreen> {
                     : _searchController.text.isNotEmpty
                     ? IconButton(
                         tooltip: 'Cancella',
-                        icon: const Icon(AppIcons.clear, color: hint, size: 20),
+                        icon: Icon(AppIcons.clear, color: hint, size: 20),
                         onPressed: () {
                           _searchController.clear();
                           _onQueryChanged('');
@@ -736,7 +736,7 @@ class _SearchScreenState extends State<SearchScreen> {
     }
 
     if (_hasSearched) {
-      return const AppEmptyState(
+      return AppEmptyState(
         icon: AppIcons.search,
         title: 'Nessun risultato',
         subtitle: 'Prova con un altro titolo o artista.',

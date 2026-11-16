@@ -151,7 +151,7 @@ class PlayerQueueTab extends StatelessWidget {
               alignment: Alignment.centerRight,
               padding: const EdgeInsets.only(right: AppSpacing.xl),
               color: Theme.of(context).colorScheme.error,
-              child: const Icon(AppIcons.trash, color: Colors.white),
+              child: Icon(AppIcons.trash, color: Colors.white),
             ),
             onDismissed: (_) {
               PlaybackLogService.instance.log('UI', 'coda: rimuovo indice $index');

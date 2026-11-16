@@ -231,7 +231,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                   IconButton(
                     tooltip: 'Crea o importa una playlist',
-                    icon: const Icon(AppIcons.add, size: 30),
+                    icon: Icon(AppIcons.add, size: 30),
                     onPressed: _showAddMenu,
                   ),
                 ],
@@ -420,7 +420,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   List<Widget> _buildEntries(ColorScheme cs) {
     final entries = _entries(cs);
     if (entries.isEmpty) {
-      return const [
+      return [
         SliverFillRemaining(
           hasScrollBody: false,
           child: AppEmptyState(
@@ -512,12 +512,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
       return SliverFillRemaining(
         hasScrollBody: false,
         child: _filter == 'Scaricati'
-            ? const AppEmptyState(
+            ? AppEmptyState(
                 icon: AppIcons.download,
                 title: 'Nessun brano scaricato',
                 subtitle: 'Apri il menu di un brano e scegli "Scarica".',
               )
-            : const AppEmptyState(
+            : AppEmptyState(
                 icon: AppIcons.heart,
                 title: 'Nessun brano nei preferiti',
                 subtitle: 'Tocca il cuore su un brano per ritrovarlo qui.',

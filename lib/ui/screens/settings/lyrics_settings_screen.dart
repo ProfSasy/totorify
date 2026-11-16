@@ -197,7 +197,7 @@ class _LyricsSourcesScreenState extends State<_LyricsSourcesScreen> {
             if (LyricsSources.byId(id) case final source?)
               SwitchListTile.adaptive(
                 key: ValueKey(id),
-                secondary: const Icon(AppIcons.dragHandle),
+                secondary: Icon(AppIcons.dragHandle),
                 title: Text(source.name),
                 subtitle: Text(source.description),
                 value: _on.contains(id),

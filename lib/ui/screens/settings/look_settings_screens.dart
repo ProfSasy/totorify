@@ -280,7 +280,12 @@ class NavigationSettingsScreen extends StatelessWidget {
             SettingChoice(
               setting: settings.miniPlayerStyle,
               title: 'Colore',
-              labels: const ['Dalla copertina', 'Neutro', 'Il colore dell\'app'],
+              labels: const [
+                'Dalla copertina',
+                'Neutro',
+                'Il colore dell\'app',
+                'I colori del tema',
+              ],
               sheetTitle: 'Colore del mini player',
             ),
             SettingSwitch(setting: settings.miniShowProgress, title: 'Linea di avanzamento'),

@@ -2,7 +2,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/app_settings.dart';
-import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 import 'app_cover.dart';
 import 'bounce_button.dart';
@@ -19,7 +18,7 @@ class CoverCard extends StatelessWidget {
     this.size = 140,
     this.subtitleLines = 1,
     this.circle = false,
-    this.icon = AppIcons.note,
+    this.icon,
     this.badge,
     this.busy = false,
     this.cover,
@@ -47,7 +46,9 @@ class CoverCard extends StatelessWidget {
 
   /// Round artwork and centered text: an artist.
   final bool circle;
-  final IconData icon;
+
+  /// What stands in for a missing picture; a note when none is given.
+  final IconData? icon;
 
   /// Small label over the top-left corner of the artwork.
   final String? badge;

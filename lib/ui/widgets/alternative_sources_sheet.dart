@@ -130,7 +130,7 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
       SnackBar(
         content: Row(
           children: [
-            const Icon(AppIcons.verified, color: Color(0xFF121212), size: 20),
+            Icon(AppIcons.verified, color: Color(0xFF121212), size: 20),
             const SizedBox(width: 10),
             Expanded(
               child: Text(

@@ -177,8 +177,14 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
           ],
         ),
         SettingsSection(
-          title: 'Forme e movimento',
+          title: 'Forme, icone e movimento',
           children: [
+            SettingChoice(
+              setting: _settings.iconStyle,
+              title: 'Icone',
+              labels: AppIcons.styleLabels,
+              sheetTitle: 'Stile delle icone',
+            ),
             SettingChoice(
               setting: _settings.motionSpeed,
               title: 'Animazioni',

@@ -57,7 +57,7 @@ class PlaybackLogScreen extends StatelessWidget {
         actions: [
           IconButton(
             tooltip: 'Pulisci',
-            icon: const Icon(AppIcons.trash),
+            icon: Icon(AppIcons.trash),
             onPressed: log.clear,
           ),
         ],
@@ -86,7 +86,7 @@ class PlaybackLogScreen extends StatelessWidget {
                         log.export(lastLines: _copyLines),
                         'Log copiato: incollalo nella chat',
                       ),
-                      icon: const Icon(AppIcons.copy, size: 18),
+                      icon: Icon(AppIcons.copy, size: 18),
                       label: const Text('Copia log'),
                     ),
                     Row(

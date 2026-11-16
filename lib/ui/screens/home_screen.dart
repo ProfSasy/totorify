@@ -503,7 +503,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       height: 20,
                                       child: CircularProgressIndicator(strokeWidth: 2),
                                     )
-                                  : const Icon(AppIcons.chevronRight),
+                                  : Icon(AppIcons.chevronRight),
                               onTap: _openingId == 'ai_mix' ? null : _openAiMix,
                             ),
                           ),

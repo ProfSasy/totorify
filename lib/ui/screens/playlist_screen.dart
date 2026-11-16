@@ -253,7 +253,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                   ),
-                  icon: const Icon(AppIcons.sort, size: 18),
+                  icon: Icon(AppIcons.sort, size: 18),
                   label: Text(
                     _order == _Order.custom ? 'Ordina' : _order.label,
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
@@ -461,7 +461,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                           ),
                         ),
                       if (songs.isEmpty)
-                        const SliverFillRemaining(
+                        SliverFillRemaining(
                           hasScrollBody: false,
                           child: AppEmptyState(
                             icon: AppIcons.note,
@@ -488,7 +488,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                                 subtitle: Text(song.artist, maxLines: 1, overflow: TextOverflow.ellipsis),
                                 trailing: ReorderableDragStartListener(
                                   index: index,
-                                  child: const Padding(
+                                  child: Padding(
                                     padding: EdgeInsets.all(8),
                                     child: Icon(AppIcons.dragHandle),
                                   ),
@@ -582,12 +582,12 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                       if (playlist.id == 'system_downloads' && songs.isNotEmpty)
                         IconButton(
                           tooltip: 'Elimina tutti i download',
-                          icon: const Icon(AppIcons.trash),
+                          icon: Icon(AppIcons.trash),
                           onPressed: () => _confirmClearAllDownloads(context),
                         ),
                       IconButton(
                         tooltip: 'Opzioni della playlist',
-                        icon: const Icon(AppIcons.more),
+                        icon: Icon(AppIcons.more),
                         onPressed: () => _showOptions(current, editable: editable, saved: stored != null),
                       ),
                     ],

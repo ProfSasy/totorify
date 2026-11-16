@@ -216,6 +216,9 @@ class AppSettings {
   /// Subtitles and the text that stays in the background.
   late final colorTextSecondary = _setting<int>('color_text_secondary', 0);
 
+  /// The set of icons: 0 as designed, 1 rounded, 2 sharp, 3 outlined.
+  late final iconStyle = _setting<int>('icon_style', 0);
+
   /// How fast the app moves: 0 fast, 1 as designed, 2 slow.
   late final motionSpeed = _setting<int>('motion_speed', 1);
 
@@ -377,6 +380,7 @@ class AppSettings {
     colorText,
     colorTextSecondary,
     motionSpeed,
+    iconStyle,
     listDensity,
     listCoverSize,
     listShowDuration,

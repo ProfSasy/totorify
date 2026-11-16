@@ -84,7 +84,7 @@ class HistoryScreen extends StatelessWidget {
         builder: (context, _) {
           final groups = HistoryScreen.groups();
           if (groups.isEmpty) {
-            return const AppEmptyState(
+            return AppEmptyState(
               icon: AppIcons.history,
               title: 'Ancora niente',
               subtitle: 'Qui trovi i brani che ascolti, giorno per giorno.',

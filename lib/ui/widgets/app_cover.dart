@@ -24,14 +24,17 @@ class AppCover extends StatelessWidget {
     required this.size,
     this.radius = AppRadius.xs,
     this.circle = false,
-    this.icon = AppIcons.note,
-  });
+    IconData? icon,
+  }) : _icon = icon;
 
   final String? url;
   final double size;
   final double radius;
   final bool circle;
-  final IconData icon;
+  final IconData? _icon;
+
+  /// What stands in for a missing picture: a note, unless another is given.
+  IconData get icon => _icon ?? AppIcons.note;
 
   @override
   Widget build(BuildContext context) {

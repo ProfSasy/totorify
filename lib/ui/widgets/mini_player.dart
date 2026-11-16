@@ -77,7 +77,9 @@ class _MiniPlayerBody extends StatelessWidget {
     required this.palette,
   });
 
-  static const Color _ink = Colors.white;
+  // White on the dark surfaces the mini player usually has; the text of
+  // the theme when it is drawn in the theme's colors. Set as it is built.
+  static Color _ink = Colors.white;
 
   void _open(BuildContext context) {
     PlaybackLogService.instance.log('UI', 'mini player: apri');
@@ -93,11 +95,23 @@ class _MiniPlayerBody extends StatelessWidget {
     final hidden = look.miniHiddenButtons.value;
     // Always dark enough for its white text, whatever it takes its color
     // from: the cover, a neutral surface, or the color of the app.
+    final themed = look.miniPlayerStyle.value == 3;
     final surface = switch (look.miniPlayerStyle.value) {
       1 => const Color(0xFF2A2A2A),
       2 => Color.lerp(cs.primary, Colors.black, 0.52)!,
-      _ => palette.surface,
+      3 => cs.surfaceContainerHighest,
+      _ => this.palette.surface,
     };
+    _ink = themed ? cs.onSurface : Colors.white;
+    // The color of the cover, darker on a light surface so it can be read.
+    final palette = themed && cs.brightness == Brightness.light
+        ? AmbientPalette(
+            accent: Color.lerp(this.palette.accent, Colors.black, 0.32)!,
+            surface: this.palette.surface,
+            deep: this.palette.deep,
+            fromArtwork: this.palette.fromArtwork,
+          )
+        : this.palette;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => _open(context),
@@ -150,7 +164,7 @@ class _MiniPlayerBody extends StatelessWidget {
                       children: [
                         _MarqueeText(
                           mediaItem.title,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 13.5,
                             fontWeight: FontWeight.w700,
                             letterSpacing: -0.1,
@@ -246,7 +260,7 @@ class _MiniPlayerBody extends StatelessWidget {
                     width: 44,
                     height: 40,
                     child: isLoading
-                        ? const Center(
+                        ? Center(
                             child: CupertinoActivityIndicator(
                               color: _ink,
                               radius: 9,
@@ -320,7 +334,7 @@ class _SkipButton extends StatelessWidget {
           HapticFeedback.selectionClick();
           onPressed();
         },
-        icon: Icon(icon, color: Colors.white, size: 26),
+        icon: Icon(icon, color: _MiniPlayerBody._ink, size: 26),
       ),
     );
   }
@@ -348,7 +362,7 @@ class _ProgressBar extends StatelessWidget {
           height: 2,
           child: ColoredBox(
             // Hairline track keeps the bar readable at 0%.
-            color: Colors.white.withValues(alpha: 0.22),
+            color: _MiniPlayerBody._ink.withValues(alpha: 0.22),
             child: ValueListenableBuilder<Duration>(
               valueListenable: audioHandler.positionNotifier,
               builder: (context, position, _) {
@@ -359,7 +373,7 @@ class _ProgressBar extends StatelessWidget {
                 return FractionallySizedBox(
                   alignment: Alignment.centerLeft,
                   widthFactor: progress,
-                  child: const ColoredBox(color: Colors.white),
+                  child: ColoredBox(color: _MiniPlayerBody._ink),
                 );
               },
             ),
