@@ -163,6 +163,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   void _showMessage(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.maybeOf(context)
         ?.showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 3)));
   }

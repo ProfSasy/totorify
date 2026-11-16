@@ -579,6 +579,64 @@ class StorageService {
     await _storePlaylist(updated, guest: place.guest);
   }
 
+  /// Adds many songs with one write and one update of the screens. Returns
+  /// how many were new; the ones already in the playlist are skipped.
+  Future<int> addSongsToPlaylist(String playlistId, List<Song> songs) async {
+    final place = _placeOf(playlistId);
+    if (place == null) return 0;
+    final playlist = place.list[place.index];
+    final known = {for (final s in playlist.songs) s.id};
+    final fresh = <Song>[];
+    for (final song in songs) {
+      if (known.add(song.id)) fresh.add(song);
+    }
+    if (fresh.isEmpty) return 0;
+    final updated = playlist.copyWith(songs: [...playlist.songs, ...fresh]);
+    place.list[place.index] = updated;
+    _publishPlaylists();
+    await _storePlaylist(updated, guest: place.guest);
+    PlaybackLogService.instance.log(
+      'PLAYLIST',
+      '${fresh.length} brani aggiunti a "${playlist.title}" (${updated.songs.length} brani)',
+    );
+    if (place.guest) {
+      for (final song in fresh) {
+        _recordLibraryOp(opPlaylistSong, '$playlistId/${song.id}', {
+          'on': true,
+          'playlist': playlistId,
+          'song': song.toMap(),
+        });
+      }
+    }
+    return fresh.length;
+  }
+
+  /// Removes many songs with one write and one update of the screens.
+  Future<void> removeSongsFromPlaylist(String playlistId, Set<String> songIds) async {
+    final place = _placeOf(playlistId);
+    if (place == null || songIds.isEmpty) return;
+    final playlist = place.list[place.index];
+    final updated = playlist.copyWith(
+      songs: [for (final s in playlist.songs) if (!songIds.contains(s.id)) s],
+    );
+    place.list[place.index] = updated;
+    _publishPlaylists();
+    await _storePlaylist(updated, guest: place.guest);
+    PlaybackLogService.instance.log(
+      'PLAYLIST',
+      '${songIds.length} brani rimossi da "${playlist.title}" (${updated.songs.length} brani)',
+    );
+    if (place.guest) {
+      for (final id in songIds) {
+        _recordLibraryOp(opPlaylistSong, '$playlistId/$id', {
+          'on': false,
+          'playlist': playlistId,
+          'song': {'id': id},
+        });
+      }
+    }
+  }
+
   Future<void> removeSongFromPlaylist(String playlistId, String songId) async {
     final place = _placeOf(playlistId);
     if (place == null) return;

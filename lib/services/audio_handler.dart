@@ -407,13 +407,17 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
     // Not polled meanwhile: the old position would end the track again.
     _seeking = true;
     try {
-      await player.seekTo(start);
+      await player.seekTo(start).timeout(_seekTimeout);
+    } catch (_) {
+      // A seek that is never confirmed must not freeze the position.
     } finally {
       _seeking = false;
     }
     if (!identical(player, _player)) return;
     _setPosition(start, announce: true);
     _endGateOpen = true;
+    // A pause that came while waiting stays.
+    if (_userPaused) return;
     await player.play();
   }
 
@@ -426,11 +430,27 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler, QueueHandler
 
   /// Moves to the next track: queue order, repeat-all wrap-around, then
   /// autoplay from the recommendations, and finally stop.
+  bool _advancing = false;
+
   Future<void> _advance() async {
+    if (_advancing) return;
+    _advancing = true;
+    try {
+      await _advanceOnce();
+    } finally {
+      _advancing = false;
+    }
+  }
+
+  Future<void> _advanceOnce() async {
     var target = _queue.peekNext();
 
     if (target == null && currentSong != null) {
-      final related = (await _suggestions.fresh(currentSong!)).take(20);
+      final seed = currentSong!;
+      final generation = _loadGeneration;
+      final related = (await _suggestions.fresh(seed)).take(20);
+      // The user chose something else while the suggestions were coming.
+      if (generation != _loadGeneration || seed.id != currentSong?.id) return;
       final firstNew = _queue.items.length;
       if (_queue.appendUnique(related) > 0) {
         _updateQueueBroadcast();

@@ -224,9 +224,7 @@ class QueueActions extends StatelessWidget {
     PlaybackLogService.instance.log('UI', 'coda: salvo come playlist "$name"');
     final storage = StorageService.instance;
     final playlist = await storage.createPlaylist(name);
-    for (final song in songs) {
-      await storage.addSongToPlaylist(playlist.id, song);
-    }
+    await storage.addSongsToPlaylist(playlist.id, songs);
     notify('Coda salvata in "$name"');
   }
 

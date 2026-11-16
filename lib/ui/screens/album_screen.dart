@@ -51,7 +51,19 @@ class _AlbumScreenState extends State<AlbumScreen> {
   Widget build(BuildContext context) {
     return FutureBuilder<(Album, List<Song>)?>(
       future: _tracks,
-      builder: (context, snapshot) {
+      builder: (context, snapshot) => AnimatedSwitcher(
+        duration: AppMotion.base,
+        child: KeyedSubtree(
+          key: ValueKey<bool>(snapshot.data != null),
+          child: _content(context, snapshot),
+        ),
+      ),
+    );
+  }
+
+  Widget _content(BuildContext context, AsyncSnapshot<(Album, List<Song>)?> snapshot) {
+    {
+      {
         final loaded = snapshot.data;
         if (loaded != null) {
           final (album, songs) = loaded;
@@ -95,7 +107,7 @@ class _AlbumScreenState extends State<AlbumScreen> {
                   onAction: () => setState(() => _tracks = _load()),
                 ),
         );
-      },
-    );
+      }
+    }
   }
 }

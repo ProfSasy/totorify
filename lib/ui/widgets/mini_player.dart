@@ -259,14 +259,18 @@ class _MiniPlayerBody extends StatelessWidget {
                   SizedBox(
                     width: 44,
                     height: 40,
-                    child: isLoading
+                    child: AnimatedSwitcher(
+                      duration: AppMotion.fast,
+                      child: isLoading
                         ? Center(
+                            key: const ValueKey('loading'),
                             child: CupertinoActivityIndicator(
                               color: _ink,
                               radius: 9,
                             ),
                           )
                         : IconButton(
+                            key: const ValueKey('button'),
                             padding: EdgeInsets.zero,
                             tooltip: isPlaying ? 'Pausa' : 'Riproduci',
                             onPressed: () {
@@ -290,6 +294,7 @@ class _MiniPlayerBody extends StatelessWidget {
                               ),
                             ),
                           ),
+                    ),
                   ),
                   if (!hidden.contains(MiniPlayerButtons.next))
                   _SkipButton(

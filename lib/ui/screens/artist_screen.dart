@@ -105,7 +105,22 @@ class _ArtistScreenState extends State<ArtistScreen> {
     super.dispose();
   }
 
+  /// A page that cannot be read must not leave the spinners on.
   Future<void> _load() async {
+    try {
+      await _loadPage();
+    } catch (e) {
+      PlaybackLogService.instance.log('ARTIST', 'pagina non letta: $e');
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadingExtras = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadPage() async {
     final catalog = YTMusicCatalogService.instance;
     final log = PlaybackLogService.instance;
     setState(() => _loading = true);
@@ -194,8 +209,13 @@ class _ArtistScreenState extends State<ArtistScreen> {
     final page = _page;
     if (page?.allSongs == null || _openingAllSongs) return;
     setState(() => _openingAllSongs = true);
-    final songs = await YTMusicCatalogService.instance
-        .playlistTracks(page!.allSongs!, fallbackArtist: page.artist.name);
+    List<Song> songs;
+    try {
+      songs = await YTMusicCatalogService.instance
+          .playlistTracks(page!.allSongs!, fallbackArtist: page.artist.name);
+    } catch (_) {
+      songs = const [];
+    }
     if (!mounted) return;
     setState(() => _openingAllSongs = false);
     if (songs.isEmpty) {
@@ -213,7 +233,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
         builder: (_) => PlaylistScreen(
           audioHandler: widget.audioHandler,
           playlist: Playlist(
-            id: 'artist_songs_${page.artist.id}',
+            id: 'artist_songs_${page!.artist.id}',
             title: page.artist.name,
             description: 'Tutti i brani',
             thumbnailUrl: page.artist.imageUrl,
@@ -633,11 +653,16 @@ class _ArtistScreenState extends State<ArtistScreen> {
             color: colorScheme.surfaceContainerHigh,
             borderRadius: AppRadius.card,
           ),
-          child: Text(
-            description,
-            maxLines: _showFullBio ? null : 5,
-            overflow: _showFullBio ? TextOverflow.visible : TextOverflow.ellipsis,
-            style: AppText.tileSubtitle(colorScheme).copyWith(height: 1.45),
+          child: AnimatedSize(
+            duration: AppMotion.base,
+            curve: AppMotion.standard,
+            alignment: Alignment.topCenter,
+            child: Text(
+              description,
+              maxLines: _showFullBio ? null : 5,
+              overflow: _showFullBio ? TextOverflow.visible : TextOverflow.ellipsis,
+              style: AppText.tileSubtitle(colorScheme).copyWith(height: 1.45),
+            ),
           ),
         ),
       ),

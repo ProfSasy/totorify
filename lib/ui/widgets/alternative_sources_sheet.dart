@@ -108,7 +108,7 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
   Future<void> _selectSource(ScoredTrackMatch match) async {
     // A double tap would run two concurrent hot-swaps and pop twice.
     if (_isApplying) return;
-    _isApplying = true;
+    setState(() => _isApplying = true);
     PlaybackLogService.instance.log(
       'UI',
       'fonti alternative: scelgo "${match.song.title}" (${match.song.id})',
@@ -116,11 +116,17 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
     HapticFeedback.mediumImpact();
     setState(() => _currentSelectedYtId = match.song.id);
 
-    await widget.audioHandler.switchAudioSource(
-      widget.song,
-      match.song.id,
-      newDuration: match.song.duration,
-    );
+    try {
+      await widget.audioHandler.switchAudioSource(
+        widget.song,
+        match.song.id,
+        newDuration: match.song.duration,
+      );
+    } catch (e) {
+      PlaybackLogService.instance.log('UI', 'fonti alternative: cambio fallito ($e)');
+      if (mounted) setState(() => _isApplying = false);
+      return;
+    }
 
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
@@ -172,6 +178,14 @@ class _AlternativeSourcesSheetState extends State<AlternativeSourcesSheet> {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
+          ),
+
+          // The switch can take a while: the sheet says it is working.
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            child: _isApplying
+                ? const LinearProgressIndicator(minHeight: 2)
+                : const SizedBox(width: double.infinity),
           ),
 
           // Header

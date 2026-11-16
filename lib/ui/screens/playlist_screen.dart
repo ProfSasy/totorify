@@ -81,9 +81,10 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
 
   final ValueNotifier<double> _scrollOffset = ValueNotifier<double>(0);
 
-  // Selection: the positions of the songs chosen, while choosing.
+  // Selection: the ids of the songs chosen, while choosing. Ids, not
+  // positions: the list can change under the user's finger.
   bool _selecting = false;
-  final Set<int> _selected = {};
+  final Set<String> _selected = {};
 
   // Reordering: the songs in the order being built, while it is.
   List<Song>? _reordering;
@@ -500,7 +501,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                           delegate: SliverChildBuilderDelegate(
                             (context, index) {
                               final song = shown[index];
-                              final on = _selected.contains(index);
+                              final on = _selected.contains(song.id);
                               return ListTile(
                                 leading: Row(
                                   mainAxisSize: MainAxisSize.min,
@@ -516,7 +517,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                                 title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                                 subtitle: Text(song.artist, maxLines: 1, overflow: TextOverflow.ellipsis),
                                 onTap: () => setState(() {
-                                  if (!_selected.remove(index)) _selected.add(index);
+                                  if (!_selected.remove(song.id)) _selected.add(song.id);
                                 }),
                               );
                             },
@@ -784,6 +785,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
   }
 
   void _say(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
@@ -915,8 +917,8 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
 
   Future<void> _onSelection(String action, List<Song> songs) async {
     final chosen = [
-      for (var i = 0; i < songs.length; i++)
-        if (_selected.contains(i)) songs[i],
+      for (final song in songs)
+        if (_selected.contains(song.id)) song,
     ];
     if (chosen.isEmpty) return;
     PlaybackLogService.instance.log('UI', 'selezione: $action (${chosen.length} brani)');
@@ -934,9 +936,10 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
         unawaited(DownloadService.instance.downloadPlaylist(chosen));
         _say('Download avviato per ${chosen.length} brani');
       case 'remove':
-        for (final song in chosen) {
-          await StorageService.instance.removeSongFromPlaylist(playlist.id, song.id);
-        }
+        await StorageService.instance.removeSongsFromPlaylist(
+          playlist.id,
+          {for (final song in chosen) song.id},
+        );
         _say('${chosen.length} brani rimossi');
     }
     if (mounted) {

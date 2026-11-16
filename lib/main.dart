@@ -302,7 +302,9 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
       listenable: Listenable.merge([
         StorageService.instance.accentColorNotifier,
         ...settings.appearance,
-        DynamicColor.instance.palette,
+        // Only when the app follows the music: otherwise every new cover
+        // would build the whole app again for nothing.
+        if (settings.dynamicColor.value > 0) DynamicColor.instance.palette,
         AppThemes.instance.applied,
       ]),
       builder: (context, _) {

@@ -669,13 +669,24 @@ class DownloadService {
     }
   }
 
+  final Map<String, ({double value, int at})> _lastProgress = {};
+
   void _updateProgress(String songId, double progress) {
+    // The network delivers many small chunks: the badges are told at most
+    // ten times a second, and only when the number moved.
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final last = _lastProgress[songId];
+    if (progress <= 0.9 && last != null && (now - last.at < 100 || (progress - last.value).abs() < 0.01)) {
+      return;
+    }
+    _lastProgress[songId] = (value: progress, at: now);
     final current = Map<String, double>.from(downloadProgressNotifier.value);
     current[songId] = progress;
     downloadProgressNotifier.value = current;
   }
 
   void _removeProgress(String songId) {
+    _lastProgress.remove(songId);
     final current = Map<String, double>.from(downloadProgressNotifier.value);
     current.remove(songId);
     downloadProgressNotifier.value = current;

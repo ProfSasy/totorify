@@ -38,6 +38,26 @@ void main() {
     await storage.init();
   });
 
+  group('many songs at once', () {
+    test('only the new ones are added, and the order is kept', () async {
+      final list = await storage.createPlaylist(fresh('list'));
+      final a = track(fresh('s')), b = track(fresh('s')), c = track(fresh('s'));
+      await storage.addSongToPlaylist(list.id, a);
+      expect(await storage.addSongsToPlaylist(list.id, [a, b, c, b]), 2);
+      final songs = storage.getPlaylists().firstWhere((p) => p.id == list.id).songs;
+      expect(songs.map((s) => s.id), [a.id, b.id, c.id]);
+    });
+
+    test('many songs leave together', () async {
+      final list = await storage.createPlaylist(fresh('list'));
+      final all = [for (var i = 0; i < 4; i++) track(fresh('s'))];
+      await storage.addSongsToPlaylist(list.id, all);
+      await storage.removeSongsFromPlaylist(list.id, {all[0].id, all[2].id});
+      final songs = storage.getPlaylists().firstWhere((p) => p.id == list.id).songs;
+      expect(songs.map((s) => s.id), [all[1].id, all[3].id]);
+    });
+  });
+
   group('sources of the songs', () {
     test('a matched video is remembered', () async {
       final id = fresh('song');

@@ -316,13 +316,9 @@ Future<void> showAddSongsToPlaylists(
     var added = 0;
     var already = 0;
     for (final playlist in playlists) {
-      for (final song in songs) {
-        if (await storage.addSongToPlaylist(playlist.id, song)) {
-          added++;
-        } else {
-          already++;
-        }
-      }
+      final fresh = await storage.addSongsToPlaylist(playlist.id, songs);
+      added += fresh;
+      already += songs.length - fresh;
     }
     PlaybackLogService.instance.log(
       'UI',

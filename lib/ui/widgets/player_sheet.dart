@@ -453,14 +453,28 @@ class _PlayerSheetState extends State<PlayerSheet>
                           ),
                         ),
                       ),
-                    if (_notice != null)
-                      Positioned(
+                    Positioned(
                         left: 20,
                         right: 20,
                         // Below the header and the Canvas toggle.
                         top: topInset + 108,
                         child: IgnorePointer(
-                          child: DecoratedBox(
+                          child: AnimatedSwitcher(
+                            duration: AppMotion.base,
+                            transitionBuilder: (child, anim) => FadeTransition(
+                              opacity: anim,
+                              child: SlideTransition(
+                                position: Tween<Offset>(
+                                  begin: const Offset(0, -0.2),
+                                  end: Offset.zero,
+                                ).animate(anim),
+                                child: child,
+                              ),
+                            ),
+                            child: _notice == null
+                                ? const SizedBox.shrink(key: ValueKey('no-notice'))
+                                : DecoratedBox(
+                            key: ValueKey(_notice),
                             decoration: BoxDecoration(
                               color: colorScheme.inverseSurface,
                               borderRadius: BorderRadius.circular(AppRadius.md),
@@ -481,6 +495,7 @@ class _PlayerSheetState extends State<PlayerSheet>
                           ),
                         ),
                       ),
+                    ),
                   ],
                 );
               },
