@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../services/app_settings.dart';
+
 /// Shrinks its child slightly while it is pressed: the touch is answered
 /// before the action is.
 class BounceButton extends StatefulWidget {
@@ -60,7 +62,10 @@ class _BounceButtonState extends State<BounceButton>
       child: AnimatedBuilder(
         animation: _curve,
         builder: (context, child) => Transform.scale(
-          scale: 1 - (1 - widget.scaleDown) * _curve.value,
+          scale: 1 -
+              (1 - widget.scaleDown) *
+                  const [0.0, 0.5, 1.0, 1.6][AppSettings.instance.tapFeedback.value.clamp(0, 3)] *
+                  _curve.value,
           child: child,
         ),
         child: widget.child,

@@ -191,6 +191,24 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
               labels: const ['Veloci', 'Predefinite', 'Lente'],
               sheetTitle: 'Velocità delle animazioni',
             ),
+            SettingChoice(
+              setting: _settings.pageTransition,
+              title: 'Apertura delle schermate',
+              labels: const ['Scorrimento', 'Dissolvenza', 'Zoom', 'Dal basso', 'Nessuna'],
+              sheetTitle: 'Come si apre una schermata',
+            ),
+            SettingChoice(
+              setting: _settings.tapFeedback,
+              title: 'Risposta al tocco',
+              labels: const ['Nessuna', 'Leggera', 'Predefinita', 'Marcata'],
+              sheetTitle: 'Quanto si rimpicciolisce un tasto premuto',
+            ),
+            SettingChoice(
+              setting: _settings.scrollFeel,
+              title: 'Scorrimento',
+              labels: const ['Con rimbalzo', 'Senza rimbalzo', 'Rimbalzo secco'],
+              sheetTitle: 'Come scorrono le liste',
+            ),
             SettingLink(
               title: 'Angoli',
               subtitle: AppearanceSettingsScreen

@@ -34,6 +34,7 @@ import '../widgets/top_bar.dart';
 import 'album_screen.dart';
 import 'artist_screen.dart';
 import 'playlist_screen.dart';
+import '../theme/app_route.dart';
 
 class SearchScreen extends StatefulWidget {
   final AudioPlayerHandler audioHandler;
@@ -147,7 +148,7 @@ class _SearchScreenState extends State<SearchScreen> {
       } else {
         await Navigator.push(
           context,
-          CupertinoPageRoute<void>(
+          appRoute<void>(
             builder: (_) => PlaylistScreen(
               playlist: playlist.copyWith(isSystem: true),
               audioHandler: widget.audioHandler,
@@ -294,7 +295,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
       Navigator.push(
         context,
-        CupertinoPageRoute(
+        appRoute(
           builder: (_) => PlaylistScreen(
             playlist: pl,
             audioHandler: widget.audioHandler,
@@ -553,8 +554,6 @@ class _SearchScreenState extends State<SearchScreen> {
           return CustomScrollView(
             controller: AppNavigation.rootScrollers[AppNavigation.searchTab],
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            physics: const BouncingScrollPhysics(
-                parent: AlwaysScrollableScrollPhysics()),
             slivers: [
               if (visible('Artisti') && _artistResults.isNotEmpty) ...[
                 if (all)
@@ -704,7 +703,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                 'search: apri playlist "${playlist.title}"');
                             Navigator.push(
                               context,
-                              CupertinoPageRoute<void>(
+                              appRoute<void>(
                                 builder: (_) => PlaylistScreen(
                                   playlist: playlist,
                                   audioHandler: widget.audioHandler,

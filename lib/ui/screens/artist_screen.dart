@@ -29,6 +29,7 @@ import '../widgets/section_header.dart';
 import '../widgets/song_tile.dart';
 import 'album_screen.dart';
 import 'playlist_screen.dart';
+import '../theme/app_route.dart';
 
 /// Artist page: popular tracks, albums, singles and EPs, the tracks the
 /// artist appears on, similar artists and a short biography.
@@ -56,7 +57,7 @@ class ArtistScreen extends StatefulWidget {
     // Also opened from sheets, which live above the tabs.
     return AppNavigation.push(
       context,
-      CupertinoPageRoute<void>(
+      appRoute<void>(
         builder: (_) => ArtistScreen(
           audioHandler: audioHandler,
           artist: artist,
@@ -208,7 +209,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
     }
     Navigator.push(
       context,
-      CupertinoPageRoute<void>(
+      appRoute<void>(
         builder: (_) => PlaylistScreen(
           audioHandler: widget.audioHandler,
           playlist: Playlist(
@@ -254,8 +255,6 @@ class _ArtistScreenState extends State<ArtistScreen> {
                 return false;
               },
               child: CustomScrollView(
-                physics: const BouncingScrollPhysics(
-                    parent: AlwaysScrollableScrollPhysics()),
                 slivers: [
                   if (artist == null)
                     SliverFillRemaining(

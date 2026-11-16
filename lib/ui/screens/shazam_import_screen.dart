@@ -10,7 +10,8 @@ import '../../services/shazam_import_service.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/app_sheet.dart';
-import 'settings/settings_kit.dart';
+import 'settings/settings_kit.dart';
+import '../theme/app_route.dart';
 
 /// Brings the songs recognized with Shazam into a playlist, only those of
 /// the months chosen: a library of years is too much for one playlist.
@@ -22,7 +23,7 @@ class ShazamImportScreen extends StatefulWidget {
   static Future<Playlist?> open(BuildContext context) => Navigator.of(
     context,
     rootNavigator: true,
-  ).push(MaterialPageRoute<Playlist>(builder: (_) => const ShazamImportScreen()));
+  ).push(appRoute<Playlist>(builder: (_) => const ShazamImportScreen()));
 
   @override
   State<ShazamImportScreen> createState() => _ShazamImportScreenState();

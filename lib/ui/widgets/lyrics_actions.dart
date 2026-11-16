@@ -18,6 +18,7 @@ import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 import 'app_cover.dart';
 import 'app_sheet.dart';
+import '../theme/app_route.dart';
 
 /// What can be done with the lyrics of [song].
 Future<void> showLyricsMenu(
@@ -60,7 +61,7 @@ Future<void> showLyricsMenu(
             label: 'Modifica il testo',
             onTap: () => act('modifica', () {
               Navigator.of(rootContext).push(
-                CupertinoPageRoute<void>(
+                appRoute<void>(
                   builder: (_) => LyricsEditorScreen(song: song, lyrics: lyrics),
                 ),
               );
@@ -373,7 +374,7 @@ Future<void> showLyricsShare(
   AmbientPalette palette,
 ) {
   return Navigator.of(context).push(
-    CupertinoPageRoute<void>(
+    appRoute<void>(
       builder: (_) => _LyricsShareScreen(song: song, lyrics: lyrics, palette: palette),
     ),
   );

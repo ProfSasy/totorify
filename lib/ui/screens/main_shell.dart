@@ -1,5 +1,4 @@
 import 'package:audio_service/audio_service.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../services/audio_handler.dart';
 import '../../services/playback_log_service.dart';
@@ -9,7 +8,8 @@ import '../widgets/totorify_nav_bar.dart';
 import 'home_screen.dart';
 import 'library_screen.dart';
 import 'search_screen.dart';
-import 'settings_screen.dart';
+import 'settings_screen.dart';
+import '../theme/app_route.dart';
 
 /// The frame of the app: three tabs, each with its own stack of pages (kept
 /// while the user is in another tab), and
@@ -52,7 +52,7 @@ class _MainShellState extends State<MainShell> {
 
   Widget _tab(int index, Widget root) => Navigator(
         key: AppNavigation.tabKeys[index],
-        onGenerateRoute: (settings) => CupertinoPageRoute<void>(
+        onGenerateRoute: (settings) => appRoute<void>(
           settings: settings,
           builder: (_) => root,
         ),

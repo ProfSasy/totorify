@@ -5,6 +5,7 @@ import '../../../services/app_settings.dart';
 import '../../../services/playback_log_service.dart';
 import '../../theme/app_icons.dart';
 import '../../theme/app_tokens.dart';
+import '../../theme/app_route.dart';
 
 /// A page of the settings: a title and its sections, one under the other.
 class SettingsPage extends StatelessWidget {
@@ -39,7 +40,7 @@ class SettingsPage extends StatelessWidget {
   static Future<void> open(BuildContext context, Widget page) => Navigator.of(
     context,
     rootNavigator: true,
-  ).push(CupertinoPageRoute<void>(builder: (_) => page));
+  ).push(appRoute<void>(builder: (_) => page));
 }
 
 /// A titled card of settings, rows divided by thin lines.

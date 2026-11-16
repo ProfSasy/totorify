@@ -34,7 +34,8 @@ import 'artist_screen.dart';
 import 'history_screen.dart';
 import 'settings/settings_kit.dart' show askText;
 import 'stats_screen.dart';
-import 'playlist_screen.dart';
+import 'playlist_screen.dart';
+import '../theme/app_route.dart';
 
 class HomeScreen extends StatefulWidget {
   final AudioPlayerHandler audioHandler;
@@ -219,7 +220,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _openPlaylist(Playlist playlist) {
     Navigator.push(
       context,
-      CupertinoPageRoute<void>(
+      appRoute<void>(
         builder: (_) => PlaylistScreen(
           playlist: playlist,
           audioHandler: widget.audioHandler,
@@ -321,13 +322,13 @@ class _HomeScreenState extends State<HomeScreen> {
   void _openStats() {
     PlaybackLogService.instance.log('UI', 'home: apri statistiche');
     Navigator.of(context, rootNavigator: true)
-        .push(CupertinoPageRoute<void>(builder: (_) => const StatsScreen()));
+        .push(appRoute<void>(builder: (_) => const StatsScreen()));
   }
 
   void _openHistoryScreen() {
     PlaybackLogService.instance.log('UI', 'home: apri cronologia');
     Navigator.of(context, rootNavigator: true)
-        .push(CupertinoPageRoute<void>(builder: (_) => const HistoryScreen()));
+        .push(appRoute<void>(builder: (_) => const HistoryScreen()));
   }
 
   void _openPin(Pin pin) {
@@ -409,8 +410,6 @@ class _HomeScreenState extends State<HomeScreen> {
               backgroundColor: cs.primary,
               child: CustomScrollView(
                 controller: AppNavigation.rootScrollers[AppNavigation.homeTab],
-                physics: const BouncingScrollPhysics(
-                    parent: AlwaysScrollableScrollPhysics()),
                 slivers: [
                   SliverToBoxAdapter(child: SizedBox(height: topInset + AppSpacing.sm)),
 

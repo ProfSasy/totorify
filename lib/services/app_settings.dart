@@ -222,6 +222,18 @@ class AppSettings {
   /// How fast the app moves: 0 fast, 1 as designed, 2 slow.
   late final motionSpeed = _setting<int>('motion_speed', 1);
 
+  /// How a screen comes in: 0 slide (with the swipe back), 1 fade, 2 zoom,
+  /// 3 from the bottom, 4 none.
+  late final pageTransition = _setting<int>('page_transition', 0);
+
+  /// How much a pressed button shrinks: 0 not at all, 1 a little, 2 as
+  /// designed, 3 a lot.
+  late final tapFeedback = _setting<int>('tap_feedback', 2);
+
+  /// How lists end: 0 they bounce, 1 they stop, 2 they bounce and slow down
+  /// quickly (a firmer scroll).
+  late final scrollFeel = _setting<int>('scroll_feel', 0);
+
   /// The looks the user saved, each as JSON (see `AppThemes`).
   late final savedThemes = _setting<List<String>>('saved_themes', const []);
 
@@ -380,6 +392,9 @@ class AppSettings {
     colorText,
     colorTextSecondary,
     motionSpeed,
+    pageTransition,
+    tapFeedback,
+    scrollFeel,
     iconStyle,
     listDensity,
     listCoverSize,

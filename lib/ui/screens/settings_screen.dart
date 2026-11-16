@@ -26,6 +26,7 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/app_cover.dart';
 import 'playback_log_screen.dart';
+import '../theme/app_route.dart';
 
 class SettingsScreen extends StatefulWidget {
   final AudioPlayerHandler audioHandler;
@@ -80,7 +81,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     // Full screen, above the tabs: the page is a web login.
     await Navigator.of(context, rootNavigator: true).push(
-      CupertinoPageRoute<bool>(builder: (_) => const SpotifyWebLoginScreen()),
+      appRoute<bool>(builder: (_) => const SpotifyWebLoginScreen()),
     );
     _onSpotifyLoginChanged();
   }
@@ -418,7 +419,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     PlaybackLogService.instance
                         .log('UI', 'settings: apri log riproduzione');
                     Navigator.of(context, rootNavigator: true).push(
-                      CupertinoPageRoute<void>(
+                      appRoute<void>(
                         builder: (_) => const PlaybackLogScreen(),
                       ),
                     );

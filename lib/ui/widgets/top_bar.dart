@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -11,6 +10,7 @@ import '../app_navigation.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_tokens.dart';
 import 'app_cover.dart';
+import '../theme/app_route.dart';
 
 /// The color of what is playing (or a hint of the accent, in silence),
 /// washing down from the top of a tab: browsing stays connected to the
@@ -137,7 +137,7 @@ class ProfileButton extends StatelessWidget {
     // Above the tabs: the Settings belong to none of them, and must not be
     // found again inside the tab they were opened from.
     Navigator.of(context, rootNavigator: true)
-        .push(CupertinoPageRoute<void>(builder: builder));
+        .push(appRoute<void>(builder: builder));
   }
 
   @override

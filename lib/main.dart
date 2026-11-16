@@ -32,6 +32,7 @@ import 'ui/theme/app_theme.dart';
 import 'ui/theme/app_tokens.dart';
 import 'ui/theme/dynamic_color.dart';
 import 'ui/widgets/connect_request_prompt.dart';
+import 'ui/theme/app_route.dart';
 import 'ui/widgets/player_sheet.dart';
 
 late AudioPlayerHandler audioHandler;
@@ -315,6 +316,7 @@ class _TotorifyAppState extends State<TotorifyApp> with WidgetsBindingObserver {
         timeDilation = const [0.7, 1.0, 1.35][settings.motionSpeed.value.clamp(0, 2)];
         return MaterialApp(
           title: 'Totorify',
+          scrollBehavior: const AppScrollBehavior(),
           debugShowCheckedModeBanner: false,
           // The size chosen in iOS is kept within what the dense player and
           // list layouts can take; the size chosen in the app goes on top.

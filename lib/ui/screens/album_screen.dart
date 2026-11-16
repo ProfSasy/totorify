@@ -12,6 +12,7 @@ import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/app_empty_state.dart';
 import 'playlist_screen.dart';
+import '../theme/app_route.dart';
 
 /// Page of a release (album, single or EP): loads its tracks and shows them
 /// like any other collection, with play, shuffle and download.
@@ -30,7 +31,7 @@ class AlbumScreen extends StatefulWidget {
         .log('UI', 'apri ${album.type.toLowerCase()} "${album.title}" di ${album.artist}');
     return AppNavigation.push(
       context,
-      CupertinoPageRoute<void>(
+      appRoute<void>(
         builder: (_) => AlbumScreen(album: album, audioHandler: audioHandler),
       ),
     );

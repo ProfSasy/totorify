@@ -426,8 +426,6 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                     return false;
                   },
                   child: CustomScrollView(
-                    physics: const BouncingScrollPhysics(
-                        parent: AlwaysScrollableScrollPhysics()),
                     slivers: [
                       SliverToBoxAdapter(
                         child: CollectionHeader(

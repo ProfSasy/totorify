@@ -24,7 +24,8 @@ import '../widgets/song_tile.dart';
 import '../widgets/top_bar.dart';
 import 'artist_screen.dart';
 import 'playlist_screen.dart';
-import 'shazam_import_screen.dart';
+import 'shazam_import_screen.dart';
+import '../theme/app_route.dart';
 
 class LibraryScreen extends StatefulWidget {
   final AudioPlayerHandler audioHandler;
@@ -153,7 +154,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     PlaybackLogService.instance.log('UI', 'library: apri playlist "${playlist.title}"');
     Navigator.push(
       context,
-      CupertinoPageRoute<void>(
+      appRoute<void>(
         builder: (_) => PlaylistScreen(
           playlist: playlist,
           audioHandler: widget.audioHandler,
@@ -190,8 +191,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ]),
               builder: (context, _) => CustomScrollView(
                 controller: AppNavigation.rootScrollers[AppNavigation.libraryTab],
-                physics: const BouncingScrollPhysics(
-                    parent: AlwaysScrollableScrollPhysics()),
                 slivers: [
                   SliverToBoxAdapter(child: SizedBox(height: topInset)),
                   SliverToBoxAdapter(child: _buildSortRow(cs)),
