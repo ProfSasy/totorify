@@ -12,6 +12,7 @@ import 'search_screen.dart';
 import 'settings_screen.dart';
 import '../theme/app_route.dart';
 import '../theme/app_theme.dart';
+import '../theme/element_scale.dart';
 
 /// The frame of the app: three tabs, each with its own stack of pages (kept
 /// while the user is in another tab), and
@@ -120,6 +121,8 @@ class _MainShellState extends State<MainShell> {
     final tabTheme = _tabTheme(Theme.of(context), _currentIndex);
     final cs = tabTheme.colorScheme;
     final bottomNavHeight = TotorifyNavBar.totalHeight(context);
+    // The fade covers the mini player too, taller or lower as it is.
+    final fade = 96 + BarSizes.miniExtra;
 
     return Scaffold(
       backgroundColor: tabTheme.scaffoldBackgroundColor,
@@ -154,7 +157,7 @@ class _MainShellState extends State<MainShell> {
             left: 0,
             right: 0,
             bottom: 0,
-            height: bottomNavHeight + 96,
+            height: bottomNavHeight + fade,
             child: IgnorePointer(
               child: DecoratedBox(
                 decoration: BoxDecoration(
@@ -167,7 +170,7 @@ class _MainShellState extends State<MainShell> {
                       cs.surfaceDim,
                     ],
                     // Solid from the top edge of the tab bar down.
-                    stops: [0.0, 0.3, 96 / (bottomNavHeight + 96)],
+                    stops: [0.0, 0.3, fade / (bottomNavHeight + fade)],
                   ),
                 ),
               ),

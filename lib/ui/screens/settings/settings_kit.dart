@@ -6,6 +6,7 @@ import '../../../services/playback_log_service.dart';
 import '../../theme/app_icons.dart';
 import '../../theme/app_tokens.dart';
 import '../../theme/app_route.dart';
+import '../../theme/element_scale.dart';
 
 /// A page of the settings: a title and its sections, one under the other.
 class SettingsPage extends StatelessWidget {
@@ -25,9 +26,10 @@ class SettingsPage extends StatelessWidget {
         ),
       ),
       body: ListView(
+        // The side margin of the pages, as the user chose it.
         padding: EdgeInsets.only(
-          left: 16,
-          right: 16,
+          left: PageSpacing.margin,
+          right: PageSpacing.margin,
           top: 12,
           bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xl,
         ),

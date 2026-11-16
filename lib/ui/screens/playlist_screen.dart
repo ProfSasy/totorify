@@ -14,6 +14,7 @@ import '../../services/playback_log_service.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import '../widgets/app_cover.dart';
 import '../widgets/app_empty_state.dart';
 import '../widgets/app_sheet.dart';
@@ -203,7 +204,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     // The artist chosen keeps its pill, or the filter could not be removed.
     final artists = _artist == null || top.contains(_artist) ? top : [_artist!, ...top];
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.xs, AppSpacing.lg, AppSpacing.sm),
+      padding: EdgeInsets.fromLTRB(PageSpacing.margin, AppSpacing.xs, PageSpacing.margin, AppSpacing.sm),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -550,8 +551,8 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                             ),
                           ),
                         ),
-                      const SliverToBoxAdapter(
-                          child: SizedBox(height: AppSpacing.bottomContentInset)),
+                      SliverToBoxAdapter(
+                          child: SizedBox(height: BarSizes.bottomInset)),
                     ],
                   ),
                 ),
@@ -594,8 +595,8 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                 ),
                 if (_selecting)
                   Positioned(
-                    left: AppSpacing.lg,
-                    right: AppSpacing.lg,
+                    left: PageSpacing.margin,
+                    right: PageSpacing.margin,
                     bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.md,
                     child: _SelectionBar(
                       count: _selected.length,
@@ -607,7 +608,8 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                 if (songs.isNotEmpty && _reordering == null && !_selecting)
                   Positioned(
                     top: MediaQuery.paddingOf(context).top + TopBar.height - 8,
-                    right: AppSpacing.lg,
+                    // In line with the button in the header.
+                    right: PageSpacing.margin,
                     child: ValueListenableBuilder<bool>(
                       valueListenable: _pinPlay,
                       builder: (context, pinned, child) => IgnorePointer(

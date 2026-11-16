@@ -7,6 +7,7 @@ import '../../../services/storage_service.dart';
 import '../../ordered_choice.dart';
 import '../../theme/app_icons.dart';
 import '../../theme/app_tokens.dart';
+import '../../theme/element_scale.dart';
 import '../../widgets/app_sheet.dart';
 import 'settings_kit.dart';
 
@@ -272,11 +273,23 @@ class NavigationSettingsScreen extends StatelessWidget {
               title: 'Scheda attiva',
               labels: const ['Più chiara', 'Nel colore dell\'app', 'In una pillola'],
             ),
+            SettingChoice(
+              setting: settings.navBarHeight,
+              title: 'Altezza della barra',
+              labels: BarSizes.navLabels,
+              sheetTitle: 'Quanto è alta la barra delle schede',
+            ),
           ],
         ),
         SettingsSection(
           title: 'Mini player',
           children: [
+            SettingChoice(
+              setting: settings.miniPlayerHeight,
+              title: 'Altezza',
+              labels: BarSizes.miniLabels,
+              sheetTitle: 'Quanto è alto il mini player',
+            ),
             SettingChoice(
               setting: settings.miniPlayerStyle,
               title: 'Colore',

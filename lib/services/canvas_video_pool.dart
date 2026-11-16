@@ -14,6 +14,7 @@ class CanvasVideoPool {
   static final CanvasVideoPool instance = CanvasVideoPool._();
 
   static const int _maxWarmVideos = 4;
+  static const Duration _initTimeout = Duration(seconds: 15);
 
   /// Player for a Canvas, which is either on Spotify's servers or a file
   /// saved with a download.
@@ -92,7 +93,10 @@ class CanvasVideoPool {
 
     final future = () async {
       try {
-        await controller.initialize();
+        // A controller disposed while initializing (evicted, or the app went
+        // to the background) never completes initialize(): without a limit
+        // this future, and a take() awaiting it, would hang forever.
+        await controller.initialize().timeout(_initTimeout);
         if (!identical(_controllers[url], controller)) {
           await controller.dispose();
           return;
@@ -149,7 +153,7 @@ class CanvasVideoPool {
     final pending = _warming[url];
     if (pending != null) {
       try {
-        await pending;
+        await pending.timeout(_initTimeout + const Duration(seconds: 1));
       } catch (_) {}
     }
     final controller = _controllers.remove(url);
@@ -165,10 +169,11 @@ class CanvasVideoPool {
 
   /// Puts a still-healthy controller back after its widget unmounts (player
   /// sheet closed, canvas toggled off), so reopening is instant. Broken
-  /// controllers are disposed instead.
+  /// controllers are disposed instead, and so is every controller handed
+  /// back while the pool is suspended (the app is in the background).
   void release(String url, VideoPlayerController controller) {
     final value = controller.value;
-    if (url.isEmpty || !value.isInitialized || value.hasError) {
+    if (_suspended || url.isEmpty || !value.isInitialized || value.hasError) {
       try {
         controller.dispose();
       } catch (_) {}

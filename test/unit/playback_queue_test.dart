@@ -378,6 +378,36 @@ void main() {
       expect(queue.peekNext(), at < 4 ? at + 1 : isNull);
     });
 
+    test('insertAfterCurrent makes the song the next one played', () {
+      final queue = PlaybackQueue(random: Random(6))..replace(songs(8), song('s0'));
+      queue.setShuffle(true);
+      // A song was already drawn (and maybe prepared) before "play next".
+      expect(queue.peekNext(), isNotNull);
+      queue.insertAfterCurrent(song('x'));
+      expect(queue.items[queue.peekNext()!].id, 'x');
+      queue.moveTo(queue.peekNext()!);
+      expect(queue.current!.id, 'x');
+      // Then the round goes on with the songs not played yet.
+      final visited = walk(queue);
+      expect(visited.toSet(), {for (var i = 1; i < 8; i++) 's$i'});
+      expect(visited, hasLength(7));
+    });
+
+    test('repeat all with the same song queued twice still starts new rounds', () {
+      for (var seed = 0; seed < 20; seed++) {
+        final queue = PlaybackQueue(random: Random(seed))
+          ..setRepeat(PlaybackRepeat.all)
+          ..replace([song('a'), song('b'), song('a'), song('c')], song('a'));
+        queue.setShuffle(true);
+        final visited = ['a', ...walk(queue, limit: 29)];
+        // Every round holds each distinct song once.
+        for (var round = 0; round < 10; round++) {
+          expect(visited.skip(round * 3).take(3).toSet(), {'a', 'b', 'c'},
+              reason: 'seed $seed, round $round: $visited');
+        }
+      }
+    });
+
     test('a song appended during the round is played in that round', () {
       final queue = PlaybackQueue(random: Random(8))..replace(songs(3), song('s0'));
       queue.setShuffle(true);

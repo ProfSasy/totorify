@@ -70,8 +70,10 @@ extension YTMusicPlaylists on YTMusicService {
           if (renderer == null) continue;
           final videoId = renderer['videoId'] as String?;
           if (videoId == null) continue;
-          final title = (renderer['title']?['runs'] as List?)?.first?['text'] as String? ?? '';
-          final artist = (renderer['longBylineText']?['runs'] as List?)?.first?['text'] as String? ?? '';
+          // firstOrNull: an empty list of runs must skip one song, not end
+          // the whole list.
+          final title = (renderer['title']?['runs'] as List?)?.firstOrNull?['text'] as String? ?? '';
+          final artist = (renderer['longBylineText']?['runs'] as List?)?.firstOrNull?['text'] as String? ?? '';
           final thumbs = renderer['thumbnail']?['thumbnails'] as List?;
           final thumb = thumbs?.isNotEmpty == true ? thumbs!.last['url'] as String? ?? '' : '';
           final lengthRuns = renderer['lengthText']?['runs'] as List?;

@@ -83,6 +83,25 @@ Future<void> _startApp() async {
   _installErrorLogging();
   await PlaybackLogService.instance.init();
 
+  // A failure during the start must not leave the launch screen up forever:
+  // it is logged, and the app starts anyway when what every screen reads
+  // (storage and the audio handler) is ready, or shows what went wrong.
+  try {
+    await _initServices();
+  } catch (e, stack) {
+    PlaybackLogService.instance.error('INIT', 'avvio interrotto: $e', stack);
+    if (!_coreReady) {
+      runApp(_StartupErrorApp(error: '$e'));
+      return;
+    }
+  }
+  runApp(const TotorifyApp());
+}
+
+// Set once storage and the audio handler are up: the app can run from there.
+bool _coreReady = false;
+
+Future<void> _initServices() async {
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -140,6 +159,7 @@ Future<void> _startApp() async {
       rewindInterval: Duration(seconds: 15),
     ),
   );
+  _coreReady = true;
 
   // The colors of the cover of what plays, for who wants the app to follow.
   DynamicColor.instance.follow(audioHandler.mediaItem);
@@ -163,7 +183,12 @@ Future<void> _startApp() async {
   // The session is NOT activated here: activating it at launch would stop
   // whatever other app is already playing. Playback paths activate it.
   final session = await AudioSession.instance;
-  await session.configure(const AudioSessionConfiguration.music());
+  try {
+    await session.configure(const AudioSessionConfiguration.music());
+  } catch (e, stack) {
+    // The player still works with the default session: go on.
+    PlaybackLogService.instance.error('SESSION', 'configurazione fallita: $e', stack);
+  }
 
   // System integration, native semantics: a phone call pauses playback and
   // resumes it when it ends if we were playing; Siri/notifications duck the
@@ -220,7 +245,49 @@ Future<void> _startApp() async {
     const Duration(seconds: 6),
     DownloadService.instance.backfillExtras,
   ));
-  runApp(const TotorifyApp());
+}
+
+/// Shown instead of the app when it could not start at all.
+class _StartupErrorApp extends StatelessWidget {
+  const _StartupErrorApp({required this.error});
+
+  final String error;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark(),
+      home: Scaffold(
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Totorify non è riuscito ad avviarsi',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Chiudi l\'app e riaprila. Se il problema resta, '
+                  'segnala il messaggio qui sotto.',
+                ),
+                const SizedBox(height: 16),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: SelectableText(error, style: const TextStyle(fontSize: 12)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class TotorifyApp extends StatefulWidget {

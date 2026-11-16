@@ -43,6 +43,24 @@ void main() {
       expect(PageSpacing.cardGap, AppSpacing.lg);
     });
 
+    test('the bars keep their heights, and the lists their room at the end', () {
+      expect(settings.navBarHeight.fallback, BarSizes.designed);
+      expect(settings.miniPlayerHeight.fallback, BarSizes.designed);
+      expect(BarSizes.navHeight, 56);
+      expect(BarSizes.navIcon, 26);
+      expect(BarSizes.navGap, 4);
+      expect(BarSizes.miniExtra, 0);
+      expect(BarSizes.bottomInset, AppSpacing.bottomContentInset);
+      expect(BarSizes.bottomInset, 176);
+      // The mini player as drawn: cover and buttons of 40, room of 8 and 6,
+      // and its buttons left as they are.
+      expect(BarSizes.miniRowAt(BarSizes.designed), 40);
+      expect(BarSizes.miniTopAt(BarSizes.designed), AppSpacing.sm);
+      expect(BarSizes.miniBottomAt(BarSizes.designed), 6);
+      expect(BarSizes.miniPlayIconAt(BarSizes.designed), 30);
+      expect(BarSizes.miniButtonBoxAt(BarSizes.designed), isNull);
+    });
+
     test('a style at the designed size is the very same style', () {
       const style = TextStyle(fontSize: 15.5, letterSpacing: -0.1);
       expect(identical(ElementScale.scaled(style, 1.0), style), isTrue);
@@ -100,6 +118,63 @@ void main() {
       expect(PageSpacing.margin, 12);
     });
 
+    test('each level of height has its values, lowest to tallest', () {
+      expect(BarSizes.navHeights, [48, 56, 64, 72]);
+      for (final values in [
+        BarSizes.navHeights,
+        BarSizes.navIcons,
+        BarSizes.navGaps,
+        BarSizes.miniRows,
+        BarSizes.miniTops,
+        BarSizes.miniBottoms,
+        BarSizes.miniPlayIcons,
+      ]) {
+        expect(values, hasLength(BarSizes.navLabels.length));
+        for (var level = 1; level < values.length; level++) {
+          expect(values[level], greaterThan(values[level - 1]));
+        }
+      }
+      expect(BarSizes.miniLabels, hasLength(BarSizes.navLabels.length));
+      for (var level = 0; level < 4; level++) {
+        expect(BarSizes.navHeightAt(level), BarSizes.navHeights[level]);
+        expect(BarSizes.miniRowAt(level), BarSizes.miniRows[level]);
+        if (level != BarSizes.designed) {
+          // The buttons are held to the row of the level.
+          expect(BarSizes.miniButtonBoxAt(level), BarSizes.miniRows[level]);
+        }
+      }
+      // Lower, as designed, then taller: the mini player and the room the
+      // lists leave at their end.
+      final extras = [for (var level = 0; level < 4; level++) BarSizes.miniExtraAt(level)];
+      expect(extras, [-16, 0, 10, 22]);
+      expect(BarSizes.bottomInsetAt(0, 0), 176 - 8 - 16);
+      expect(BarSizes.bottomInsetAt(3, 3), 176 + 16 + 22);
+      expect(BarSizes.bottomInsetAt(2, 1), 176 + 8);
+      expect(BarSizes.bottomInsetAt(1, 2), 176 + 10);
+    });
+
+    test('a height chosen is read from its setting', () async {
+      await settings.navBarHeight.set(3);
+      await settings.miniPlayerHeight.set(0);
+      expect(BarSizes.navHeight, 72);
+      expect(BarSizes.navIcon, 30);
+      expect(BarSizes.miniExtra, -16);
+      expect(BarSizes.bottomInset, 176 + 16 - 16);
+    });
+
+    test('a level of height out of range takes the nearest one', () async {
+      expect(BarSizes.navHeightAt(-2), 48);
+      expect(BarSizes.navHeightAt(9), 72);
+      expect(BarSizes.miniExtraAt(-1), BarSizes.miniExtraAt(0));
+      expect(BarSizes.miniExtraAt(12), BarSizes.miniExtraAt(3));
+      expect(BarSizes.miniButtonBoxAt(-4), BarSizes.miniRows.first);
+      expect(BarSizes.miniButtonBoxAt(40), BarSizes.miniRows.last);
+      await settings.navBarHeight.set(-7);
+      await settings.miniPlayerHeight.set(99);
+      expect(BarSizes.navHeight, 48);
+      expect(BarSizes.bottomInset, BarSizes.bottomInsetAt(0, 3));
+    });
+
     test('a larger card title makes the row of cards taller, a smaller one does not', () async {
       await settings.textCardTitle.set(4);
       expect(CoverCard.heightFor(118), greaterThan(118 + 32 + 19));
@@ -128,8 +203,12 @@ void main() {
           'page_margin',
           'section_gap',
           'card_gap',
+          'nav_bar_height',
+          'mini_player_height',
         ]),
       );
+      // The partial reset puts the heights back too.
+      expect(settings.elementLayout, containsAll([settings.navBarHeight, settings.miniPlayerHeight]));
       // They travel with a backup too.
       expect(settings.export().keys, containsAll(keys));
     });
@@ -139,6 +218,8 @@ void main() {
       await settings.textNavLabels.set(0);
       await settings.pageMargin.set(3);
       await settings.cardGap.set(2);
+      await settings.navBarHeight.set(0);
+      await settings.miniPlayerHeight.set(2);
 
       // What `AppThemes.capture` writes down: what differs from the design.
       final look = AppLook(name: 'Spazioso', values: {
@@ -150,10 +231,13 @@ void main() {
       expect(look.values, containsPair('text_song_title', 4));
       expect(look.values, containsPair('page_margin', 3));
       expect(look.values, isNot(contains('section_gap')));
+      expect(look.values, containsPair('nav_bar_height', 0));
+      expect(look.values, containsPair('mini_player_height', 2));
 
       final saved = AppLook.decode(look.encode())!;
       await designed();
       expect(PageSpacing.margin, 16);
+      expect(BarSizes.bottomInset, 176);
 
       // What `AppThemes.apply` puts back.
       Future<void> apply(AppLook look) => settings.restore({
@@ -171,6 +255,10 @@ void main() {
       expect(settings.sectionGap.value, 1);
       expect(PageSpacing.margin, 28);
       expect(ElementScale.of(settings.textSongTitle), 1.25);
+      expect(settings.navBarHeight.value, 0);
+      expect(settings.miniPlayerHeight.value, 2);
+      expect(BarSizes.navHeight, 48);
+      expect(BarSizes.bottomInset, 176 - 8 + 10);
 
       await apply(AppThemes.builtIn.first);
       for (final setting in settings.elementLayout) {

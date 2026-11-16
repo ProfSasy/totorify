@@ -298,19 +298,27 @@ extension CanvasOfArtist on CanvasService {
   Future<_AlbumCanvases?> _loadAlbumCanvases(String albumId) async {
     final entity = await _embedEntity('album', albumId);
     if (entity == null) return null;
-    final title = (entity['name'] ?? entity['title'] ?? '') as String;
-    final released = DateTime.tryParse(entity['releaseDate']?['isoString'] as String? ?? '');
-
+    final String title;
+    final DateTime? released;
     // (track id, title, artists) in album order.
     final tracks = <(String, String, List<String>)>[];
-    for (final track in (entity['trackList'] as List<dynamic>? ?? const []).take(CanvasService._maxAlbumTracks)) {
-      final uri = track['uri'] as String? ?? '';
-      if (!uri.startsWith('spotify:track:')) continue;
-      tracks.add((
-        uri.split(':').last,
-        track['title'] as String? ?? '',
-        (track['subtitle'] as String? ?? '').split(',').map((name) => name.trim()).toList(),
-      ));
+    // The page is Spotify's to change: a field of another shape is a
+    // failure like a missing page, not an exception.
+    try {
+      title = (entity['name'] ?? entity['title'] ?? '') as String;
+      released = DateTime.tryParse(entity['releaseDate']?['isoString'] as String? ?? '');
+      for (final track in (entity['trackList'] as List<dynamic>? ?? const []).take(CanvasService._maxAlbumTracks)) {
+        final uri = track['uri'] as String? ?? '';
+        if (!uri.startsWith('spotify:track:')) continue;
+        tracks.add((
+          uri.split(':').last,
+          track['title'] as String? ?? '',
+          (track['subtitle'] as String? ?? '').split(',').map((name) => name.trim()).toList(),
+        ));
+      }
+    } catch (e) {
+      debugPrint('CanvasService album $albumId: $e');
+      return null;
     }
     final ids = [for (final t in tracks) t.$1];
 
@@ -415,20 +423,27 @@ extension CanvasOfArtist on CanvasService {
     if (cached != null) return cached;
 
     final entity = await _embedEntity('track', trackId);
-    final artists = entity?['artists'] as List<dynamic>? ?? const [];
-    if (entity == null || artists.isEmpty) return null;
+    final _TrackInfo info;
+    // As for the album: a field of another shape gives no details.
+    try {
+      final artists = entity?['artists'] as List<dynamic>? ?? const [];
+      if (entity == null || artists.isEmpty) return null;
 
-    final info = _TrackInfo(
-      title: (entity['name'] ?? entity['title'] ?? '') as String,
-      artistId: (artists.first['uri'] as String?)?.split(':').last,
-      artistName: artists.first['name'] as String? ?? '',
-      artists: {
-        for (final artist in artists)
-          if (DeezerService.normalize(artist['name'] as String? ?? '').isNotEmpty)
-            DeezerService.normalize(artist['name'] as String),
-      },
-      released: DateTime.tryParse(entity['releaseDate']?['isoString'] as String? ?? ''),
-    );
+      info = _TrackInfo(
+        title: (entity['name'] ?? entity['title'] ?? '') as String,
+        artistId: (artists.first['uri'] as String?)?.split(':').last,
+        artistName: artists.first['name'] as String? ?? '',
+        artists: {
+          for (final artist in artists)
+            if (DeezerService.normalize(artist['name'] as String? ?? '').isNotEmpty)
+              DeezerService.normalize(artist['name'] as String),
+        },
+        released: DateTime.tryParse(entity['releaseDate']?['isoString'] as String? ?? ''),
+      );
+    } catch (e) {
+      debugPrint('CanvasService track $trackId: $e');
+      return null;
+    }
     if (_trackInfoCache.length >= CanvasService._maxTrackInfoCached) {
       _trackInfoCache.remove(_trackInfoCache.keys.first);
     }

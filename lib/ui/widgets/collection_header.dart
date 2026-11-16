@@ -7,6 +7,7 @@ import '../../services/app_settings.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import 'top_bar.dart';
 
 /// Top of a collection page: the artwork over a wash of its own color,
@@ -68,10 +69,11 @@ class CollectionHeader extends StatelessWidget {
           ),
         ),
         Padding(
+          // At the side margin of the page, in line with the songs below.
           padding: EdgeInsets.fromLTRB(
-            AppSpacing.lg,
+            PageSpacing.margin,
             TopBar.extent(context) + AppSpacing.xs,
-            AppSpacing.lg,
+            PageSpacing.margin,
             AppSpacing.sm,
           ),
           child: Column(
@@ -146,6 +148,9 @@ class CollectionTopBar extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final start = revealAt ?? CollectionHeader.artworkSize(context) - AppSpacing.md;
     final surface = Color.lerp(palette.washFor(cs).withValues(alpha: 1), cs.surfaceDim, 0.4)!;
+    // The glyphs of the buttons stay in line with the side margin of the
+    // page: as far in or out as the user moved it.
+    final edge = math.max(0.0, AppSpacing.xs + PageSpacing.margin - AppSpacing.lg);
 
     return Positioned(
       top: 0,
@@ -162,7 +167,7 @@ class CollectionTopBar extends StatelessWidget {
               height: TopBar.height,
               child: Row(
                 children: [
-                  const SizedBox(width: AppSpacing.xs),
+                  SizedBox(width: edge),
                   IconButton(
                     tooltip: 'Indietro',
                     style: scrim
@@ -189,7 +194,7 @@ class CollectionTopBar extends StatelessWidget {
                     ),
                   ),
                   ...actions,
-                  const SizedBox(width: AppSpacing.xs),
+                  SizedBox(width: edge),
                 ],
               ),
             ),

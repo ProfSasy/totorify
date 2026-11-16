@@ -754,8 +754,8 @@ class _SearchScreenState extends State<SearchScreen> {
                 ),
               ),
             ],
-            const SliverToBoxAdapter(
-                child: SizedBox(height: AppSpacing.bottomContentInset)),
+            SliverToBoxAdapter(
+                child: SizedBox(height: BarSizes.bottomInset)),
           ],
         );
       },
@@ -868,7 +868,7 @@ class _SearchScreenState extends State<SearchScreen> {
         const SliverToBoxAdapter(child: SectionHeader('Sfoglia tutto')),
         SliverPadding(
           padding: EdgeInsets.fromLTRB(
-              PageSpacing.margin, 0, PageSpacing.margin, AppSpacing.bottomContentInset),
+              PageSpacing.margin, 0, PageSpacing.margin, BarSizes.bottomInset),
           sliver: SliverGrid.count(
             crossAxisCount: 2,
             mainAxisSpacing: AppSpacing.md,

@@ -346,8 +346,16 @@ class AppSettings {
   /// The space between the cards of a row that scrolls sideways.
   late final cardGap = _setting<int>('card_gap', 1);
 
-  /// The sizes of text and the spacings above, for the settings that put
-  /// them back as designed all at once.
+  // How tall the bars at the bottom are: 0..3, 1 as designed (`BarSizes`).
+
+  /// The tab bar.
+  late final navBarHeight = _setting<int>('nav_bar_height', 1);
+
+  /// The mini player.
+  late final miniPlayerHeight = _setting<int>('mini_player_height', 1);
+
+  /// The sizes of text, the spacings and the heights above, for the
+  /// settings that put them back as designed all at once.
   late final List<Setting<int>> elementLayout = [
     textSongTitle,
     textSongSubtitle,
@@ -359,6 +367,8 @@ class AppSettings {
     pageMargin,
     sectionGap,
     cardGap,
+    navBarHeight,
+    miniPlayerHeight,
   ];
 
   // ── Pages ───────────────────────────────────────────────────────────────
@@ -507,6 +517,8 @@ class AppSettings {
     pageMargin,
     sectionGap,
     cardGap,
+    navBarHeight,
+    miniPlayerHeight,
   ];
 
   /// Everything as it is stored, for a backup.

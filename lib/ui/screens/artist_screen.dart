@@ -313,8 +313,8 @@ class _ArtistScreenState extends State<ArtistScreen> {
                       )
                     else
                       ..._buildSections(page, colorScheme),
-                    const SliverToBoxAdapter(
-                        child: SizedBox(height: AppSpacing.bottomContentInset)),
+                    SliverToBoxAdapter(
+                        child: SizedBox(height: BarSizes.bottomInset)),
                   ],
                 ],
               ),

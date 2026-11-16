@@ -12,9 +12,20 @@ class LyricsStore {
 
   static const int _maxStored = 1000;
 
+  // When the lyrics were saved, kept beside them for the eviction: a box
+  // gives its keys sorted, not in the order they arrived. Lyrics saved
+  // before it was (no moment) count as the oldest.
+  static const String _savedAtKey = '_savedAt';
+
   Map<String, dynamic>? get(String songId) {
     final raw = box.get(songId);
-    return raw is Map ? Map<String, dynamic>.from(raw) : null;
+    return raw is Map ? (Map<String, dynamic>.from(raw)..remove(_savedAtKey)) : null;
+  }
+
+  int _savedAt(Object? key) {
+    final raw = box.get(key);
+    final at = raw is Map ? raw[_savedAtKey] : null;
+    return at is int ? at : 0;
   }
 
   /// True for the lyrics the user chose or wrote.
@@ -44,13 +55,14 @@ class LyricsStore {
       if (box.length >= _maxStored) {
         // The oldest go first, but never those of a downloaded song nor
         // those the user chose or wrote.
-        final evict = box.keys
-            .where((key) => !isDownloaded(key) && !isManual(key))
-            .take(_maxStored ~/ 5)
-            .toList();
+        final candidates = [
+          for (final (i, key) in box.keys.indexed)
+            if (!isDownloaded(key) && !isManual(key)) (_savedAt(key), i, key),
+        ]..sort((a, b) => a.$1 != b.$1 ? a.$1.compareTo(b.$1) : a.$2.compareTo(b.$2));
+        final evict = [for (final entry in candidates.take(_maxStored ~/ 5)) entry.$3];
         await box.deleteAll(evict);
       }
-      await box.put(songId, data);
+      await box.put(songId, {...data, _savedAtKey: DateTime.now().millisecondsSinceEpoch});
     } catch (e) {
       debugPrint('StorageService.saveLyrics: $e');
     }

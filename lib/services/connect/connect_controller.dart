@@ -164,12 +164,20 @@ class ConnectController {
   /// Looks for players in every way: [devices] starts over and fills up as
   /// they are found. Announcements go on being heard until [stopListening].
   Future<void> search() async {
+    final generation = ++_listenGeneration;
     // From scratch: a device announced before is not announced again to
     // who is already listening.
-    await stopListening();
+    await _stopDiscovery();
+    // Stopped (the sheet was closed) or searched again while the previous
+    // listening was ending: this search must not start listening again.
+    if (generation != _listenGeneration) return;
     unawaited(_listen());
     await scan();
   }
+
+  // Bumped by every search and every stop: a search only goes on while it
+  // is still the latest thing asked.
+  int _listenGeneration = 0;
 
   Future<void> _listen() async {
     if (!useDiscovery) return;
@@ -186,6 +194,11 @@ class ConnectController {
   }
 
   Future<void> stopListening() async {
+    _listenGeneration++;
+    await _stopDiscovery();
+  }
+
+  Future<void> _stopDiscovery() async {
     if (!useDiscovery) return;
     await ConnectDiscovery.instance.stopListening();
   }

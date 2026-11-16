@@ -91,6 +91,21 @@ class _MiniPlayerBody extends StatelessWidget {
     PlayerSheet.show(context, audioHandler);
   }
 
+  /// [button] held to the height of the row, centred in it: in a lower
+  /// row its padded tap area stands out over the room around the row
+  /// instead of making it taller. As it is when [box] is null.
+  static Widget _held(double? box, Widget button) => box == null
+      ? button
+      : SizedBox(
+          height: box,
+          child: OverflowBox(
+            minHeight: 0,
+            maxHeight: double.infinity,
+            fit: OverflowBoxFit.deferToChild,
+            child: button,
+          ),
+        );
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -99,6 +114,11 @@ class _MiniPlayerBody extends StatelessWidget {
     final look = AppSettings.instance;
     final hidden = look.miniHiddenButtons.value;
     final textScale = ElementScale.of(look.textMiniPlayer);
+    // As tall as the user wants it (`BarSizes`); as drawn at the designed
+    // level.
+    final level = look.miniPlayerHeight.value;
+    final row = BarSizes.miniRowAt(level);
+    final box = BarSizes.miniButtonBoxAt(level);
     // Always dark enough for its white text, whatever it takes its color
     // from: the cover, a neutral surface, or the color of the app.
     final themed = look.miniPlayerStyle.value == 3;
@@ -156,10 +176,15 @@ class _MiniPlayerBody extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.sm, AppSpacing.sm, 2, 6),
+              padding: EdgeInsets.fromLTRB(
+                AppSpacing.sm,
+                BarSizes.miniTopAt(level),
+                2,
+                BarSizes.miniBottomAt(level),
+              ),
               child: Row(
                 children: [
-                  AppCover(url: mediaItem.artUri?.toString(), size: 40),
+                  AppCover(url: mediaItem.artUri?.toString(), size: row),
                   const SizedBox(width: 10),
 
                   // ── Title & Artist (marquee on overflow) ─────────────────
@@ -234,25 +259,32 @@ class _MiniPlayerBody extends StatelessWidget {
                   ),
 
                   if (!hidden.contains(MiniPlayerButtons.devices))
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: DevicesButton(
-                      remoteName: audioHandler.remoteNameNotifier,
-                      accent: palette.accent,
-                      idle: _ink,
-                      showName: false,
-                      size: 22,
+                  _held(
+                    box,
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: DevicesButton(
+                        remoteName: audioHandler.remoteNameNotifier,
+                        accent: palette.accent,
+                        idle: _ink,
+                        showName: false,
+                        size: 22,
+                      ),
                     ),
                   ),
                   if (!hidden.contains(MiniPlayerButtons.favorite))
-                  FavoriteButton(
-                    song: () => audioHandler.currentSong,
-                    activeColor: palette.accent,
-                    size: 23,
-                    source: 'mini',
+                  _held(
+                    box,
+                    FavoriteButton(
+                      song: () => audioHandler.currentSong,
+                      activeColor: palette.accent,
+                      size: 23,
+                      source: 'mini',
+                    ),
                   ),
                   if (!hidden.contains(MiniPlayerButtons.previous))
                   _SkipButton(
+                    height: row,
                     tooltip: 'Brano precedente',
                     icon: AppIcons.previous,
                     onPressed: () {
@@ -264,7 +296,7 @@ class _MiniPlayerBody extends StatelessWidget {
                   // ── Play / Pause ──────────────────────────────────────────
                   SizedBox(
                     width: 44,
-                    height: 40,
+                    height: row,
                     child: AnimatedSwitcher(
                       duration: AppMotion.fast,
                       child: isLoading
@@ -296,7 +328,7 @@ class _MiniPlayerBody extends StatelessWidget {
                                 isPlaying ? AppIcons.pause : AppIcons.play,
                                 key: ValueKey<bool>(isPlaying),
                                 color: _ink,
-                                size: 30,
+                                size: BarSizes.miniPlayIconAt(level),
                               ),
                             ),
                           ),
@@ -304,6 +336,7 @@ class _MiniPlayerBody extends StatelessWidget {
                   ),
                   if (!hidden.contains(MiniPlayerButtons.next))
                   _SkipButton(
+                    height: row,
                     tooltip: 'Brano successivo',
                     icon: AppIcons.next,
                     onPressed: () {
@@ -327,8 +360,14 @@ class _MiniPlayerBody extends StatelessWidget {
 
 /// Previous or next, for who wants them in the mini player.
 class _SkipButton extends StatelessWidget {
-  const _SkipButton({required this.tooltip, required this.icon, required this.onPressed});
+  const _SkipButton({
+    required this.height,
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
 
+  final double height;
   final String tooltip;
   final IconData icon;
   final VoidCallback onPressed;
@@ -337,7 +376,7 @@ class _SkipButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: 36,
-      height: 40,
+      height: height,
       child: IconButton(
         padding: EdgeInsets.zero,
         tooltip: tooltip,

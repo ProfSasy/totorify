@@ -73,6 +73,10 @@ class DownloadService {
 
   final Map<String, Future<bool>> _inFlight = {};
 
+  // Songs deleted while they were coming down: the download in flight must
+  // not save them again when it ends.
+  final Set<String> _cancelled = {};
+
   /// Downloads a single song. Concurrent requests for the same song share
   /// the same future. [announceFailure] tells the user when it fails; a
   /// playlist download reports its own total instead.
@@ -82,10 +86,32 @@ class DownloadService {
     bool announceFailure = true,
   }) {
     final running = _inFlight[song.id];
-    if (running != null) return running;
+    if (running != null) {
+      // Asked again after a delete: the download in flight is wanted again.
+      _cancelled.remove(song.id);
+      return running;
+    }
     final future = _downloadSongInternal(song, force: force, announceFailure: announceFailure);
     _inFlight[song.id] = future;
-    return future.whenComplete(() => _inFlight.remove(song.id));
+    return future.whenComplete(() {
+      _inFlight.remove(song.id);
+      _cancelled.remove(song.id);
+    });
+  }
+
+  /// Throws away a download whose song was deleted while it came down.
+  Future<bool> _dropCancelled(Song song, List<File> files) async {
+    for (final file in files) {
+      try {
+        if (await file.exists()) await file.delete();
+      } catch (_) {
+        // Left behind: the next download overwrites it.
+      }
+    }
+    _removeProgress(song.id);
+    PlaybackLogService.instance
+        .log('DOWNLOAD', '"${song.title}" eliminato durante il download: scartato');
+    return false;
   }
 
   Future<bool> _downloadSongInternal(
@@ -100,7 +126,10 @@ class DownloadService {
     }
 
     final watch = Stopwatch()..start();
-    final filePath = await storage.getLocalAudioPath(song.id);
+    // Always an .m4a: what comes down is AAC, also when an old build left a
+    // .flac of this song (removed below once the new file is in place).
+    final filePath = '${storage.downloadsPath}/${song.id}.m4a';
+    final oldFlac = File('${storage.downloadsPath}/${song.id}.flac');
     final tempFile = File('$filePath.tmp');
     final finalFile = File(filePath);
     log.log('DOWNLOAD', 'avvio "${song.title}" - ${song.artist} id=${song.id}'
@@ -137,8 +166,17 @@ class DownloadService {
           }
 
           final bytes = await tempFile.length();
+          // Deleted while it was coming down: it must not come back.
+          if (_cancelled.contains(song.id)) return _dropCancelled(song, [tempFile]);
           if (await finalFile.exists()) await finalFile.delete();
           await tempFile.rename(filePath);
+          try {
+            // The new file plays from now on, never the old one.
+            if (await oldFlac.exists()) await oldFlac.delete();
+          } catch (e) {
+            log.log('DOWNLOAD', '"${song.title}": vecchio .flac non eliminato: $e');
+          }
+          if (_cancelled.contains(song.id)) return _dropCancelled(song, [finalFile]);
           _updateProgress(song.id, 1.0);
           await storage.saveDownloadedSong(song);
           // The exact length, so playback does not have to trust the
@@ -273,24 +311,29 @@ class DownloadService {
             // Another part already gave up: no point in going on.
             if (rangeBroken || failure != null) return;
             String problem;
+            final client = http.Client();
             try {
-              final resp = await http.get(
-                uri,
-                headers: {
+              final watch = Stopwatch()..start();
+              final request = http.Request('GET', uri)
+                ..headers.addAll({
                   'Range': 'bytes=$start-$end',
                   ...headers,
-                },
-              ).timeout(_chunkTimeout);
+                });
+              // The status comes before the body: a server that ignores the
+              // range sends the whole file, which must not be read by every
+              // part (closing the client drops it).
+              final resp = await client.send(request).timeout(_chunkTimeout);
 
               if (resp.statusCode == 200) {
                 rangeBroken = true;
                 return;
               }
               if (resp.statusCode == 206) {
-                await File('${tempFile.path}.part$i')
-                    .writeAsBytes(resp.bodyBytes, flush: true);
+                final body =
+                    await resp.stream.toBytes().timeout(_chunkTimeout - watch.elapsed);
+                await File('${tempFile.path}.part$i').writeAsBytes(body, flush: true);
                 completed++;
-                downloadedBytes += resp.bodyBytes.length;
+                downloadedBytes += body.length;
                 _updateProgress(
                   song.id,
                   (downloadedBytes / contentLength).clamp(0.1, 0.9),
@@ -300,6 +343,8 @@ class DownloadService {
               problem = 'HTTP ${resp.statusCode}';
             } catch (e) {
               problem = '$e';
+            } finally {
+              client.close();
             }
             if (attempt >= _chunkAttempts) {
               failure ??= '$problem sul blocco ${i + 1} di $totalChunks';
@@ -451,6 +496,7 @@ class DownloadService {
   }
 
   Future<void> deleteDownloadedSong(String songId) async {
+    if (_inFlight.containsKey(songId)) _cancelled.add(songId);
     try {
       // Old builds also saved some songs as .flac: both are cleaned.
       for (final path in [
@@ -657,6 +703,7 @@ class DownloadService {
   }
 
   Future<void> clearAllDownloads() async {
+    _cancelled.addAll(_inFlight.keys);
     try {
       final dir = Directory(StorageService.instance.downloadsPath);
       if (await dir.exists()) {

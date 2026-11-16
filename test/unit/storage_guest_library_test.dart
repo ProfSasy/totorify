@@ -172,6 +172,17 @@ void main() {
       expect(storage.getRecentSearches(), isNot(contains('their search')));
     });
 
+    test('a match the phone sends is read at once, not the one held in memory', () async {
+      final owner = phone();
+      final id = fresh('song');
+      await storage.cacheYouTubeMapping(id, 'before');
+      expect(storage.getCachedYouTubeMapping(id), 'before');
+      await send(owner, StorageService.sectionExtras, {
+        'mappings': {id: 'after'},
+      });
+      expect(storage.getCachedYouTubeMapping(id), 'after');
+    });
+
     test('this device sends what it learnt, not what only makes sense here', () async {
       final id = fresh('song');
       await storage.cacheYouTubeMapping(id, 'video');

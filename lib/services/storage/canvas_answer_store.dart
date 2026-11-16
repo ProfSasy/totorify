@@ -25,7 +25,18 @@ class CanvasAnswerStore {
   Future<void> save(String songId, String? url, int version) async {
     try {
       if (box.length >= _maxAnswers) {
-        await box.deleteAll(box.keys.take(_maxAnswers ~/ 5).toList());
+        // The oldest answers go, by the moment saved with each: a box gives
+        // its keys sorted, not in the order they arrived.
+        int savedAt(Object? key) {
+          final raw = box.get(key);
+          final at = raw is Map ? raw['at'] : null;
+          return at is int ? at : 0;
+        }
+
+        final byAge = [
+          for (final (i, key) in box.keys.indexed) (savedAt(key), i, key),
+        ]..sort((a, b) => a.$1 != b.$1 ? a.$1.compareTo(b.$1) : a.$2.compareTo(b.$2));
+        await box.deleteAll([for (final entry in byAge.take(_maxAnswers ~/ 5)) entry.$3]);
       }
       await box.put(songId, {
         'url': url,

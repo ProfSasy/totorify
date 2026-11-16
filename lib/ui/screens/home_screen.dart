@@ -804,8 +804,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                     ),
-                  const SliverToBoxAdapter(
-                      child: SizedBox(height: AppSpacing.bottomContentInset)),
+                  SliverToBoxAdapter(
+                      child: SizedBox(height: BarSizes.bottomInset)),
                 ],
               ),
             ),

@@ -11,7 +11,8 @@ class AppSpacing {
   static const double xxl = 32;
 
   /// Bottom clearance for scrollables: tab bar + mini player + home
-  /// indicator.
+  /// indicator, at their designed heights. The lists use
+  /// `BarSizes.bottomInset`, which follows the heights the user chose.
   static const double bottomContentInset = 176;
 }
 

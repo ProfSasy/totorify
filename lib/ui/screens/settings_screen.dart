@@ -24,6 +24,7 @@ import 'settings/settings_kit.dart';
 import '../theme/app_icons.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import '../widgets/app_cover.dart';
 import 'playback_log_screen.dart';
 import '../theme/app_route.dart';
@@ -94,9 +95,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _hasSpDcCookie = SpotifyInternalAuthService.instance.hasSpDcCookie);
   }
 
+  // Scans overlap (one per download that ends): only the latest one asked
+  // writes its figure, not a slower older one that saw fewer files.
+  int _storageScan = 0;
+
   Future<void> _loadStorageSize() async {
+    final scan = ++_storageScan;
     final size = await DownloadService.instance.getTotalStorageUsedMB();
-    if (mounted) setState(() => _storageUsedMB = size);
+    if (mounted && scan == _storageScan) setState(() => _storageUsedMB = size);
   }
 
   Future<void> _loadUserInfo() async {
@@ -127,8 +133,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       body: ListView(
             padding: EdgeInsets.only(
-              left: 16,
-              right: 16,
+              left: PageSpacing.margin,
+              right: PageSpacing.margin,
               top: 12,
               bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xl,
             ),
@@ -590,42 +596,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showSpDcInputDialog(BuildContext context) {
-    final TextEditingController controller = TextEditingController();
     showCupertinoDialog(
       context: context,
-      builder: (ctx) => CupertinoAlertDialog(
-        title: const Text('Inserisci cookie sp_dc'),
-        content: Column(
-          children: [
-            const SizedBox(height: 8),
-            const Text('Ottieni questo cookie accedendo a Spotify sul web, ispezionando i cookie e copiando il valore di "sp_dc".'),
-            const SizedBox(height: 16),
-            CupertinoTextField(
-              controller: controller,
-              placeholder: 'Incolla qui...',
-              obscureText: true,
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
-            ),
-          ],
-        ),
-        actions: [
-          CupertinoDialogAction(
-            child: const Text('Annulla'),
-            onPressed: () => Navigator.pop(ctx),
-          ),
-          CupertinoDialogAction(
-            isDefaultAction: true,
-            child: const Text('Salva'),
-            onPressed: () async {
-              final val = controller.text.trim();
-              if (val.isNotEmpty) {
-                await SpotifyInternalAuthService.instance.saveSpDcCookie(val);
-                _onSpotifyLoginChanged();
-              }
-              if (ctx.mounted) Navigator.pop(ctx);
-            },
-          ),
-        ],
+      // The dialog owns its text controller: it is disposed with the dialog,
+      // after the closing animation, never while the field is still shown.
+      builder: (_) => _SpDcInputDialog(
+        textStyle: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+        onSave: (val) async {
+          await SpotifyInternalAuthService.instance.saveSpDcCookie(val);
+          _onSpotifyLoginChanged();
+        },
       ),
     );
   }
@@ -702,6 +682,63 @@ class _DeviceNameDialogState extends State<_DeviceNameDialog> {
           isDefaultAction: true,
           child: const Text('Salva'),
           onPressed: () => Navigator.pop(context, _controller.text),
+        ),
+      ],
+    );
+  }
+}
+
+/// Asks for the sp_dc cookie; owns its text controller, so it is disposed
+/// with the dialog.
+class _SpDcInputDialog extends StatefulWidget {
+  const _SpDcInputDialog({required this.textStyle, required this.onSave});
+
+  final TextStyle textStyle;
+  final Future<void> Function(String value) onSave;
+
+  @override
+  State<_SpDcInputDialog> createState() => _SpDcInputDialogState();
+}
+
+class _SpDcInputDialogState extends State<_SpDcInputDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoAlertDialog(
+      title: const Text('Inserisci cookie sp_dc'),
+      content: Column(
+        children: [
+          const SizedBox(height: 8),
+          const Text('Ottieni questo cookie accedendo a Spotify sul web, ispezionando i cookie e copiando il valore di "sp_dc".'),
+          const SizedBox(height: 16),
+          CupertinoTextField(
+            controller: _controller,
+            placeholder: 'Incolla qui...',
+            obscureText: true,
+            style: widget.textStyle,
+          ),
+        ],
+      ),
+      actions: [
+        CupertinoDialogAction(
+          child: const Text('Annulla'),
+          onPressed: () => Navigator.pop(context),
+        ),
+        CupertinoDialogAction(
+          isDefaultAction: true,
+          child: const Text('Salva'),
+          onPressed: () async {
+            final val = _controller.text.trim();
+            if (val.isNotEmpty) await widget.onSave(val);
+            if (context.mounted) Navigator.pop(context);
+          },
         ),
       ],
     );

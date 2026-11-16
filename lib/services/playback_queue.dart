@@ -102,6 +102,8 @@ class PlaybackQueue {
   void insertAfterCurrent(Song song) {
     final at = (_index + 1).clamp(0, _items.length);
     _items.insert(at, song);
+    // With shuffle on, "play next" must still be the next song played.
+    if (_shuffle) _plannedId = song.id;
   }
 
   /// Replaces the song with [id] using [update] (e.g. a new YouTube source).
@@ -210,7 +212,11 @@ class PlaybackQueue {
 
     if (_shuffle) {
       // Round complete: start a new one with this track.
-      if (!back && _playedRound.length >= _items.length) _playedRound.clear();
+      // Compared by id: with the same song queued twice the set is smaller
+      // than the queue, and a length check would never close the round.
+      if (!back && _items.every((s) => _playedRound.contains(s.id))) {
+        _playedRound.clear();
+      }
       _playedRound.add(_items[target].id);
     }
     _plannedId = null;

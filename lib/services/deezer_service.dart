@@ -38,7 +38,9 @@ class DeezerService {
   int _running = 0;
   final Queue<Completer<void>> _waiting = Queue<Completer<void>>();
 
+  // Insertion-ordered: past [_maxMatches] the oldest answers are dropped.
   final Map<String, DeezerTrackMatch?> _matchCache = {};
+  static const int _maxMatches = 500;
   final Map<String, Future<DeezerTrackMatch?>> _matchInFlight = {};
 
   static final RegExp _brackets = RegExp(r'\s*[\(\[][^\)\]]*[\)\]]');
@@ -67,7 +69,11 @@ class DeezerService {
     return first.isEmpty ? cleaned : first;
   }
 
-  Future<dynamic> _get(String path) async {
+  Future<dynamic> _get(String path) async => (await _request(path)).data;
+
+  /// Like [_get], and tells a request that failed (network, HTTP error,
+  /// quota) from an answer: only an answer may be remembered.
+  Future<({dynamic data, bool failed})> _request(String path) async {
     if (_running >= _maxConcurrent) {
       final turn = Completer<void>();
       _waiting.add(turn);
@@ -80,18 +86,18 @@ class DeezerService {
           .timeout(const Duration(seconds: 10));
       if (response.statusCode != 200) {
         debugPrint('DeezerService GET $path: HTTP ${response.statusCode}');
-        return null;
+        return (data: null, failed: true);
       }
       final data = jsonDecode(utf8.decode(response.bodyBytes));
       // Quota and lookup failures come back as HTTP 200 with an "error" body.
       if (data is Map && data['error'] != null) {
         debugPrint('DeezerService GET $path: ${data['error']}');
-        return null;
+        return (data: null, failed: true);
       }
-      return data;
+      return (data: data, failed: false);
     } catch (e) {
       debugPrint('DeezerService GET $path: $e');
-      return null;
+      return (data: null, failed: true);
     } finally {
       _running--;
       if (_waiting.isNotEmpty) _waiting.removeFirst().complete();
@@ -151,9 +157,17 @@ class DeezerService {
     final running = _matchInFlight[song.id];
     if (running != null) return running;
 
-    final future = _matchTrack(song).then((match) {
-      _matchCache[song.id] = match;
-      return match;
+    final future = _matchTrack(song).then((result) {
+      // "No match" is remembered only when Deezer answered: after a network
+      // or quota error the song is looked up again next time.
+      if (result.answered || result.match != null) {
+        _matchCache.remove(song.id);
+        _matchCache[song.id] = result.match;
+        while (_matchCache.length > _maxMatches) {
+          _matchCache.remove(_matchCache.keys.first);
+        }
+      }
+      return result.match;
     }).whenComplete(() {
       // Block body on purpose: returning the removed future from here would
       // make this future wait on itself.
@@ -163,7 +177,7 @@ class DeezerService {
     return future;
   }
 
-  Future<DeezerTrackMatch?> _matchTrack(Song song) async {
+  Future<({DeezerTrackMatch? match, bool answered})> _matchTrack(Song song) async {
     // YouTube uploads often read "Artist - Title (Official Video)" with the
     // channel as artist: try that reading as well as the plain one.
     final readings = <(String, String)>[
@@ -177,14 +191,17 @@ class DeezerService {
       ));
     }
 
+    var answered = true;
     for (final (title, artist) in readings) {
       if (title.isEmpty) continue;
       final query = Uri.encodeQueryComponent('$artist $title'.trim());
-      final results = _list(await _get('/search?q=$query&limit=8'));
+      final response = await _request('/search?q=$query&limit=8');
+      if (response.failed) answered = false;
+      final results = _list(response.data);
       final best = _pickMatch(results, title, artist, song.duration);
-      if (best != null) return best;
+      if (best != null) return (match: best, answered: true);
     }
-    return null;
+    return (match: null, answered: answered);
   }
 
   DeezerTrackMatch? _pickMatch(

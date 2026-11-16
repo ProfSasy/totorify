@@ -39,6 +39,20 @@ class SourceMappingStore {
     }
   }
 
+  /// Writes many entries at once (the extras a phone sends with its
+  /// library), keeping the matches held in memory in step with the box.
+  Future<void> putAll(Map<String, dynamic> entries) {
+    for (final entry in entries.entries) {
+      final value = entry.value;
+      if (value is String && value.isNotEmpty) {
+        _mappings[entry.key] = value;
+      } else {
+        _mappings.remove(entry.key);
+      }
+    }
+    return box.putAll(entries);
+  }
+
   Future<void> cacheMapping(String songId, String youtubeVideoId) async {
     _mappings[songId] = youtubeVideoId;
     try {

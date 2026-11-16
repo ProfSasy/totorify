@@ -77,13 +77,18 @@ class _DevicesSheetState extends State<_DevicesSheet> {
       _connecting = device.id;
       _error = null;
     });
-    final ok = await _connect.transferTo(device);
+    var ok = false;
+    try {
+      ok = await _connect.transferTo(device);
+    } finally {
+      // Also after an exception: otherwise every row stays blocked.
+      if (!ok && mounted) setState(() => _connecting = null);
+    }
     if (!mounted) return;
     if (ok) {
       Navigator.pop(context);
     } else {
       setState(() {
-        _connecting = null;
         _error = _connect.refused
             ? 'Su ${device.name} la richiesta non è stata accettata.'
             : 'Non riesco a raggiungere ${device.name}. '
@@ -99,12 +104,14 @@ class _DevicesSheetState extends State<_DevicesSheet> {
       _connecting = 'together:${device.id}';
       _error = null;
     });
-    final ok = await TogetherClient.instance.join(device);
+    var ok = false;
+    try {
+      ok = await TogetherClient.instance.join(device);
+    } finally {
+      if (mounted) setState(() => _connecting = null);
+    }
     if (!mounted) return;
-    setState(() {
-      _connecting = null;
-      if (!ok) _error = TogetherClient.instance.lastError;
-    });
+    if (!ok) setState(() => _error = TogetherClient.instance.lastError);
     if (ok) Navigator.pop(context);
   }
 
@@ -131,9 +138,13 @@ class _DevicesSheetState extends State<_DevicesSheet> {
       _connecting = host;
       _error = null;
     });
-    final device = await _connect.probe(host);
+    ConnectDevice? device;
+    try {
+      device = await _connect.probe(host);
+    } finally {
+      if (mounted) setState(() => _connecting = null);
+    }
     if (!mounted) return;
-    setState(() => _connecting = null);
     if (device == null) {
       setState(() => _error = 'A $host non risponde nessun Totorify.');
       return;
@@ -302,7 +313,9 @@ class _DevicesSheetState extends State<_DevicesSheet> {
               icon: AppIcons.link,
               label: 'Aggiungi con l\'indirizzo',
               subtitle: 'È scritto sulla schermata di Totorify della TV',
-              trailing: _connecting != null && !devices.any((d) => d.id == _connecting)
+              trailing: _connecting != null &&
+                      !_connecting!.startsWith('together:') &&
+                      !devices.any((d) => d.id == _connecting)
                   ? const CupertinoActivityIndicator(radius: 9)
                   : null,
               onTap: _addByAddress,

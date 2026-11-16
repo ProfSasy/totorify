@@ -417,7 +417,8 @@ class StorageService {
       },
       'lyrics': {
         for (final key in _lyricsBox.keys)
-          if (_isManualLyrics(key)) '$key': _lyricsBox.get(key),
+          // Through the store: its own fields (when saved) stay out.
+          if (_isManualLyrics(key)) '$key': _lyrics.get('$key'),
       },
     };
   }
@@ -1148,9 +1149,10 @@ class StorageService {
         if (data is Map) {
           final mappings = data['mappings'];
           if (mappings is Map) {
-            writes.add(_ytMappingBox.putAll({
+            // Through the store, so its in-memory matches see them too.
+            writes.add(_sources.putAll({
               for (final entry in mappings.entries)
-                if (entry.key is String && entry.value != null) entry.key: entry.value,
+                if (entry.key is String && entry.value != null) entry.key as String: entry.value,
             }));
           }
           final covers = data['covers'];

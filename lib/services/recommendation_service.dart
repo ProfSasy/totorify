@@ -105,10 +105,18 @@ class RecommendationService {
   /// Recommendations for [song], best first. [youtubeSeedId] is the YouTube
   /// video currently playing for it, used when the catalog has no match.
   Future<List<Song>> forSong(Song song, {String? youtubeSeedId}) async {
-    final cached = _cache[song.id];
-    if (cached != null) return LibraryExtras.instance.withoutBlocked(cached);
-
     final history = StorageService.instance.getHistory();
+    final cached = _cache[song.id];
+    if (cached != null) {
+      // Ranked earlier: what was played since then is left out now too, as
+      // [rank] would.
+      final recent = {for (final played in history.take(recentWindow)) songKey(played)};
+      return LibraryExtras.instance.withoutBlocked([
+        for (final candidate in cached)
+          if (!recent.contains(songKey(candidate))) candidate,
+      ]);
+    }
+
     final sources = await Future.wait([
       _contextual(song, youtubeSeedId),
       _fromHistory(song, history),

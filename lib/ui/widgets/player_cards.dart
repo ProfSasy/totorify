@@ -11,6 +11,7 @@ import '../../services/lyrics_service.dart';
 import '../../services/ytmusic_catalog_service.dart';
 import '../theme/app_ambience.dart';
 import '../theme/app_tokens.dart';
+import '../theme/element_scale.dart';
 import 'app_cover.dart';
 import 'player/player_style.dart';
 
@@ -68,7 +69,8 @@ class _PlayerCardsState extends State<PlayerCards> {
   Widget build(BuildContext context) {
     _load();
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      // The side margin of the pages: the cards are a page of their own.
+      padding: EdgeInsets.symmetric(horizontal: PageSpacing.margin),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

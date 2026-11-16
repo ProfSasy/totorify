@@ -238,8 +238,10 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
         ),
         SettingsSection(
           title: 'Spaziature',
-          footer: 'Il margine vale per Home, Cerca, Libreria, pagine degli artisti e liste '
-              'di brani; la distanza fra le sezioni per i titoli di Home, Cerca e artisti.',
+          footer: 'Il margine vale per Home, Cerca, Libreria, artisti, playlist e album, '
+              'impostazioni e schede sotto il player; la distanza fra le sezioni per i titoli '
+              'di Home, Cerca e artisti. Le liste lasciano in fondo lo spazio per barra e '
+              'mini player all\'altezza scelta.',
           children: [
             SettingChoice(
               setting: _settings.pageMargin,
@@ -256,9 +258,19 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
               title: 'Distanza fra le schede in fila',
               labels: PageSpacing.gapLabels,
             ),
+            SettingChoice(
+              setting: _settings.navBarHeight,
+              title: 'Altezza della barra delle schede',
+              labels: BarSizes.navLabels,
+            ),
+            SettingChoice(
+              setting: _settings.miniPlayerHeight,
+              title: 'Altezza del mini player',
+              labels: BarSizes.miniLabels,
+            ),
             SettingLink(
               title: 'Ripristina testi e spaziature',
-              subtitle: 'Solo questi valori, il resto dell\'aspetto resta',
+              subtitle: 'Solo questi valori, altezze comprese: il resto dell\'aspetto resta',
               trailing: const SizedBox.shrink(),
               onTap: _resetElements,
             ),
@@ -335,7 +347,7 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
             ),
             SettingLink(
               title: 'Barra e mini player',
-              subtitle: 'Schede in basso, il loro ordine, pulsanti del mini player',
+              subtitle: 'Schede in basso, il loro ordine, altezze, pulsanti del mini player',
               onTap: () => SettingsPage.open(context, const NavigationSettingsScreen()),
             ),
           ],

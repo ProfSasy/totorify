@@ -104,11 +104,26 @@ class CanvasFileCache {
         unawaited(response.stream.drain<void>().catchError((Object _) {}));
         return;
       }
+      // Without a length up front the limit is counted while writing: past
+      // it the download stops and the file is thrown away.
+      var received = 0;
+      var tooBig = false;
       final sink = temp.openWrite();
       try {
-        await sink.addStream(response.stream.timeout(const Duration(seconds: 20)));
+        await for (final chunk in response.stream.timeout(const Duration(seconds: 20))) {
+          received += chunk.length;
+          if (received > _maxFileBytes) {
+            tooBig = true;
+            break;
+          }
+          sink.add(chunk);
+        }
       } finally {
         await sink.close();
+      }
+      if (tooBig) {
+        await _delete(temp);
+        return;
       }
       final size = await temp.length();
       if (size < _minFileBytes || size > _maxFileBytes || (expected > 0 && size != expected)) {

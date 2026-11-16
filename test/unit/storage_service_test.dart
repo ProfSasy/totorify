@@ -124,6 +124,24 @@ void main() {
       await storage.clearCanvasAnswers();
       expect(storage.getCanvasAnswer(b, 1), isNull);
     });
+
+    test('past the limit the oldest answers go, not the first keys', () async {
+      await storage.clearCanvasAnswers();
+      final oldest = 'zz_${fresh('old')}';
+      await storage.saveCanvasAnswer(oldest, 'u', 1);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      for (var i = 0; i < 1498; i++) {
+        await storage.saveCanvasAnswer(fresh('filler'), null, 1);
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      final recent = 'aa_${fresh('new')}';
+      await storage.saveCanvasAnswer(recent, 'u', 1);
+      await storage.saveCanvasAnswer(fresh('song'), 'u', 1);
+
+      expect(storage.getCanvasAnswer(oldest, 1), isNull);
+      expect(storage.getCanvasAnswer(recent, 1), isNotNull);
+      await storage.clearCanvasAnswers();
+    });
   });
 
   group('lyrics', () {
@@ -167,6 +185,26 @@ void main() {
       expect(storage.getStoredLyrics(downloaded), isNotNull);
       await storage.clearFoundLyrics();
       await storage.removeDownloadedSong(downloaded);
+    });
+
+    test('the oldest go by the moment saved, not by the order of the keys', () async {
+      await storage.clearFoundLyrics();
+      // Last in the order of the keys, first in time.
+      final oldest = 'zz_${fresh('old')}';
+      await storage.saveLyrics(oldest, {'plain': 'old'});
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      while (storage.storedLyricsCount < 999) {
+        await storage.saveLyrics(fresh('filler'), {'plain': 'x'});
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      // First in the order of the keys, last in time.
+      final recent = 'aa_${fresh('new')}';
+      await storage.saveLyrics(recent, {'plain': 'new'});
+      await storage.saveLyrics(fresh('song'), {'plain': 'last'});
+
+      expect(storage.getStoredLyrics(oldest), isNull);
+      expect(storage.getStoredLyrics(recent), {'plain': 'new'});
+      await storage.clearFoundLyrics();
     });
   });
 

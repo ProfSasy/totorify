@@ -20,12 +20,11 @@ class TotorifyNavBar extends StatelessWidget {
     required this.onTap,
   });
 
-  static const double _barHeight = 56;
-
-  /// Total height of the bar, safe area included. MainShell uses this to
-  /// float the mini player right above it.
+  /// Total height of the bar, safe area included, as tall as the user
+  /// wants it (`BarSizes`). MainShell uses this to float the mini player
+  /// right above it.
   static double totalHeight(BuildContext context) =>
-      _barHeight + MediaQuery.paddingOf(context).bottom;
+      BarSizes.navHeight + MediaQuery.paddingOf(context).bottom;
 
   // By name (`NavLayout`), with the position the shell knows each by.
   static const Map<String, (NavGlyph, String, int)> _items = {
@@ -49,7 +48,7 @@ class TotorifyNavBar extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
       child: SizedBox(
-        height: _barHeight,
+        height: BarSizes.navHeight,
         child: Row(
           children: [
             for (final (glyph, label, index) in [for (final id in tabs) _items[id]!])
@@ -115,37 +114,55 @@ class _NavItem extends StatelessWidget {
             if (!selected) HapticFeedback.selectionClick();
             onTap();
           },
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              AnimatedScale(
-                scale: selected ? 1.0 : 0.94,
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutBack,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  padding: EdgeInsets.symmetric(horizontal: pill ? 16 : 0, vertical: pill ? 3 : 0),
-                  decoration: BoxDecoration(
-                    color: pill ? cs.primary.withValues(alpha: 0.26) : Colors.transparent,
-                    borderRadius: BorderRadius.circular(999),
+          // Never taller than the bar: with a large text in a low bar the
+          // item shrinks a little instead of spilling out of it. When it
+          // fits, it is laid out as it always was.
+          child: LayoutBuilder(
+            builder: (context, box) => Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: SizedBox(
+                  width: box.maxWidth,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AnimatedScale(
+                        scale: selected ? 1.0 : 0.94,
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutBack,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          padding: EdgeInsets.symmetric(horizontal: pill ? 16 : 0, vertical: pill ? 3 : 0),
+                          decoration: BoxDecoration(
+                            color: pill ? cs.primary.withValues(alpha: 0.26) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: NavGlyphIcon(
+                            glyph: glyph,
+                            active: selected,
+                            color: color,
+                            size: BarSizes.navIcon,
+                          ),
+                        ),
+                      ),
+                      if (showLabel) ...[
+                        SizedBox(height: BarSizes.navGap),
+                        Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: _labelSize(context),
+                            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                            color: color,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                  child: NavGlyphIcon(glyph: glyph, active: selected, color: color),
                 ),
               ),
-              if (showLabel) ...[
-              const SizedBox(height: 4),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: _labelSize(context),
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: color,
-                ),
-              ),
-              ],
-            ],
+            ),
           ),
         ),
       ),
