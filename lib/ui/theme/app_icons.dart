@@ -131,6 +131,8 @@ class AppIcons {
       _pick(Icons.copy_rounded, Icons.copy_rounded, Icons.copy_sharp, Icons.copy_outlined);
   static IconData get refresh =>
       _pick(Icons.refresh_rounded, Icons.refresh_rounded, Icons.refresh_sharp, Icons.refresh_outlined);
+  static IconData get reset =>
+      _pick(Icons.restart_alt_rounded, Icons.restart_alt_rounded, Icons.restart_alt_sharp, Icons.restart_alt_outlined);
   static IconData get settings =>
       _pick(Icons.settings_outlined, Icons.settings_rounded, Icons.settings_sharp, Icons.settings_outlined);
   static IconData get log =>

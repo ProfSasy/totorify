@@ -434,7 +434,7 @@ class ColorSettingRow extends StatelessWidget {
             if (value != 0)
               IconButton(
                 tooltip: 'Torna automatico',
-                icon: Icon(Icons.restart_alt_rounded, color: cs.onSurfaceVariant, size: 20),
+                icon: Icon(AppIcons.reset, color: cs.onSurfaceVariant, size: 20),
                 onPressed: () {
                   PlaybackLogService.instance.log('UI', 'aspetto: ${setting.key} automatico');
                   setting.set(0);
