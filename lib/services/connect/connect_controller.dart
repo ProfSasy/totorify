@@ -38,6 +38,8 @@ class ConnectController {
   AudioPlayerHandler? _handler;
   _Session? _session;
   int _sessionGeneration = 0;
+  // The generation whose connection is being reached again, if any.
+  int? _reconnecting;
   String _name = 'Telefono';
 
   /// False where the system's service discovery is not there (tests).
@@ -526,6 +528,18 @@ class ConnectController {
   /// fails the playback is considered lost.
   Future<void> _onClosed(int generation, ConnectDevice device) async {
     if (generation != _sessionGeneration || _session == null) return;
+    // A connection opened by the attempts below and dropped meanwhile must
+    // not start a second round of them.
+    if (_reconnecting == generation) return;
+    _reconnecting = generation;
+    try {
+      await _reconnect(generation, device);
+    } finally {
+      if (_reconnecting == generation) _reconnecting = null;
+    }
+  }
+
+  Future<void> _reconnect(int generation, ConnectDevice device) async {
     final log = PlaybackLogService.instance;
     log.log('CONNECT', 'collegamento con "${device.name}" interrotto, riprovo');
 
@@ -602,6 +616,14 @@ class _Session implements RemoteOutput {
         onMessage(message);
       },
       onDone: () {
+        // Whoever waits for an answer is told at once, not at its timeout.
+        final waiting = [..._waiting.values];
+        _waiting.clear();
+        for (final completer in waiting) {
+          if (!completer.isCompleted) {
+            completer.completeError(const SocketException('connessione chiusa'));
+          }
+        }
         if (!_closedByUs) onClosed();
       },
       onError: (Object _) {},

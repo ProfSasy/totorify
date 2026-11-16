@@ -72,93 +72,108 @@ class _StatsScreenState extends State<StatsScreen> {
                   ],
                 ),
               ),
-              if (plays == 0)
-                Padding(
-                  padding: const EdgeInsets.all(AppSpacing.xl),
-                  child: Column(
-                    children: [
-                      Icon(AppIcons.stats, size: 46, color: cs.onSurfaceVariant),
-                      const SizedBox(height: AppSpacing.md),
-                      Text(
-                        'Ancora niente da contare',
-                        style: AppText.sectionTitle(cs).copyWith(fontSize: 18),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                // From the top: the periods are of very different heights.
+                layoutBuilder: (currentChild, previousChildren) => Stack(
+                  alignment: Alignment.topCenter,
+                  children: [...previousChildren, ?currentChild],
+                ),
+                child: Column(
+                  key: ValueKey(_period),
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (plays == 0)
+                      Padding(
+                        padding: const EdgeInsets.all(AppSpacing.xl),
+                        child: Column(
+                          children: [
+                            Icon(AppIcons.stats, size: 46, color: cs.onSurfaceVariant),
+                            const SizedBox(height: AppSpacing.md),
+                            Text(
+                              'Ancora niente da contare',
+                              style: AppText.sectionTitle(cs).copyWith(fontSize: 18),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Ogni brano ascoltato per almeno 30 secondi finisce qui.',
+                              textAlign: TextAlign.center,
+                              style: AppText.caption(cs),
+                            ),
+                          ],
+                        ),
+                      )
+                    else ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          AppSpacing.lg,
+                          AppSpacing.md,
+                          AppSpacing.lg,
+                          0,
+                        ),
+                        child: Row(
+                          children: [
+                            _Tile(label: 'Ascoltato', value: formatTime(total)),
+                            const SizedBox(width: AppSpacing.sm),
+                            _Tile(label: 'Ascolti', value: '$plays'),
+                            const SizedBox(width: AppSpacing.sm),
+                            _Tile(label: 'Giorni', value: '${stats.activeDays(_period)}'),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Ogni brano ascoltato per almeno 30 secondi finisce qui.',
-                        textAlign: TextAlign.center,
-                        style: AppText.caption(cs),
+                      _Heading('Artisti più ascoltati'),
+                      for (final (index, artist) in artists.indexed)
+                        ListTile(
+                          leading: _Rank(index + 1),
+                          title: Text(artist.item, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text('${artist.plays} ascolti · ${formatTime(artist.time)}'),
+                          onTap: () => ArtistScreen.open(
+                            context,
+                            audioHandler,
+                            song: Song(
+                              id: 'stats_${artist.item}',
+                              title: '',
+                              artist: artist.item,
+                              duration: Duration.zero,
+                              thumbnailUrl: '',
+                            ),
+                          ),
+                        ),
+                      _Heading('Brani più ascoltati'),
+                      for (final (index, entry) in songs.indexed)
+                        ListTile(
+                          leading: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _Rank(index + 1),
+                              const SizedBox(width: AppSpacing.sm),
+                              AppCover(url: entry.item.thumbnailUrl, size: 44),
+                            ],
+                          ),
+                          title: Text(entry.item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text(
+                            '${entry.item.artist} · ${entry.plays} ascolti',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onTap: () {
+                            final queue = [for (final s in songs) s.item];
+                            audioHandler.playSong(entry.item, queue: queue);
+                            PlayerSheet.showOnPlay(context, audioHandler);
+                          },
+                          onLongPress: () =>
+                              showSongOptions(context, song: entry.item, audioHandler: audioHandler),
+                        ),
+                      _Heading('Quando ascolti'),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                        child: _HourChart(hours: hours, color: cs.primary),
                       ),
                     ],
-                  ),
-                )
-              else ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.lg,
-                    AppSpacing.md,
-                    AppSpacing.lg,
-                    0,
-                  ),
-                  child: Row(
-                    children: [
-                      _Tile(label: 'Ascoltato', value: formatTime(total)),
-                      const SizedBox(width: AppSpacing.sm),
-                      _Tile(label: 'Ascolti', value: '$plays'),
-                      const SizedBox(width: AppSpacing.sm),
-                      _Tile(label: 'Giorni', value: '${stats.activeDays(_period)}'),
-                    ],
-                  ),
+                  ],
                 ),
-                _Heading('Artisti più ascoltati'),
-                for (final (index, artist) in artists.indexed)
-                  ListTile(
-                    leading: _Rank(index + 1),
-                    title: Text(artist.item, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    subtitle: Text('${artist.plays} ascolti · ${formatTime(artist.time)}'),
-                    onTap: () => ArtistScreen.open(
-                      context,
-                      audioHandler,
-                      song: Song(
-                        id: 'stats_${artist.item}',
-                        title: '',
-                        artist: artist.item,
-                        duration: Duration.zero,
-                        thumbnailUrl: '',
-                      ),
-                    ),
-                  ),
-                _Heading('Brani più ascoltati'),
-                for (final (index, entry) in songs.indexed)
-                  ListTile(
-                    leading: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _Rank(index + 1),
-                        const SizedBox(width: AppSpacing.sm),
-                        AppCover(url: entry.item.thumbnailUrl, size: 44),
-                      ],
-                    ),
-                    title: Text(entry.item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    subtitle: Text(
-                      '${entry.item.artist} · ${entry.plays} ascolti',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    onTap: () {
-                      final queue = [for (final s in songs) s.item];
-                      audioHandler.playSong(entry.item, queue: queue);
-                      PlayerSheet.showOnPlay(context, audioHandler);
-                    },
-                    onLongPress: () =>
-                        showSongOptions(context, song: entry.item, audioHandler: audioHandler),
-                  ),
-                _Heading('Quando ascolti'),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                  child: _HourChart(hours: hours, color: cs.primary),
-                ),
-              ],
+              ),
             ],
           );
         },

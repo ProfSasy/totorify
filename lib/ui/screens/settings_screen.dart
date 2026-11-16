@@ -646,6 +646,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: const Text('Scollega'),
             onPressed: () async {
               await SpotifyInternalAuthService.instance.saveSpDcCookie('');
+              await SpotifyWebLoginScreen.clearSession();
               _onSpotifyLoginChanged();
               if (ctx.mounted) Navigator.pop(ctx);
             },

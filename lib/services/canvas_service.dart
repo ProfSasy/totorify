@@ -187,6 +187,8 @@ class CanvasService {
   final Map<String, String> _albumOfTrack = {};
   final Map<String, _Discography> _discographyCache = {};
   DateTime? _searchBlockedUntil;
+  // Bumped by [clearCache]: lookups started before it do not store answers.
+  int _epoch = 0;
   // Canvas files checked this session: true when the file is still there.
   final Map<String, bool> _aliveUrls = {};
   Future<void> _musicBrainzQueue = Future.value();
@@ -291,7 +293,7 @@ class CanvasService {
   /// The Canvas of [songId] could not be played, twice: no Canvas for a
   /// while, so the player shows the cover instead of trying again.
   void giveUp(String songId) {
-    _canvasCache[songId] = (null, DateTime.now().add(_failureTtl));
+    _putCanvas(songId, (null, DateTime.now().add(_failureTtl)));
     unawaited(StorageService.instance.removeCanvasAnswer(songId));
   }
 
@@ -299,6 +301,7 @@ class CanvasService {
   /// found, including for songs already answered "no canvas". Videos saved
   /// with the downloads are kept.
   void clearCache() {
+    _epoch++;
     _canvasCache.clear();
     _albumCanvasCache.clear();
     _searchBlockedUntil = null;
@@ -338,7 +341,7 @@ class CanvasService {
       final age = DateTime.now().difference(stored.savedAt);
       final fresh = age < (stored.url == null ? _storedMissTtl : _storedTtl);
       if (fresh || stored.url != null) {
-        _canvasCache[song.id] = (stored.url, DateTime.now().add(_cacheTtl));
+        _putCanvas(song.id, (stored.url, DateTime.now().add(_cacheTtl)));
         // Old but usable: shown now, looked up again behind the scenes.
         if (!fresh) unawaited(_lookUp(song));
         return Future.value(stored.url);
@@ -356,7 +359,18 @@ class CanvasService {
     return future.whenComplete(() => _inFlight.remove(song.id));
   }
 
+  /// Keeps [entry] as this session's answer for [songId], the oldest
+  /// answers making room.
+  void _putCanvas(String songId, (String?, DateTime) entry) {
+    _canvasCache.remove(songId);
+    while (_canvasCache.length >= _maxCacheSize) {
+      _canvasCache.remove(_canvasCache.keys.first);
+    }
+    _canvasCache[songId] = entry;
+  }
+
   Future<String?> _resolveAndCache(Song song) async {
+    final epoch = _epoch;
     _Lookup result;
     try {
       result = await _resolve(song);
@@ -365,13 +379,13 @@ class CanvasService {
           .error('CANVAS', 'ricerca fallita per "${song.title}": $e', stack);
       result = (value: null, failed: true);
     }
+    // The answers were forgotten meanwhile (login or logout): this one was
+    // made under the old conditions and is not kept.
+    if (epoch != _epoch) return result.value;
     // Misses are cached as well: without this every track change repeated
     // the whole lookup for the songs around the current one.
-    if (_canvasCache.length >= _maxCacheSize) {
-      _canvasCache.remove(_canvasCache.keys.first);
-    }
     final ttl = result.failed ? _failureTtl : _cacheTtl;
-    _canvasCache[song.id] = (result.value, DateTime.now().add(ttl));
+    _putCanvas(song.id, (result.value, DateTime.now().add(ttl)));
     // A lookup that failed (no network) is not an answer worth keeping.
     if (!result.failed) {
       unawaited(StorageService.instance

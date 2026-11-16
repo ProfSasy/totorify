@@ -8,6 +8,16 @@ import '../../services/spotify_internal_auth_service.dart';
 class SpotifyWebLoginScreen extends StatefulWidget {
   const SpotifyWebLoginScreen({super.key});
 
+  /// Forgets the Spotify session kept by the web view, so that the next
+  /// login asks for an account instead of reusing the one unlinked.
+  static Future<void> clearSession() async {
+    try {
+      await CookieManager.instance().deleteAllCookies();
+    } catch (e) {
+      debugPrint('SpotifyWebLogin.clearSession: $e');
+    }
+  }
+
   @override
   State<SpotifyWebLoginScreen> createState() => _SpotifyWebLoginScreenState();
 }
@@ -17,22 +27,28 @@ class _SpotifyWebLoginScreenState extends State<SpotifyWebLoginScreen> {
 
   Future<void> _checkCookies() async {
     if (_cookieFound) return;
-    final cookies = await CookieManager.instance()
-        .getCookies(url: WebUri('https://accounts.spotify.com'));
+    try {
+      final cookies = await CookieManager.instance()
+          .getCookies(url: WebUri('https://accounts.spotify.com'));
 
-    for (final cookie in cookies) {
-      final value = '${cookie.value}';
-      if (cookie.name != 'sp_dc' || value.isEmpty || _cookieFound) continue;
-      _cookieFound = true;
-      await SpotifyInternalAuthService.instance.saveSpDcCookie(value);
+      for (final cookie in cookies) {
+        final value = '${cookie.value}';
+        if (cookie.name != 'sp_dc' || value.isEmpty || _cookieFound) continue;
+        _cookieFound = true;
+        await SpotifyInternalAuthService.instance.saveSpDcCookie(value);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Spotify collegato.')),
-        );
-        Navigator.of(context).pop(true);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Spotify collegato.')),
+          );
+          Navigator.of(context).pop(true);
+        }
+        return;
       }
-      return;
+    } catch (e) {
+      // Tried again at the next page load.
+      debugPrint('SpotifyWebLogin: lettura del cookie non riuscita: $e');
+      _cookieFound = false;
     }
   }
 

@@ -26,6 +26,7 @@ class _LibrarySettingsScreenState extends State<LibrarySettingsScreen> {
   bool _working = false;
 
   void _say(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.maybeOf(
       context,
     )?.showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 3)));

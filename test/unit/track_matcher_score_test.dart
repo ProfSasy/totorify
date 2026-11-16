@@ -59,6 +59,17 @@ void main() {
       expect(score(olive, olive), 9000);
     });
 
+    test('an artist named like a version is not that version', () {
+      final band = track('Lightning Crashes', 'Live');
+      expect(score(track('Lightning Crashes', 'Live'), band), 9000);
+      final nightcore = track('Angel With A Shotgun', 'Nightcore');
+      expect(score(track('Angel With A Shotgun', 'Nightcore'), nightcore), 9000);
+      // A live version of the band's song is still another version.
+      expect(score(track('Lightning Crashes (Live)', 'Live'), band), lessThan(9000 - 2000));
+      // A channel named after a version still counts against the original.
+      expect(score(track('Lightning Crashes', 'Nightcore'), band), lessThan(9000 - 2000));
+    });
+
     test('upload filler in brackets is not another version', () {
       for (final title in [
         'Blinding Lights (Official Audio)',

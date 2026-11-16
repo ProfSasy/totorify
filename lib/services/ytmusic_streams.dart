@@ -163,6 +163,17 @@ extension YTMusicStreams on YTMusicService {
   Future<_VideoStreams?> _loadVisionOsStreams(String videoId) async {
     final data = await _visionOsPlayerResponse(videoId);
     if (data == null) return null;
+    // An answer shaped differently from what is expected must not stop
+    // the other engines from being tried.
+    try {
+      return _readVisionOsStreams(videoId, data);
+    } catch (e) {
+      debugPrint('YTMusic.visionOS $videoId: risposta non leggibile: $e');
+      return null;
+    }
+  }
+
+  _VideoStreams _readVisionOsStreams(String videoId, Map<String, dynamic> data) {
     final streaming = data['streamingData'] as Map<String, dynamic>?;
     final formats = streaming?['adaptiveFormats'] as List<dynamic>? ?? [];
 

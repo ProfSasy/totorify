@@ -71,10 +71,17 @@ class ConnectDiscovery {
   Future<void> listen(void Function(String host, int port) onFound) async {
     if (_discovery != null) return;
     final log = PlaybackLogService.instance;
+    BonsoirDiscovery? created;
     try {
-      final discovery = BonsoirDiscovery(printLogs: false, type: ConnectProtocol.serviceType);
+      final discovery =
+          created = BonsoirDiscovery(printLogs: false, type: ConnectProtocol.serviceType);
       _discovery = discovery;
       await discovery.initialize();
+      // Stopped (or started again) while it was getting ready.
+      if (!identical(_discovery, discovery)) {
+        await _stopStale(discovery);
+        return;
+      }
       _events = discovery.eventStream?.listen(
         (event) {
           switch (event) {
@@ -104,9 +111,25 @@ class ConnectDiscovery {
         onError: (Object e) => debugPrint('ConnectDiscovery: $e'),
       );
       await discovery.start();
+      if (!identical(_discovery, discovery)) await _stopStale(discovery);
     } catch (e) {
       log.error('CONNECT', 'ascolto degli annunci non riuscito: $e');
-      await stopListening();
+      // Only when it is still this one: a newer listen keeps its own.
+      if (created == null || identical(_discovery, created)) {
+        await stopListening();
+      } else {
+        await _stopStale(created);
+      }
+    }
+  }
+
+  /// Stops [discovery], left running by a [listen] that was stopped while
+  /// it waited.
+  Future<void> _stopStale(BonsoirDiscovery discovery) async {
+    try {
+      await discovery.stop();
+    } catch (e) {
+      debugPrint('ConnectDiscovery._stopStale: $e');
     }
   }
 

@@ -60,8 +60,10 @@ class LyricsService {
   );
 
   void _cacheLyrics(String songId, Lyrics lyrics) {
-    if (_memoryCache.length >= _maxCacheSize) {
-      _memoryCache.remove(_memoryCache.keys.first);
+    if (_memoryCache.length >= _maxCacheSize && !_memoryCache.containsKey(songId)) {
+      final evicted = _memoryCache.keys.first;
+      _memoryCache.remove(evicted);
+      _missUntil.remove(evicted);
     }
     _memoryCache[songId] = lyrics;
   }
@@ -118,6 +120,22 @@ class LyricsService {
 
   Future<Lyrics> _searchLyrics(Song song) async {
     final (lyrics, complete) = await _searchSources(song);
+    // The user chose or wrote the lyrics while the sources were asked:
+    // theirs stay.
+    final stored = StorageService.instance.getStoredLyrics(song.id);
+    if (stored != null && stored['manual'] == true) {
+      final manual = Lyrics.fromMap(stored);
+      _cacheLyrics(song.id, manual);
+      // Emptied by hand: not searched again at every rebuild either.
+      if (manual.isEmpty) _missUntil[song.id] = DateTime.now().add(_missTtl);
+      return manual;
+    }
+    _cacheLyrics(song.id, lyrics);
+    if (lyrics.isEmpty) {
+      // A miss is remembered too: no lyrics is a legitimate answer and must
+      // not send every source a request at every rebuild of the player.
+      _missUntil[song.id] = DateTime.now().add(_missTtl);
+    }
     // "None" is saved only when every source answered: a search made
     // without network must not hide the lyrics for days.
     if (lyrics.isNotEmpty || complete) {
@@ -179,7 +197,6 @@ class LyricsService {
                 ? ' (sincronizzato)'
                 : ''}',
           );
-          _cacheLyrics(song.id, lyrics);
           return (lyrics, true);
         }
       } catch (e) {
@@ -187,10 +204,6 @@ class LyricsService {
         debugPrint('LyricsService: ${source.name} non risponde: $e');
       }
     }
-    // A miss is remembered too: no lyrics is a legitimate answer and must
-    // not send every source a request at every rebuild of the player.
-    _cacheLyrics(song.id, Lyrics.empty);
-    _missUntil[song.id] = DateTime.now().add(_missTtl);
     return (Lyrics.empty, complete);
   }
 

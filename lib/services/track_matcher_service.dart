@@ -260,10 +260,17 @@ class TrackMatcherService {
     if (candidate.title.toLowerCase().contains('official audio')) score += 300;
 
     // Versions that are not the one asked for (live, cover, karaoke...).
-    final lowerCand = '${candidate.title} ${candidate.artist}'.toLowerCase();
+    // Looked for in the title and in the artist; in the artist it does not
+    // count when the target's artist has it too (a band named "Live").
+    final candTitleLower = candidate.title.toLowerCase();
+    final candArtistLower = candidate.artist.toLowerCase();
     final lowerTarget = target.title.toLowerCase();
+    final targetArtistLower = target.artist.toLowerCase();
     for (final variant in _wrongVariants.entries) {
-      if (variant.value.hasMatch(lowerCand) && !variant.value.hasMatch(lowerTarget)) {
+      final word = variant.value;
+      if (word.hasMatch(lowerTarget)) continue;
+      if (word.hasMatch(candTitleLower) ||
+          (word.hasMatch(candArtistLower) && !word.hasMatch(targetArtistLower))) {
         score -= 3000;
       }
     }

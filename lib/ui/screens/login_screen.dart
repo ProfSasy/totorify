@@ -134,25 +134,38 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   const Spacer(flex: 2),
 
-                  // Error message
-                  if (_errorMessage != null) ...[
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: cs.errorContainer,
-                        borderRadius: BorderRadius.circular(AppRadius.sm),
-                        border: Border.all(
-                          color: cs.error.withValues(alpha: 0.35),
-                        ),
-                      ),
-                      child: Text(
-                        _errorMessage!,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: cs.onErrorContainer, fontSize: 13),
-                      ),
+                  // Error message. Full width either way: only its height
+                  // changes when it appears or goes.
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    alignment: Alignment.topCenter,
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: _errorMessage == null
+                          ? null
+                          : Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: cs.errorContainer,
+                                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                                    border: Border.all(
+                                      color: cs.error.withValues(alpha: 0.35),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    _errorMessage!,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: cs.onErrorContainer, fontSize: 13),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                              ],
+                            ),
                     ),
-                    const SizedBox(height: 16),
-                  ],
+                  ),
 
                   // Google Sign-In button
                   _GoogleSignInButton(

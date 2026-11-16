@@ -98,7 +98,7 @@ class _ShazamImportScreenState extends State<ShazamImportScreen> {
       }
     } catch (e) {
       PlaybackLogService.instance.error('SHAZAM', 'lettura del file: $e');
-      setState(() => _error = 'Impossibile leggere il file.');
+      if (mounted) setState(() => _error = 'Impossibile leggere il file.');
       return;
     }
     final tags = ShazamImportService.parse(text);
@@ -242,110 +242,131 @@ class _ShazamImportScreenState extends State<ShazamImportScreen> {
       child: SettingsPage(
         title: 'Importa da Shazam',
         children: [
-          if (result != null) ...[
-            SettingsSection(
-              title: 'Fatto',
-              footer: result.missing.isEmpty
-                  ? null
-                  : 'Non trovati su YouTube Music: '
-                        '${result.missing.take(8).map((t) => '${t.title} (${t.artist})').join(', ')}'
-                        '${result.missing.length > 8 ? ' e altri ${result.missing.length - 8}' : ''}.',
-              children: [
-                ListTile(
-                  leading: Icon(AppIcons.playlist, color: cs.primary),
-                  title: Text(result.playlist.title),
-                  subtitle: Text(
-                    result.playlist.songs.length == 1
-                        ? '1 brano'
-                        : '${result.playlist.songs.length} brani'
-                              '${result.missing.isEmpty ? '' : ', ${result.missing.length} non trovati'}',
-                  ),
-                ),
-              ],
+          // The steps of the import fade one into the other.
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            layoutBuilder: (currentChild, previousChildren) => Stack(
+              alignment: Alignment.topCenter,
+              children: [...previousChildren, ?currentChild],
             ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, result.playlist),
-              child: const Text('Apri la playlist'),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            TextButton(
-              onPressed: () => setState(() => _result = null),
-              child: const Text('Importa altri mesi'),
-            ),
-          ] else if (_importing) ...[
-            const SizedBox(height: AppSpacing.xl),
-            Text(
-              'Cerco i brani su YouTube Music…',
-              textAlign: TextAlign.center,
-              style: AppText.sectionTitle(cs).copyWith(fontSize: 17),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            LinearProgressIndicator(
-              value: _total == 0 ? null : _done / _total,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Text('$_done di $_total', textAlign: TextAlign.center, style: AppText.caption(cs)),
-          ] else if (tags == null) ...[
-            SettingsSection(
-              title: 'Come fare',
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(AppSpacing.lg),
-                  child: Text(
-                    '1. Apri shazam.com/myshazam (dal telefono o dal computer) e accedi '
-                    'con lo stesso account che usi in Shazam.\n\n'
-                    '2. Tocca "Download CSV": si scarica un file con tutti i brani '
-                    'che hai riconosciuto.\n\n'
-                    '3. Torna qui, scegli quel file e poi i mesi da importare.',
-                    style: TextStyle(color: cs.onSurface, fontSize: 15, height: 1.35),
-                  ),
-                ),
-              ],
-            ),
-            if (_error != null) _ErrorText(_error!),
-            FilledButton.icon(
-              onPressed: _pickFile,
-              icon: Icon(AppIcons.import),
-              label: const Text('Scegli il file di Shazam'),
-            ),
-          ] else ...[
-            SettingsSection(
-              title: 'Periodo',
-              footer:
-                  'Nel file ci sono ${tags.length} brani, da ${_monthLabel(_months.last.month)} '
-                  'a ${_monthLabel(_months.first.month)}.',
-              children: [
-                SettingLink(
-                  title: 'Dal mese',
-                  subtitle: _capitalized(_monthLabel(_from!)),
-                  onTap: () => _pickMonth(from: true),
-                ),
-                SettingLink(
-                  title: 'Al mese',
-                  subtitle: _capitalized(_monthLabel(_to!)),
-                  onTap: () => _pickMonth(from: false),
-                ),
-              ],
-            ),
-            SettingsSection(
-              title: 'Playlist',
-              children: [
-                SettingLink(title: 'Nome', subtitle: _name ?? _defaultName, onTap: _rename),
-              ],
-            ),
-            if (_error != null) _ErrorText(_error!),
-            FilledButton(
-              onPressed: _distinct == 0 ? null : _import,
-              child: Text(
-                _distinct == 0
-                    ? 'Nessun brano in questo periodo'
-                    : (_distinct == 1 ? 'Importa 1 brano' : 'Importa $_distinct brani'),
+            child: Column(
+              key: ValueKey(
+                result != null
+                    ? 'done'
+                    : _importing
+                    ? 'importing'
+                    : (tags == null ? 'file' : 'months'),
               ),
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (result != null) ...[
+                  SettingsSection(
+                    title: 'Fatto',
+                    footer: result.missing.isEmpty
+                        ? null
+                        : 'Non trovati su YouTube Music: '
+                              '${result.missing.take(8).map((t) => '${t.title} (${t.artist})').join(', ')}'
+                              '${result.missing.length > 8 ? ' e altri ${result.missing.length - 8}' : ''}.',
+                    children: [
+                      ListTile(
+                        leading: Icon(AppIcons.playlist, color: cs.primary),
+                        title: Text(result.playlist.title),
+                        subtitle: Text(
+                          result.playlist.songs.length == 1
+                              ? '1 brano'
+                              : '${result.playlist.songs.length} brani'
+                                    '${result.missing.isEmpty ? '' : ', ${result.missing.length} non trovati'}',
+                        ),
+                      ),
+                    ],
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context, result.playlist),
+                    child: const Text('Apri la playlist'),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  TextButton(
+                    onPressed: () => setState(() => _result = null),
+                    child: const Text('Importa altri mesi'),
+                  ),
+                ] else if (_importing) ...[
+                  const SizedBox(height: AppSpacing.xl),
+                  Text(
+                    'Cerco i brani su YouTube Music…',
+                    textAlign: TextAlign.center,
+                    style: AppText.sectionTitle(cs).copyWith(fontSize: 17),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  LinearProgressIndicator(
+                    value: _total == 0 ? null : _done / _total,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Text('$_done di $_total', textAlign: TextAlign.center, style: AppText.caption(cs)),
+                ] else if (tags == null) ...[
+                  SettingsSection(
+                    title: 'Come fare',
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(AppSpacing.lg),
+                        child: Text(
+                          '1. Apri shazam.com/myshazam (dal telefono o dal computer) e accedi '
+                          'con lo stesso account che usi in Shazam.\n\n'
+                          '2. Tocca "Download CSV": si scarica un file con tutti i brani '
+                          'che hai riconosciuto.\n\n'
+                          '3. Torna qui, scegli quel file e poi i mesi da importare.',
+                          style: TextStyle(color: cs.onSurface, fontSize: 15, height: 1.35),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_error != null) _ErrorText(_error!),
+                  FilledButton.icon(
+                    onPressed: _pickFile,
+                    icon: Icon(AppIcons.import),
+                    label: const Text('Scegli il file di Shazam'),
+                  ),
+                ] else ...[
+                  SettingsSection(
+                    title: 'Periodo',
+                    footer:
+                        'Nel file ci sono ${tags.length} brani, da ${_monthLabel(_months.last.month)} '
+                        'a ${_monthLabel(_months.first.month)}.',
+                    children: [
+                      SettingLink(
+                        title: 'Dal mese',
+                        subtitle: _capitalized(_monthLabel(_from!)),
+                        onTap: () => _pickMonth(from: true),
+                      ),
+                      SettingLink(
+                        title: 'Al mese',
+                        subtitle: _capitalized(_monthLabel(_to!)),
+                        onTap: () => _pickMonth(from: false),
+                      ),
+                    ],
+                  ),
+                  SettingsSection(
+                    title: 'Playlist',
+                    children: [
+                      SettingLink(title: 'Nome', subtitle: _name ?? _defaultName, onTap: _rename),
+                    ],
+                  ),
+                  if (_error != null) _ErrorText(_error!),
+                  FilledButton(
+                    onPressed: _distinct == 0 ? null : _import,
+                    child: Text(
+                      _distinct == 0
+                          ? 'Nessun brano in questo periodo'
+                          : (_distinct == 1 ? 'Importa 1 brano' : 'Importa $_distinct brani'),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  TextButton(onPressed: _pickFile, child: const Text('Scegli un altro file')),
+                ],
+              ],
             ),
-            const SizedBox(height: AppSpacing.sm),
-            TextButton(onPressed: _pickFile, child: const Text('Scegli un altro file')),
-          ],
+          ),
         ],
       ),
     );

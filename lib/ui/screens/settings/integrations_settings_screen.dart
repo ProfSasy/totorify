@@ -23,6 +23,7 @@ class _IntegrationsSettingsScreenState extends State<IntegrationsSettingsScreen>
   bool _checking = false;
 
   void _say(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.maybeOf(
       context,
     )?.showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 3)));

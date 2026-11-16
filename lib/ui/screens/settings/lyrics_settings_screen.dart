@@ -156,8 +156,10 @@ class _LyricsSourcesScreen extends StatefulWidget {
 
 class _LyricsSourcesScreenState extends State<_LyricsSourcesScreen> {
   final Setting<List<String>> _setting = AppSettings.instance.lyricsSources;
+  // Only the sources that exist: a row is shown for each, and the indices
+  // of a drag are those of the rows.
   late final List<String> _order = [
-    ..._setting.value,
+    ..._setting.value.where((id) => LyricsSources.byId(id) != null),
     for (final id in LyricsSources.defaultOrder)
       if (!_setting.value.contains(id)) id,
   ];

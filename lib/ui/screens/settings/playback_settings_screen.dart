@@ -128,29 +128,34 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
             ),
           ],
         ),
-        SettingsSection(
-          title: 'Parti da saltare',
-          footer:
-              'Totorify riproduce l\'audio dei video di YouTube: con SponsorBlock salta '
-              'le introduzioni parlate, le scenette e le altre parti che non sono musica, '
-              'segnalate dalla comunità.',
-          children: [
-            SettingSwitch(
-              setting: settings.sponsorBlock,
-              title: 'Salta le parti non musicali',
-              onChanged: (_) => setState(() {}),
-            ),
-            if (settings.sponsorBlock.value)
-              SettingLink(
-                title: 'Cosa saltare',
-                subtitle: categories.isEmpty
-                    ? 'Niente'
-                    : categories
-                          .map((key) => SponsorBlockService.categories[key] ?? key)
-                          .join(', '),
-                onTap: _pickCategories,
+        // 'Cosa saltare' appears and goes with the switch.
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          alignment: Alignment.topCenter,
+          child: SettingsSection(
+            title: 'Parti da saltare',
+            footer:
+                'Totorify riproduce l\'audio dei video di YouTube: con SponsorBlock salta '
+                'le introduzioni parlate, le scenette e le altre parti che non sono musica, '
+                'segnalate dalla comunità.',
+            children: [
+              SettingSwitch(
+                setting: settings.sponsorBlock,
+                title: 'Salta le parti non musicali',
+                onChanged: (_) => setState(() {}),
               ),
-          ],
+              if (settings.sponsorBlock.value)
+                SettingLink(
+                  title: 'Cosa saltare',
+                  subtitle: categories.isEmpty
+                      ? 'Niente'
+                      : categories
+                            .map((key) => SponsorBlockService.categories[key] ?? key)
+                            .join(', '),
+                  onTap: _pickCategories,
+                ),
+            ],
+          ),
         ),
         SettingsSection(
           title: 'Coda e passaggi',

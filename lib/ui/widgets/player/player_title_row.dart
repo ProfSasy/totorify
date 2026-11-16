@@ -131,19 +131,22 @@ class PlayerTitleRow extends StatelessWidget {
                   valueListenable: audioHandler.sourceNotifier,
                   builder: (context, source, _) {
                     final label = showSource ? (source?.trim() ?? '') : '';
-                    if (label.isEmpty) {
-                      return const SizedBox.shrink();
-                    }
-                    return Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.2,
-                        color: quiet,
-                      ),
+                    return AnimatedSize(
+                      duration: const Duration(milliseconds: 200),
+                      alignment: centered ? Alignment.topCenter : Alignment.topLeft,
+                      child: label.isEmpty
+                          ? const SizedBox.shrink()
+                          : Text(
+                              label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.2,
+                                color: quiet,
+                              ),
+                            ),
                     );
                   },
                 ),

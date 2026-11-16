@@ -186,6 +186,9 @@ extension CanvasTrackLookup on CanvasService {
         }
         final trackId = uri.split(':').last;
         // Its album is known already: no need to ask for it again.
+        while (_albumOfTrack.length >= CanvasService._maxTrackInfoCached) {
+          _albumOfTrack.remove(_albumOfTrack.keys.first);
+        }
         _albumOfTrack[trackId] = release.id;
         PlaybackLogService.instance.log(
           'CANVAS',
