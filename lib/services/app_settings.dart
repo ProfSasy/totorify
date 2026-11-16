@@ -232,6 +232,22 @@ class AppSettings {
   /// All the text of the app in bold.
   late final boldText = _setting<bool>('bold_text', false);
 
+  // ── Colors of one tab (0 follows the rest of the app) ───────────────────
+
+  late final homeBackground = _setting<int>('home_background', 0);
+  late final homeAccent = _setting<int>('home_accent', 0);
+  late final searchBackground = _setting<int>('search_background', 0);
+  late final searchAccent = _setting<int>('search_accent', 0);
+  late final libraryBackground = _setting<int>('library_background', 0);
+  late final libraryAccent = _setting<int>('library_accent', 0);
+
+  /// The background and accent chosen for a tab: 0 home, 1 search, 2 library.
+  List<Setting<int>> tabColors(int tab) => switch (tab) {
+        0 => [homeBackground, homeAccent],
+        1 => [searchBackground, searchAccent],
+        _ => [libraryBackground, libraryAccent],
+      };
+
   /// How a screen comes in: 0 slide (with the swipe back), 1 fade, 2 zoom,
   /// 3 from the bottom, 4 none.
   late final pageTransition = _setting<int>('page_transition', 0);
@@ -402,6 +418,12 @@ class AppSettings {
     colorText,
     colorTextSecondary,
     motionSpeed,
+    homeBackground,
+    homeAccent,
+    searchBackground,
+    searchAccent,
+    libraryBackground,
+    libraryAccent,
     uiDensity,
     titleSize,
     boldText,

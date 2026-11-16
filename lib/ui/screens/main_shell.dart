@@ -1,5 +1,6 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
+import '../../services/app_settings.dart';
 import '../../services/audio_handler.dart';
 import '../../services/playback_log_service.dart';
 import '../app_navigation.dart';
@@ -10,6 +11,7 @@ import 'library_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
 import '../theme/app_route.dart';
+import '../theme/app_theme.dart';
 
 /// The frame of the app: three tabs, each with its own stack of pages (kept
 /// while the user is in another tab), and
@@ -55,13 +57,40 @@ class _MainShellState extends State<MainShell> {
     ];
   }
 
-  Widget _tab(int index, Widget root) => Navigator(
-        key: AppNavigation.tabKeys[index],
-        onGenerateRoute: (settings) => appRoute<void>(
-          settings: settings,
-          builder: (_) => root,
-        ),
-      );
+  /// The theme of tab [index]: the app's, with the background and the
+  /// accent chosen for that tab, if any.
+  static ThemeData _tabTheme(ThemeData base, int index) {
+    final colors = AppSettings.instance.tabColors(index);
+    Color? chosen(Setting<int> c) => c.value == 0 ? null : Color(c.value);
+    return AppTheme.forScreen(
+      base,
+      background: chosen(colors[0]),
+      accent: chosen(colors[1]),
+    );
+  }
+
+  /// Each tab can have a background and an accent of its own.
+  Widget _tab(int index, Widget root) {
+    final navigator = Navigator(
+      key: AppNavigation.tabKeys[index],
+      onGenerateRoute: (settings) => appRoute<void>(
+        settings: settings,
+        builder: (_) => root,
+      ),
+    );
+    return ListenableBuilder(
+      // The colors of a tab are among the choices about the look, which
+      // also make a new theme of the app (read below with Theme.of).
+      listenable: Listenable.merge(AppSettings.instance.appearance),
+      // The navigator is the same one at every change (and has a global
+      // key): only the theme above it is made again, its pages stay.
+      child: navigator,
+      builder: (context, child) => Theme(
+        data: _tabTheme(Theme.of(context), index),
+        child: child!,
+      ),
+    );
+  }
 
   void _goToTab(int index) {
     if (index == TotorifyNavBar.createIndex) {
@@ -83,10 +112,17 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    // What is around the tabs (the fade under the tab bar, the tab bar,
+    // what shows while a tab fades in) takes the colors of the tab on
+    // screen: a background of its own would otherwise end in a band of the
+    // app's. A change of these colors makes a new theme of the app, which
+    // builds this again.
+    final tabTheme = _tabTheme(Theme.of(context), _currentIndex);
+    final cs = tabTheme.colorScheme;
     final bottomNavHeight = TotorifyNavBar.totalHeight(context);
 
     return Scaffold(
+      backgroundColor: tabTheme.scaffoldBackgroundColor,
       // Extend body behind the tab bar so content scrolls under it.
       extendBody: true,
       // The inner screens handle the keyboard inset themselves; resizing here
@@ -180,9 +216,13 @@ class _MainShellState extends State<MainShell> {
         ],
       ),
 
-      bottomNavigationBar: TotorifyNavBar(
-        currentIndex: _currentIndex,
-        onTap: _goToTab,
+      // Its icons are drawn on the fade above, in the tab's colors.
+      bottomNavigationBar: Theme(
+        data: tabTheme,
+        child: TotorifyNavBar(
+          currentIndex: _currentIndex,
+          onTap: _goToTab,
+        ),
       ),
     );
   }

@@ -163,6 +163,26 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
           ],
         ),
         SettingsSection(
+          title: 'Colori per schermata',
+          footer: 'Home, Cerca e Libreria possono avere uno sfondo e un accento propri, '
+              'anche per le pagine che si aprono da lì. "Automatico" segue '
+              "il resto dell'app. Il player e le impostazioni restano come sopra.",
+          children: [
+            for (final (tab, name) in const [(0, 'Home'), (1, 'Cerca'), (2, 'Libreria')]) ...[
+              ColorSettingRow(
+                setting: _settings.tabColors(tab)[0],
+                title: 'Sfondo di $name',
+                onPick: (initial) => _pick(initial, title: 'Sfondo di $name', anyBrightness: true),
+              ),
+              ColorSettingRow(
+                setting: _settings.tabColors(tab)[1],
+                title: 'Accento di $name',
+                onPick: (initial) => _pick(initial, title: 'Accento di $name'),
+              ),
+            ],
+          ],
+        ),
+        SettingsSection(
           title: 'Carattere',
           children: [
             ValueListenableBuilder<String>(

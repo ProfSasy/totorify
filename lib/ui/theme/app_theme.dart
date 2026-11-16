@@ -161,6 +161,35 @@ class AppTheme {
     );
   }
 
+  /// The theme of one part of the app that has colors of its own: [base]
+  /// (a theme made by [getTheme]) made again with another background and/or
+  /// accent. Everything else [base] was made from stays: the other colors
+  /// the user chose (boxes, text), the tint of the cover, font, corners and
+  /// size. Without a choice, [base] itself.
+  ///
+  /// It is made from the same recipe as [base], by the same code, so no
+  /// part of it (buttons, chips, dialogs, text...) keeps the old colors.
+  /// The shared [AppRadius.scale] and [AppText.titleScale] are not touched.
+  static ThemeData forScreen(ThemeData base, {Color? background, Color? accent}) {
+    if (background == null && accent == null) return base;
+    final look = base.extension<ThemeRecipe>();
+    // Not one of ours: nothing to make it again from.
+    if (look == null) return base;
+    final wanted = look.copyWith(background: background, customAccent: accent);
+    if (wanted == look) return base;
+    // The big titles read the shared scale, not the recipe's: while the two
+    // differ (halfway through a change of size) the theme is not kept.
+    if (wanted.titleScale != AppText.titleScale) return _build(wanted);
+    // The tabs ask for their theme at every frame of a change of theme:
+    // the same recipe gives back the same theme.
+    final cached = _screenThemes[wanted];
+    if (cached != null) return cached;
+    if (_screenThemes.length >= 8) _screenThemes.clear();
+    return _screenThemes[wanted] = _build(wanted);
+  }
+
+  static final Map<ThemeRecipe, ThemeData> _screenThemes = {};
+
   /// [fontFamily] is the font of the whole app (the platform's when null
   /// or empty); [tint] colors the backgrounds (see [schemeFor]);
   /// [cornerScale] is how round covers and cards are (see [AppRadius.scale]).
@@ -178,23 +207,47 @@ class AppTheme {
     Color? textSecondary,
     int revision = 0,
   }) {
-    final cs = schemeFor(
+    AppRadius.scale = cornerScale;
+    AppText.titleScale = titleScale;
+    return _build(ThemeRecipe(
       isAmoled: isAmoled,
       customAccent: customAccent,
+      fontFamily: fontFamily,
       tint: tint,
+      cornerScale: cornerScale,
+      titleScale: titleScale,
+      density: density,
       background: background,
       surfaceColor: surfaceColor,
       text: text,
       textSecondary: textSecondary,
+      revision: revision,
+    ));
+  }
+
+  /// The theme for [look]: the one place that turns a recipe into colors,
+  /// for the app ([getTheme]) and for a screen with colors of its own
+  /// ([forScreen]). It only reads the shared [AppText.titleScale], it
+  /// never writes it.
+  static ThemeData _build(ThemeRecipe look) {
+    final cs = schemeFor(
+      isAmoled: look.isAmoled,
+      customAccent: look.customAccent,
+      tint: look.tint,
+      background: look.background,
+      surfaceColor: look.surfaceColor,
+      text: look.text,
+      textSecondary: look.textSecondary,
     );
     final bg = cs.surfaceDim;
-    AppRadius.scale = cornerScale;
-    AppText.titleScale = titleScale;
-    final chosenFont = (fontFamily == null || fontFamily.isEmpty) ? null : fontFamily;
+    final density = look.density;
+    final cornerScale = look.cornerScale;
+    final chosenFont =
+        (look.fontFamily == null || look.fontFamily!.isEmpty) ? null : look.fontFamily;
     // The text styles given to components below replace the ones of the
     // theme instead of building on them: they are given the font here, like
     // every other text.
-    fontFamily = chosenFont ??
+    final fontFamily = chosenFont ??
         Typography.material2021(platform: defaultTargetPlatform).white.labelLarge?.fontFamily;
     TextStyle label(double size) => TextStyle(
           fontFamily: fontFamily,
@@ -214,7 +267,7 @@ class AppTheme {
       },
       // Part of the theme, so that what is drawn with it is drawn again
       // when it changes.
-      extensions: [AppShape(cornerScale, revision: revision)],
+      extensions: [AppShape(cornerScale, revision: look.revision), look],
       scaffoldBackgroundColor: bg,
       canvasColor: bg,
       // Touches answer with a quiet highlight, never with a ripple.
@@ -237,7 +290,10 @@ class AppTheme {
         color: cs.surface,
         elevation: 0,
         margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(borderRadius: AppRadius.card),
+        // As [AppRadius.card], from the recipe rather than the shared scale.
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md * cornerScale),
+        ),
       ),
       dividerTheme: DividerThemeData(
         color: cs.outlineVariant,
@@ -442,4 +498,80 @@ class AppShape extends ThemeExtension<AppShape> {
 
   @override
   int get hashCode => Object.hash(cornerScale, revision);
+}
+
+/// What a theme was made from (the arguments of [AppTheme.getTheme]),
+/// carried inside it: [AppTheme.forScreen] makes it again with another
+/// background or accent and keeps everything else, the tint of the cover
+/// included, which cannot be read back from the colors.
+@immutable
+class ThemeRecipe extends ThemeExtension<ThemeRecipe> {
+  const ThemeRecipe({
+    this.isAmoled = false,
+    this.customAccent,
+    this.fontFamily,
+    this.tint,
+    this.cornerScale = 1.0,
+    this.titleScale = 1.0,
+    this.density = 1,
+    this.background,
+    this.surfaceColor,
+    this.text,
+    this.textSecondary,
+    this.revision = 0,
+  });
+
+  final bool isAmoled;
+  final Color? customAccent;
+  final String? fontFamily;
+  final Color? tint;
+  final double cornerScale;
+  final double titleScale;
+  final int density;
+  final Color? background;
+  final Color? surfaceColor;
+  final Color? text;
+  final Color? textSecondary;
+  final int revision;
+
+  /// Only what is given changes (a null keeps the value).
+  @override
+  ThemeRecipe copyWith({Color? background, Color? customAccent}) => ThemeRecipe(
+        isAmoled: isAmoled,
+        customAccent: customAccent ?? this.customAccent,
+        fontFamily: fontFamily,
+        tint: tint,
+        cornerScale: cornerScale,
+        titleScale: titleScale,
+        density: density,
+        background: background ?? this.background,
+        surfaceColor: surfaceColor,
+        text: text,
+        textSecondary: textSecondary,
+        revision: revision,
+      );
+
+  // A recipe is not halfway between two: it switches, like [AppShape].
+  @override
+  ThemeRecipe lerp(ThemeRecipe? other, double t) => t < 0.5 ? this : (other ?? this);
+
+  @override
+  bool operator ==(Object other) =>
+      other is ThemeRecipe &&
+      other.isAmoled == isAmoled &&
+      other.customAccent == customAccent &&
+      other.fontFamily == fontFamily &&
+      other.tint == tint &&
+      other.cornerScale == cornerScale &&
+      other.titleScale == titleScale &&
+      other.density == density &&
+      other.background == background &&
+      other.surfaceColor == surfaceColor &&
+      other.text == text &&
+      other.textSecondary == textSecondary &&
+      other.revision == revision;
+
+  @override
+  int get hashCode => Object.hash(isAmoled, customAccent, fontFamily, tint, cornerScale,
+      titleScale, density, background, surfaceColor, text, textSecondary, revision);
 }
